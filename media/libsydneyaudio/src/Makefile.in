@@ -53,7 +53,7 @@ endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),gonk)
 CSRCS		= \
-		sydney_audio_b2g.c \
+		sydney_audio_gonk.c \
 		$(NULL)
 else ifeq ($(MOZ_WIDGET_TOOLKIT),android)
 CSRCS		= \

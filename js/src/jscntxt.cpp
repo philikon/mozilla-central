@@ -1554,7 +1554,7 @@ JSContext::purge()
 static bool
 ComputeIsJITBroken()
 {
-#if 1
+#if !defined(ANDROID) || defined(GONK)
     return false;
 #else  // ANDROID
     if (getenv("JS_IGNORE_JIT_BROKENNESS")) {

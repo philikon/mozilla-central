@@ -299,25 +299,25 @@ if test -n "$gonkdir" ; then
     gonk_toolchain="$gonkdir"/prebuilt/$kernel_name-x86/toolchain/arm-eabi-4.4.3
 
     dnl set up compilers
-    AS="$gonk_toolchain"/bin/arm-eabi-as
-    CC="$gonk_toolchain"/bin/arm-eabi-gcc
-    CXX="$gonk_toolchain"/bin/arm-eabi-g++
-    CPP="$gonk_toolchain"/bin/arm-eabi-cpp
-    LD="$gonk_toolchain"/bin/arm-eabi-ld
-    AR="$gonk_toolchain"/bin/arm-eabi-ar
-    RANLIB="$gonk_toolchain"/bin/arm-eabi-ranlib
-    STRIP="$gonk_toolchain"/bin/arm-eabi-strip
+    AS="$gonk_toolchain"/bin/"$android_tool_prefix"-as
+    CC="$gonk_toolchain"/bin/"$android_tool_prefix"-gcc
+    CXX="$gonk_toolchain"/bin/"$android_tool_prefix"-g++
+    CPP="$gonk_toolchain"/bin/"$android_tool_prefix"-cpp
+    LD="$gonk_toolchain"/bin/"$android_tool_prefix"-ld
+    AR="$gonk_toolchain"/bin/"$android_tool_prefix"-ar
+    RANLIB="$gonk_toolchain"/bin/"$android_tool_prefix"-ranlib
+    STRIP="$gonk_toolchain"/bin/"$android_tool_prefix"-strip
 
     STLPORT_CPPFLAGS="-I$gonkdir/ndk/sources/cxx-stl/stlport/stlport/"
     STLPORT_LIBS="-lstlport"
 
-    CPPFLAGS="-DANDROID -I$gonkdir/bionic/libc/include/ -I$gonkdir/bionic/libc/kernel/common -I$gonkdir/bionic/libc/arch-arm/include -I$gonkdir/bionic/libc/kernel/arch-arm -I$gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/system/core/include $STLPORT_CPPFLAGS $CPPFLAGS"
-    CFLAGS="-mandroid -I$gonkdir/bionic -I$gonkdir/frameworks/base/include -fno-short-enums -fno-exceptions $CFLAGS"
-    CXXFLAGS="-mandroid -I$gonkdir/bionic -I$gonkdir/frameworks/base/include -fno-short-enums -fno-exceptions $CXXFLAGS"
+    CPPFLAGS="-DANDROID -I$gonkdir/bionic/libc/include/ -I$gonkdir/bionic/libc/kernel/common -I$gonkdir/bionic/libc/arch-arm/include -I$gonkdir/bionic/libc/kernel/arch-arm -I$gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/system/core/include -I$gonkdir/bionic -I$gonkdir/frameworks/base/include $STLPORT_CPPFLAGS $CPPFLAGS"
+    CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
+    CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions $CXXFLAGS"
     LIBS="$LIBS $STLPORT_LIBS"
 
     dnl Add -llog by default, since we use it all over the place.
-    LDFLAGS="-mandroid -L$gonkdir/out/target/product/galaxys2/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/galaxys2/obj/lib --sysroot=$gonkdir/out/target/product/galaxys2/obj/ -llog $LDFLAGS"
+    LDFLAGS="-mandroid -L$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib -Wl,-rpath-link=$gonkdir/out/target/product/$GONK_PRODUCT/obj/lib --sysroot=$gonkdir/out/target/product/$GONK_PRODUCT/obj/ -llog $LDFLAGS"
 
     dnl prevent cross compile section from using these flags as host flags
     if test -z "$HOST_CPPFLAGS" ; then
@@ -337,6 +337,7 @@ if test -n "$gonkdir" ; then
     CROSS_COMPILE=1
     MOZ_CHROME_FILE_FORMAT=omni
     ZLIB_DIR=yes
+    direct_nspr_config=1
 
     dnl to trick the nss wrapper into doing the right thing
     ANDROID_VERSION=8
@@ -4412,7 +4413,7 @@ MOZ_URL_CLASSIFIER=
 MOZ_XTF=1
 MOZ_XUL=1
 MOZ_ZIPWRITER=1
-NS_PRINTING=
+NS_PRINTING=1
 MOZ_PDF_PRINTING=
 MOZ_DISABLE_DOMCRYPTO=
 NSS_DISABLE_DBM=
@@ -4719,6 +4720,7 @@ cairo-gonk)
     TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
     TK_LIBS='$(MOZ_CAIRO_LIBS)'
     MOZ_WEBGL=1
+    MOZ_PDF_PRINTING=1
     ;;
 
 esac
@@ -5337,7 +5339,7 @@ dnl ========================================================
 MOZ_ARG_DISABLE_BOOL(printing,
 [  --disable-printing      Disable printing support],
     NS_PRINTING=,
-    NS_PRINTING=)
+    NS_PRINTING=1)
 
 if test "$NS_PRINTING"; then
     AC_DEFINE(NS_PRINTING)
@@ -8876,6 +8878,8 @@ if test "$CAIRO_FEATURES_H"; then
   fi
 fi
 
+# Run freetype configure script
+
 if test "$MOZ_TREE_FREETYPE"; then
    export CFLAGS="$CFLAGS -std=c99"
    export CPPFLAGS="$CPPFLAGS"
@@ -8884,6 +8888,35 @@ if test "$MOZ_TREE_FREETYPE"; then
    export CONFIG_FILES="unix-cc.mk:unix-cc.in unix-def.mk:unix-def.in freetype-config freetype2.pc:freetype2.in"
    ac_configure_args="$ac_configure_args --host=$target --disable-shared --with-pic=yes"
    AC_OUTPUT_SUBDIRS(modules/freetype2)
+fi
+
+if test -n "$direct_nspr_config"; then
+    export CC CXX
+    export CFLAGS CPPFLAGS CXXFLAGS LDFLAGS WRAP_LDFLAGS
+    export RANLIB STRIP
+    unset CONFIG_FILES
+    unset MAKEFILES
+
+    dnl this is a copy of the nspr configure section below
+    ac_configure_args="$_SUBDIR_CONFIG_ARGS --with-dist-prefix=$MOZ_BUILD_ROOT/dist --with-mozilla"
+    if test -z "$MOZ_DEBUG"; then
+        ac_configure_args="$ac_configure_args --disable-debug"
+    else
+        ac_configure_args="$ac_configure_args --enable-debug"
+    fi
+    if test "$MOZ_OPTIMIZE" = "1"; then
+        ac_configure_args="$ac_configure_args --enable-optimize"
+    else
+        ac_configure_args="$ac_configure_args --disable-optimize"
+    fi
+    if test -n "$HAVE_64BIT_OS"; then
+        ac_configure_args="$ac_configure_args --enable-64bit"
+    fi
+    if test -n "$USE_ARM_KUSER"; then
+        ac_configure_args="$ac_configure_args --with-arm-kuser"
+    fi
+    ac_configure_args="$ac_configure_args"
+    AC_OUTPUT_SUBDIRS(nsprpub)
 fi
 
 dnl ========================================================
@@ -8914,9 +8947,7 @@ if test -n "$_WRAP_MALLOC"; then
     _SUBDIR_CONFIG_ARGS="`echo $_SUBDIR_CONFIG_ARGS | sed -e 's/--enable-wrap-malloc *//'`"
 fi
 
-# Run freetype configure script
-
-if test -z "$MOZ_NATIVE_NSPR"; then
+if test -z "$MOZ_NATIVE_NSPR" -a -z "$direct_nspr_config"; then
     ac_configure_args="$_SUBDIR_CONFIG_ARGS --with-dist-prefix=$MOZ_BUILD_ROOT/dist --with-mozilla"
     if test -z "$MOZ_DEBUG"; then
         ac_configure_args="$ac_configure_args --disable-debug"

@@ -82,6 +82,7 @@ static nsSystemFontsQt *gSystemFonts = nsnull;
 static nsSystemFontsAndroid *gSystemFonts = nsnull;
 #elif defined(MOZ_WIDGET_GONK)
 #include "nsSystemFontsAndroid.h"
+#include "gfxPDFSurface.h"
 static nsSystemFontsAndroid *gSystemFonts = nsnull;
 #else
 #error Need to declare gSystemFonts!

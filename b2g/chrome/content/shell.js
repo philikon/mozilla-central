@@ -124,3 +124,7 @@ var shell = {
   }
 };
 
+Cc["@mozilla.org/observer-service;1"]
+  .getService(Ci.nsIObserverService)
+  .addObserver(function() { shell.doCommand('cmd_close'); },
+               'home-button-pressed', false);
