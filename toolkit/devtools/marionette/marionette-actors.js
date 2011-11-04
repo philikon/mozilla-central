@@ -51,6 +51,9 @@ var running = prefs.setBoolPref("marionette.contentListener", false);
 var messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                          getService(Ci.nsIChromeFrameMessageManager);
 messageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
+var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
+                 .getService(Ci.nsIXULAppInfo);
+var isB2G = xulAppInfo.name.indexOf('B2G') > -1;
 
 function createRootActor(aConnection)
 {
@@ -114,12 +117,15 @@ MarionetteDriverActor.prototype = {
   //We will only ever be running one browser at a time
   //If no browser is running (ie: in B2G) start one up
   newSession: function MDA_newSession(aRequest) {
-    //TODO: check if browser has started, if not, kick it off
-    var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
-                            .getService(Components.interfaces.nsIWindowMediator);  
-    var win = WindowMediator.getMostRecentWindow('navigator:browser');
-    this.browser = win.Browser; //BrowserApp?
-    this.tab = this.browser.addTab("about:blank", true);
+    if (!isB2G) {
+      //XXX: this doesn't work in b2g
+      //TODO: check if browser has started, if not, kick it off
+      var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
+                              .getService(Components.interfaces.nsIWindowMediator);  
+      var win = WindowMediator.getMostRecentWindow('navigator:browser');
+      this.browser = win.Browser; //BrowserApp?
+      this.tab = this.browser.addTab("about:blank", true);
+    }
     return { value: 'mobile' };
   },
 
@@ -151,7 +157,9 @@ MarionetteDriverActor.prototype = {
 
   deleteSession: function MDA_deleteSession(aRequest) {
     //this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
-    this.browser.closeTab(this.tab);
+    if (!isB2G) {
+      this.browser.closeTab(this.tab);
+    }
     this.conn.send({from:this.actorID, ok: true});
   },
 };
