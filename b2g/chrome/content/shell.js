@@ -37,6 +37,7 @@
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const CC = Components.Constructor;
+const Cu = Components.utils;
 
 // The default homescreen url to use if there is no B2G_HOMESCREEN
 // environment variable or if it is empty.
@@ -44,6 +45,8 @@ const kDefaultHomeScreen = "/data/local/homescreen.html";
 const kDefaultSystemHomeScreen = "/system/home/homescreen.html";
 
 var LocalFile = CC("@mozilla.org/file/local;1", "nsILocalFile", "initWithPath");
+
+Cu.import("resource:///modules/dbg-logger.jsm");
 
 var shell = {
   get home() {
@@ -65,6 +68,14 @@ var shell = {
     return "file://" + kDefaultSystemHomeScreen;
   },
 
+  startMarionetteServer: function shell_startMarionetteServer() {
+    Cu.import("resource:///modules/dbg-server.jsm");
+    DebuggerServer.addActors("resource:///modules/marionette-actors.js");
+    DebuggerServer.init();
+    DebuggerServer.openListener(2929, true);
+    gWriteLog('opened listener on 2929');
+  },
+
   start: function shell_init() {
     window.controllers.appendController(this);
 
@@ -75,6 +86,10 @@ var shell = {
     let browser = this.home;
     browser.homePage = this.homeSrc;
     browser.goHome();
+
+    // XXX: this should be gated on a pref, and might need to be placed
+    // somewhere else
+    this.startMarionetteServer();
   },
 
   stop: function shell_stop() {
