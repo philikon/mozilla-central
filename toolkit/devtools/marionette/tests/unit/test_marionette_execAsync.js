@@ -1,13 +1,11 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
-Cu.import("resource:///modules/dbg-server.jsm");
-Cu.import("resource:///modules/dbg-client.jsm");
 
 function run_test()
 {
   add_test(test_executeAsync);
   add_test(test_executeAsyncTimeout);
-  add_test(test_executeAsyncUnload);
+  add_test(test_executeAsyncUnload); //TODO: fix unload listener
   run_next_test();
 }
 
@@ -32,13 +30,13 @@ function test_executeAsync()
         else {
         if (received) {
           do_check_eq(aPacket.from, id);
-          if(aPacket.type == "setScriptTimeout") {
+          if(aPacket.ok == true) {
             transport.send({to: id,
                           type: "executeAsyncScript",
                           value: "arguments[arguments.length - 1](5+1);",
                           });
           }
-          else if(aPacket.type == "executeAsyncScript" && aPacket.value == "6") {
+          else if(aPacket.value == "6") {
               transport.send({to: id,
                             type: "deleteSession",
                             });
@@ -94,13 +92,13 @@ function test_executeAsyncTimeout()
         else {
         if (received) {
           do_check_eq(aPacket.from, id);
-          if(aPacket.type == "setScriptTimeout") {
+          if(aPacket.ok == true) {
             transport.send({to: id,
                           type: "executeAsyncScript",
                           value: "window.setTimeout(arguments[arguments.length - 1], 5000, 6);",
                           });
           }
-          else if(aPacket.type == "executeAsyncScript" && aPacket.value == "6") {
+          else if(aPacket.value == "6") {
             do_throw("Should have timed out!");
             transport.close();
           }
@@ -155,13 +153,13 @@ function test_executeAsyncUnload()
         else {
         if (received) {
           do_check_eq(aPacket.from, id);
-          if(aPacket.type == "setScriptTimeout") {
+          if(aPacket.ok == true) {
             transport.send({to: id,
                           type: "executeAsyncScript",
                           value: "window.location.reload();",
                           });
           }
-          else if(aPacket.type == "executeAsyncScript" && aPacket.value == "6") {
+          else if(aPacket.value == "6") {
             do_throw("Should have thrown unload error!");
             transport.close();
           }

@@ -69,10 +69,7 @@ EXTRA_JS_MODULES = \
 	server/dbg-server.js \
 	server/dbg-script-actors.js \
 	server/dbg-browser-actors.js \
-	marionette/marionette-actors.js \
-	marionette/marionette-listener.js \
 	dbg-client.jsm \
-    dbg-logger.jsm \
 	dbg-transport.js \
 	$(NULL)
 

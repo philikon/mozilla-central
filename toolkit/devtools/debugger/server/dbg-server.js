@@ -48,9 +48,6 @@ const Cc = Components.classes;
 const CC = Components.Constructor;
 const Cu = Components.utils;
 
-Cu.import("resource:///modules/dbg-logger.jsm");
-gWriteLog('dgb-server loaded');
-
 function dumpn(str) {
   dump("DBG-SERVER: " + str + "\n");
 }
@@ -85,6 +82,7 @@ var DebuggerServer = {
     }
 
     //Cu.import("resource://gre/modules/jsdebugger.jsm");
+    //this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
     this.xpcInspector = true;
     this._connections = {};
     this._nextConnID = 0;

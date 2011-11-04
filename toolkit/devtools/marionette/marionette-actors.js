@@ -21,7 +21,6 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Dave Camp <dcamp@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -46,9 +45,12 @@ var Ci = Components.interfaces;
 var Cc = Components.classes;
 
 //set up the marionette content listener
-var marMessageManager = Cc["@mozilla.org/globalmessagemanager;1"].
-                           getService(Ci.nsIChromeFrameMessageManager);
-marMessageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
+var prefs = Components.classes["@mozilla.org/preferences-service;1"]
+                     .getService(Components.interfaces.nsIPrefBranch);
+var running = prefs.setBoolPref("marionette.contentListener", false);
+var messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
+                         getService(Ci.nsIChromeFrameMessageManager);
+messageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
 
 function createRootActor(aConnection)
 {
@@ -121,6 +123,20 @@ MarionetteDriverActor.prototype = {
     return { value: 'mobile' };
   },
 
+  setContext: function MDA_setContext(aRequest) {
+    dumpn("MDAS: got: " + aRequest.value);
+    var context = aRequest.value;
+    if (context != "content" && context != "chrome") {
+      dumpn("MDAS: err: " + aRequest.value);
+      var error = { message: "invalid context", status: null, stacktrace: null};
+      this.messageManager.sendAsyncMessage("Marionette:error", {error:error});
+    }
+    else {
+      dumpn("MDAS: sending: " + aRequest.value);
+      this.messageManager.sendAsyncMessage("Marionette:setContext", {value:context});
+    }
+  },
+
   execute: function MDA_execute(aRequest) {
     this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args, session: aRequest.session });
   },
@@ -134,60 +150,63 @@ MarionetteDriverActor.prototype = {
   },
 
   deleteSession: function MDA_deleteSession(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:deleteSession", {session: aRequest.session});
+    //this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
     this.browser.closeTab(this.tab);
+    this.conn.send({from:this.actorID, ok: true});
   },
 };
 
 MarionetteDriverActor.prototype.requestTypes = {
+  "newSession": MarionetteDriverActor.prototype.newSession,
+  "setContext": MarionetteDriverActor.prototype.setContext,
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeAsync,
-  "newSession": MarionetteDriverActor.prototype.newSession,
   "deleteSession": MarionetteDriverActor.prototype.deleteSession
-  //"executeInChrome": MarionetteDriverActor.prototype.executeInChrome,
 };
 
 /* 
  * MarionetteResponder listener was created instead of using a 
  * listener function since we need the actor's connection and id
- * in order to respond
+ * in order to respond. We will only ever service one marionette JSON protocol user at a time.
  */
 function MarionetteResponder(actor) {
   this.actor = actor;
   this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"]
                         .getService(Ci.nsIChromeFrameMessageManager);
+  this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
-  this.messageManager.addMessageListener("Marionette:deleteSession", this);
+  //this.messageManager.addMessageListener("Marionette:deleteSession", this);
 }
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");  
 
 MarionetteResponder.prototype = {
   classDescription: "MarionetteResponder",
-  contractID: "@mozilla.org/marionette-controller;1",
+  contractID: "@mozilla.org/marionette-responder;1",
   classID: Components.ID("{7FF808DA-FF1D-11E0-B50D-F84B4824019B}"),
   QueryInterface: XPCOMUtils.generateQI(Ci.nsIFrameMessageListener),
 
   receiveMessage: function(message) {
+    dumpn("MDAS got message:" + message.name);
     if (message.name == "Marionette:done") {
-      if (message.json.ok != undefined) {
-        this.actor.conn.send({from:this.actor.actorID, session: message.json.session, type:message.json.type, ok: message.json.ok});
-      }
-      else {
-        this.actor.conn.send({from:this.actor.actorID, session: message.json.session, type:message.json.type, value: message.json.value});
-      }
+      this.actor.conn.send({from:this.actor.actorID, session: message.json.session, value: message.json.value});
+    }
+    else if (message.name == "Marionette:ok") {
+      this.actor.conn.send({from:this.actor.actorID, ok: true});
     }
     else if (message.name == "Marionette:error") {
       var error_msg = {status: message.json.error.status, message: message.json.error.message, stacktrace: message.json.error.stacktrace };
-      this.actor.conn.send({from:this.actor.actorID, type:message.json.type, error: error_msg});
+      this.actor.conn.send({from:this.actor.actorID, error: error_msg});
     }
+    /*
     else if (message.name == "Marionette:deleteSession") {
+      this.messageManager.removeMessageListener("Marionette:ok", this);
       this.messageManager.removeMessageListener("Marionette:done", this);
       this.messageManager.removeMessageListener("Marionette:error", this);
       this.messageManager.removeMessageListener("Marionette:deleteSession", this);
-      this.actor.conn.send({from:this.actor.actorID, type:"deleteSession", session: message.json.session, ok:"ok"});
-    }
+      this.actor.conn.send({from:this.actor.actorID, ok:true});
+    }*/
   }
 }
