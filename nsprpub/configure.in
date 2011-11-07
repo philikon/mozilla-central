@@ -166,32 +166,10 @@ esac
 AC_ARG_WITH(gonk,
 [  --with-gonk=DIR
                location of gonk dir],
-    b2g_gonk=$withval)
+    gonkdir=$withval)
 
-if test -n "$b2g_gonk" ; then
-    kernel_name=`uname -s | tr "[[:upper:]]" "[[:lower:]]"`
-    b2g_toolchain="$b2g_gonk"/prebuilt/$kernel_name-x86/toolchain/arm-eabi-4.4.3
-
-    dnl set up compilers
-    AS="$b2g_toolchain"/bin/arm-eabi-as
-    CC="$b2g_toolchain"/bin/arm-eabi-gcc
-    CXX="$b2g_toolchain"/bin/arm-eabi-g++
-    CPP="$b2g_toolchain"/bin/arm-eabi-cpp
-    LD="$b2g_toolchain"/bin/arm-eabi-ld
-    AR="$b2g_toolchain"/bin/arm-eabi-ar
-    RANLIB="$b2g_toolchain"/bin/arm-eabi-ranlib
-    STRIP="$b2g_toolchain"/bin/arm-eabi-strip
-
-    STLPORT_CPPFLAGS="-I$b2g_gonk/external/stlport/stlport"
-    STLPORT_LIBS="-lstlport"
-
-    CPPFLAGS="-I$b2g_gonk/bionic -I$b2g_gonk/prebuilt/ndk/android-ndk-r4/platforms/android-8/arch-arm/usr/include -I$b2g_gonk/frameworks/base/include $STLPORT_CPPFLAGS $CPPFLAGS"
-    CFLAGS="-mandroid -I$b2g_gonk/bionic -I$b2g_gonk/prebuilt/ndk/android-ndk-r4/platforms/android-8/arch-arm/usr/include -I$b2g_gonk/frameworks/base/include -fno-short-enums -fno-exceptions $CFLAGS"
-    CXXFLAGS="-mandroid -I$b2g_gonk/bionic -I$b2g_gonk/prebuilt/ndk/android-ndk-r4/platforms/android-8/arch-arm/usr/include -I$b2g_gonk/frameworks/base/include -fno-short-enums -fno-exceptions $CXXFLAGS"
-    LIBS="$LIBS $STLPORT_LIBS"
-
-    dnl Add -llog by default, since we use it all over the place.
-    LDFLAGS="-mandroid -L$b2g_gonk/out/target/product/galaxys2/obj/lib -Wl,-rpath-link=$b2g_gonk/out/target/product/galaxys2/obj/lib --sysroot=$b2g_gonk/out/target/product/galaxys2/obj/ -llog $LDFLAGS"
+if test -n "$gonkdir" ; then
+    dnl Most things are directly configured by env vars when building for gonk
 
     dnl prevent cross compile section from using these flags as host flags
     if test -z "$HOST_CPPFLAGS" ; then
@@ -208,7 +186,6 @@ if test -n "$b2g_gonk" ; then
     fi
 
     AC_DEFINE(ANDROID)
-    CROSS_COMPILE=1
 else
 case "$target" in
 *-android*|*-linuxandroid*)
