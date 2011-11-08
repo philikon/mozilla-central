@@ -4413,7 +4413,7 @@ MOZ_URL_CLASSIFIER=
 MOZ_XTF=1
 MOZ_XUL=1
 MOZ_ZIPWRITER=1
-NS_PRINTING=
+NS_PRINTING=1
 MOZ_PDF_PRINTING=
 MOZ_DISABLE_DOMCRYPTO=
 NSS_DISABLE_DBM=
@@ -4720,6 +4720,7 @@ cairo-gonk)
     TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
     TK_LIBS='$(MOZ_CAIRO_LIBS)'
     MOZ_WEBGL=1
+    MOZ_PDF_PRINTING=1
     ;;
 
 esac
@@ -5338,7 +5339,7 @@ dnl ========================================================
 MOZ_ARG_DISABLE_BOOL(printing,
 [  --disable-printing      Disable printing support],
     NS_PRINTING=,
-    NS_PRINTING=)
+    NS_PRINTING=1)
 
 if test "$NS_PRINTING"; then
     AC_DEFINE(NS_PRINTING)

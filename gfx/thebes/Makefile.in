@@ -252,6 +252,7 @@ endif
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),gonk)
 EXPORTS	+= \
+	gfxPDFSurface.h \
 	$(NULL)
 CPPSRCS += \
 	gfxAndroidPlatform.cpp \
@@ -259,6 +260,7 @@ CPPSRCS += \
 	gfxFT2FontBase.cpp \
 	gfxFT2Utils.cpp \
 	gfxFT2FontList.cpp \
+	gfxPDFSurface.cpp \
 	nsUnicodeRange.cpp \
 	$(NULL)
 endif
