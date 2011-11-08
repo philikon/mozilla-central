@@ -252,6 +252,10 @@
 #include "nsLocation.h"
 #include "nsWrapperCacheInlines.h"
 
+#ifdef ANDROID
+#include <android/log.h>
+#endif
+
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gDOMLeakPRLog;
 #endif
@@ -4574,6 +4578,7 @@ nsGlobalWindow::DOMWindowDumpEnabled()
 NS_IMETHODIMP
 nsGlobalWindow::Dump(const nsAString& aStr)
 {
+  __android_log_print(ANDROID_LOG_INFO, "Gecko", "Got a Dump() call.");
   if (!DOMWindowDumpEnabled()) {
     return NS_OK;
   }
@@ -4591,6 +4596,9 @@ nsGlobalWindow::Dump(const nsAString& aStr)
 #endif
 
   if (cstr) {
+#ifdef ANDROID
+    __android_log_print(ANDROID_LOG_INFO, "Gecko", cstr);
+#endif
     FILE *fp = gDumpFile ? gDumpFile : stdout;
     fputs(cstr, fp);
     fflush(fp);
