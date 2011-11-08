@@ -48,7 +48,8 @@
 #endif
 #endif 
 
-/* Android implementation based on sydney_audio_mac.c */
+/* Gonk implementation based on sydney_audio_mac.c */
+/* XXX This is temporary until we figure out a way to hook ALSA up */
 
 #define NANOSECONDS_IN_MILLISECOND 1000000
 #define MILLISECONDS_PER_SECOND    1000
