@@ -116,7 +116,6 @@ public:
     gfxASurface* GetThebesSurface();
 
 protected:
-    android::FramebufferNativeWindow *mNativeWindow;
     nsWindow* mParent;
     bool mVisible;
 

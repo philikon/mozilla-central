@@ -59,11 +59,12 @@ static nsRefPtr<mozilla::gl::GLContext> sGLContext;
 static nsTArray<nsWindow *> sTopWindows;
 static nsWindow *gWindowToRedraw = nsnull;
 static nsWindow *gFocusedWindow = nsnull;
+static android::FramebufferNativeWindow *gNativeWindow = nsnull;
 
 nsWindow::nsWindow()
 {
     if (!sGLContext) {
-        mNativeWindow = new android::FramebufferNativeWindow();
+        gNativeWindow = new android::FramebufferNativeWindow();
         sGLContext = mozilla::gl::GLContextProvider::CreateForWindow(this);
         // CreateForWindow sets up gScreenBounds
     }
@@ -104,7 +105,6 @@ nsWindow::Create(nsIWidget *aParent,
                  nsDeviceContext *aContext,
                  nsWidgetInitData *aInitData)
 {
-LOG(__PRETTY_FUNCTION__);
     BaseCreate(aParent, IS_TOPLEVEL() ? gScreenBounds : aRect,
                aHandleEventFunction, aContext, aInitData);
 
@@ -129,7 +129,6 @@ LOG(__PRETTY_FUNCTION__);
 NS_IMETHODIMP
 nsWindow::Destroy(void)
 {
-LOG(__PRETTY_FUNCTION__);
     sTopWindows.RemoveElement(this);
     if (this == gWindowToRedraw)
         gWindowToRedraw = nsnull;
@@ -141,7 +140,6 @@ LOG(__PRETTY_FUNCTION__);
 NS_IMETHODIMP
 nsWindow::Show(bool aState)
 {
-LOG(__PRETTY_FUNCTION__);
     if (!IS_TOPLEVEL())
         return NS_OK;
 
@@ -165,7 +163,6 @@ nsWindow::ConstrainPosition(bool aAllowSlop,
                   PRInt32 *aX,
                   PRInt32 *aY)
 {
-LOG(__PRETTY_FUNCTION__);
     return NS_OK;
 }
 
@@ -173,7 +170,6 @@ NS_IMETHODIMP
 nsWindow::Move(PRInt32 aX,
                PRInt32 aY)
 {
-LOG(__PRETTY_FUNCTION__);
     return NS_OK;
 }
 
@@ -182,7 +178,6 @@ nsWindow::Resize(PRInt32 aWidth,
                  PRInt32 aHeight,
                  bool    aRepaint)
 {
-LOG(__PRETTY_FUNCTION__);
     return Resize(0, 0, aWidth, aHeight, aRepaint);
 }
 
@@ -193,7 +188,6 @@ nsWindow::Resize(PRInt32 aX,
                  PRInt32 aHeight,
                  bool    aRepaint)
 {
-LOG(__PRETTY_FUNCTION__);
     nsSizeEvent event(true, NS_SIZE, this);
     event.time = PR_Now() / 1000;
 
@@ -223,7 +217,6 @@ nsWindow::IsEnabled(bool *aState)
 NS_IMETHODIMP
 nsWindow::SetFocus(bool aRaise)
 {
-LOG(__PRETTY_FUNCTION__);
     if (aRaise)
         BringToTop();
 
@@ -234,7 +227,6 @@ LOG(__PRETTY_FUNCTION__);
 NS_IMETHODIMP
 nsWindow::ConfigureChildren(const nsTArray<nsIWidget::Configuration>&)
 {
-LOG(__PRETTY_FUNCTION__);
     return NS_OK;
 }
 
@@ -251,7 +243,6 @@ nsWindow::Invalidate(const nsIntRect &aRect,
 NS_IMETHODIMP
 nsWindow::Update()
 {
-LOG(__PRETTY_FUNCTION__);
     Invalidate(gScreenBounds, false);
     return NS_OK;
 }
@@ -275,10 +266,9 @@ nsWindow::WidgetToScreenOffset()
 void*
 nsWindow::GetNativeData(PRUint32 aDataType)
 {
-LOG(__PRETTY_FUNCTION__);
     switch (aDataType) {
     case NS_NATIVE_WINDOW:
-        return mNativeWindow;
+        return gNativeWindow;
     case NS_NATIVE_WIDGET:
         return this;
     }
@@ -288,14 +278,12 @@ LOG(__PRETTY_FUNCTION__);
 NS_IMETHODIMP
 nsWindow::DispatchEvent(nsGUIEvent *aEvent, nsEventStatus &aStatus)
 {
-LOG(__PRETTY_FUNCTION__);
     return NS_OK;
 }
 
 NS_IMETHODIMP
 nsWindow::ReparentNativeWidget(nsIWidget* aNewParent)
 {
-LOG(__PRETTY_FUNCTION__);
     return NS_OK;
 }
 
@@ -317,14 +305,18 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
         return nsnull;
     }
 
-    if (!sGLContext)
+    if (!sGLContext) {
+        LOG(" -- no GLContext\n");
         return nsnull;
+    }
 
     nsRefPtr<mozilla::layers::LayerManagerOGL> layerManager =
         new mozilla::layers::LayerManagerOGL(this);
 
     if (layerManager && layerManager->Initialize(sGLContext))
         mLayerManager = layerManager;
+    else
+        LOG("Could not create LayerManager");
 
     return mLayerManager;
 }
@@ -332,7 +324,6 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
 gfxASurface *
 nsWindow::GetThebesSurface()
 {
-LOG(__PRETTY_FUNCTION__);
     /* This is really a dummy surface; this is only used when doing reflow, because
      * we need a RenderingContext to measure text against.
      */
@@ -345,7 +336,6 @@ LOG(__PRETTY_FUNCTION__);
 void
 nsWindow::BringToTop()
 {
-LOG(__PRETTY_FUNCTION__);
     if (!sTopWindows.IsEmpty()) {
         nsGUIEvent event(true, NS_DEACTIVATE, sTopWindows[0]);
         (*mEventCallback)(&event);
