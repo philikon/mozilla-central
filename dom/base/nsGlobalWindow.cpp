@@ -4578,7 +4578,6 @@ nsGlobalWindow::DOMWindowDumpEnabled()
 NS_IMETHODIMP
 nsGlobalWindow::Dump(const nsAString& aStr)
 {
-  __android_log_print(ANDROID_LOG_INFO, "Gecko", "Got a Dump() call.");
   if (!DOMWindowDumpEnabled()) {
     return NS_OK;
   }
