@@ -84,15 +84,15 @@ static nsAppShell *gAppShell = NULL;
 static int epollfd = 0;
 static int signalfds[2] = {0};
 
-class fdHandler;
-typedef void(*fdHandlerCallback)(int, fdHandler *);
+class FdHandler;
+typedef void(*FdHandlerCallback)(int, FdHandler *);
 
-class fdHandler {
+class FdHandler {
 public:
-    fdHandler() : mtState(MT_START), mtDown(false) { }
+    FdHandler() : mtState(MT_START), mtDown(false) { }
 
     int fd;
-    fdHandlerCallback func;
+    FdHandlerCallback func;
     enum mtStates {
         MT_START,
         MT_COLLECT,
@@ -108,7 +108,7 @@ public:
     }
 };
 
-static nsTArray<fdHandler> gHandlers;
+static nsTArray<FdHandler> gHandlers;
 
 namespace mozilla {
 
@@ -132,7 +132,7 @@ wakeupSigHandler(int signal)
 }
 
 static void
-pipeHandler(int fd, fdHandler *data)
+pipeHandler(int fd, FdHandler *data)
 {
     ssize_t len;
     do {
@@ -169,7 +169,7 @@ sendMouseEvent(PRUint32 msg, struct timeval *time, int x, int y)
 }
 
 static void
-multitouchHandler(int fd, fdHandler *data)
+multitouchHandler(int fd, FdHandler *data)
 {
     input_event events[16];
     int event_count = read(fd, events, sizeof(events));
@@ -184,10 +184,10 @@ multitouchHandler(int fd, fdHandler *data)
         input_event *event = &events[i];
 
         if (event->type == EV_ABS) {
-            if (data->mtState == fdHandler::MT_IGNORE)
+            if (data->mtState == FdHandler::MT_IGNORE)
                 continue;
-            if (data->mtState == fdHandler::MT_START)
-                data->mtState = fdHandler::MT_COLLECT;
+            if (data->mtState == FdHandler::MT_START)
+                data->mtState = FdHandler::MT_COLLECT;
 
             switch (event->code) {
             case ABS_MT_TOUCH_MAJOR:
@@ -215,11 +215,11 @@ multitouchHandler(int fd, fdHandler *data)
         } else if (event->type == EV_SYN) {
             switch (event->code) {
             case SYN_MT_REPORT:
-                if (data->mtState == fdHandler::MT_COLLECT)
-                    data->mtState = fdHandler::MT_IGNORE;
+                if (data->mtState == FdHandler::MT_COLLECT)
+                    data->mtState = FdHandler::MT_IGNORE;
                 break;
             case SYN_REPORT:
-                if ((!data->mtMajor || data->mtState == fdHandler::MT_START)) {
+                if ((!data->mtMajor || data->mtState == FdHandler::MT_START)) {
                     sendMouseEvent(NS_MOUSE_BUTTON_UP, &event->time,
                                    data->mtX, data->mtY);
                     data->mtDown = false;
@@ -234,7 +234,7 @@ multitouchHandler(int fd, fdHandler *data)
                                    data->mtX, data->mtY);
                     data->mtDown = true;
                 }
-                data->mtState = fdHandler::MT_START;
+                data->mtState = FdHandler::MT_START;
                 break;
             default:
                 LOG("Got unknown event type 0x%04x with code 0x%04x and value %d",
@@ -274,7 +274,7 @@ sendSpecialKeyEvent(nsIAtom *command, const struct timeval &time)
 }
 
 static void
-keyHandler(int fd, fdHandler *data)
+keyHandler(int fd, FdHandler *data)
 {
     // The Linux kernel's input documentation (Documentation/input/input.txt)
     // says that we'll always read a multiple of sizeof(input_event) bytes here.
@@ -377,7 +377,7 @@ nsAppShell::Init()
     int ret = pipe2(signalfds, O_NONBLOCK);
     NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
-    fdHandler *handler = gHandlers.AppendElement();
+    FdHandler *handler = gHandlers.AppendElement();
     handler->fd = signalfds[0];
     handler->func = pipeHandler;
     event.data.u32 = gHandlers.Length() - 1;
@@ -400,7 +400,7 @@ nsAppShell::Init()
         else
             continue;
 
-        fdHandlerCallback handlerFunc = NULL;
+        FdHandlerCallback handlerFunc = NULL;
 
         char flags[(NS_MAX(ABS_MAX, KEY_MAX) + 1) / 8];
         if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(flags)), flags) >= 0 &&

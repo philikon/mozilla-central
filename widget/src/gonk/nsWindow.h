@@ -40,6 +40,8 @@
 
 #include "nsBaseWidget.h"
 
+extern nsIntRect gScreenBounds;
+
 namespace mozilla {
 namespace gl {
 class GLContext;
@@ -108,6 +110,7 @@ public:
     }
     NS_IMETHOD ReparentNativeWidget(nsIWidget* aNewParent);
 
+    virtual float GetDPI();
     virtual mozilla::layers::LayerManager*
         GetLayerManager(PLayersChild* aShadowManager = nsnull,
                         LayersBackend aBackendHint = LayerManager::LAYERS_NONE,

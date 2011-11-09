@@ -15,15 +15,12 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- * John C. Griggs <johng@corel.com>.
- * Portions created by the Initial Developer are Copyright (C) 2000
+ *   Mozilla Foundation
+ * Portions created by the Initial Developer are Copyright (C) 2009-2010
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Zack Rusin <zack@kde.org>
- *   Lars Knoll <knoll@kde.org>
- *   John C. Griggs <johng@corel.com>
- *   Dan Rosen <dr@netscape.com>
+ *   Vladimir Vukicevic <vladimir@pobox.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -44,80 +41,40 @@
 #include "nsCOMPtr.h"
 #include "nsWidgetsCID.h"
 #include "nsAppShell.h"
-#include "nsWindow.h"
 
-#include "nsHTMLFormatConverter.h"
-//#include "nsTransferable.h"
+#include "nsWindow.h"
 #include "nsLookAndFeel.h"
 #include "nsAppShellSingleton.h"
 #include "nsScreenManagerGonk.h"
-//#include "nsFilePicker.h"
-//#include "nsClipboard.h"
-//#include "nsClipboardHelper.h"
-//#include "nsIdleServiceGonk.h"
-//#include "nsDragService.h"
-//#include "nsSound.h"
-//#include "nsBidiKeyboard.h"
-//#include "nsNativeThemeGonk.h"
-#include "nsFilePickerProxy.h"
+
+#include "nsHTMLFormatConverter.h"
 #include "nsXULAppAPI.h"
 
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsWindow)
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsHTMLFormatConverter)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsTransferable)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsScreenManagerGonk)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsClipboard)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsClipboardHelper)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsDragService)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsBidiKeyboard)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsIdleServiceGonk)
-//NS_GENERIC_FACTORY_CONSTRUCTOR(nsSound)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsHTMLFormatConverter)
 
+NS_DEFINE_NAMED_CID(NS_APPSHELL_CID);
 NS_DEFINE_NAMED_CID(NS_WINDOW_CID);
 NS_DEFINE_NAMED_CID(NS_CHILD_CID);
-NS_DEFINE_NAMED_CID(NS_APPSHELL_CID);
-//NS_DEFINE_NAMED_CID(NS_FILEPICKER_CID);
-//NS_DEFINE_NAMED_CID(NS_TRANSFERABLE_CID);
-//NS_DEFINE_NAMED_CID(NS_CLIPBOARD_CID);
-//NS_DEFINE_NAMED_CID(NS_CLIPBOARDHELPER_CID);
-//NS_DEFINE_NAMED_CID(NS_DRAGSERVICE_CID);
-NS_DEFINE_NAMED_CID(NS_HTMLFORMATCONVERTER_CID);
-//NS_DEFINE_NAMED_CID(NS_BIDIKEYBOARD_CID);
 NS_DEFINE_NAMED_CID(NS_SCREENMANAGER_CID);
-//NS_DEFINE_NAMED_CID(NS_THEMERENDERER_CID);
-//NS_DEFINE_NAMED_CID(NS_IDLE_SERVICE_CID);
+NS_DEFINE_NAMED_CID(NS_HTMLFORMATCONVERTER_CID);
 
 static const mozilla::Module::CIDEntry kWidgetCIDs[] = {
     { &kNS_WINDOW_CID, false, NULL, nsWindowConstructor },
     { &kNS_CHILD_CID, false, NULL, nsWindowConstructor },
     { &kNS_APPSHELL_CID, false, NULL, nsAppShellConstructor },
-//    { &kNS_FILEPICKER_CID, false, NULL, nsFilePickerConstructor },
-//    { &kNS_TRANSFERABLE_CID, false, NULL, nsTransferableConstructor },
-//    { &kNS_CLIPBOARD_CID, false, NULL, nsClipboardConstructor },
-//    { &kNS_CLIPBOARDHELPER_CID, false, NULL, nsClipboardHelperConstructor },
-//    { &kNS_DRAGSERVICE_CID, false, NULL, nsDragServiceConstructor },
-    { &kNS_HTMLFORMATCONVERTER_CID, false, NULL, nsHTMLFormatConverterConstructor },
-//    { &kNS_BIDIKEYBOARD_CID, false, NULL, nsBidiKeyboardConstructor },
     { &kNS_SCREENMANAGER_CID, false, NULL, nsScreenManagerGonkConstructor },
-//    { &kNS_IDLE_SERVICE_CID, false, NULL, nsIdleServiceGonkConstructor },
-//    { &kNS_POPUP_CID, false, NULL, nsPopupWindowConstructor },
+    { &kNS_HTMLFORMATCONVERTER_CID, false, NULL, nsHTMLFormatConverterConstructor },
     { NULL }
 };
 
 static const mozilla::Module::ContractIDEntry kWidgetContracts[] = {
-    { "@mozilla.org/widget/window/gonk;1", &kNS_WINDOW_CID },
-    { "@mozilla.org/widget/child_window/gonk;1", &kNS_CHILD_CID },
+    { "@mozilla.org/widgets/window/gonk;1", &kNS_WINDOW_CID },
+    { "@mozilla.org/widgets/child_window/gonk;1", &kNS_CHILD_CID },
     { "@mozilla.org/widget/appshell/gonk;1", &kNS_APPSHELL_CID },
-//    { "@mozilla.org/filepicker;1", &kNS_FILEPICKER_CID },
-//    { "@mozilla.org/widget/transferable;1", &kNS_TRANSFERABLE_CID },
-//    { "@mozilla.org/widget/clipboard;1", &kNS_CLIPBOARD_CID },
-//    { "@mozilla.org/widget/clipboardhelper;1", &kNS_CLIPBOARDHELPER_CID },
-//    { "@mozilla.org/widget/dragservice;1", &kNS_DRAGSERVICE_CID },
-    { "@mozilla.org/widget/htmlformatconverter;1", &kNS_HTMLFORMATCONVERTER_CID },
-//    { "@mozilla.org/widget/bidikeyboard;1", &kNS_BIDIKEYBOARD_CID },
     { "@mozilla.org/gfx/screenmanager;1", &kNS_SCREENMANAGER_CID },
-//    { "@mozilla.org/chrome/chrome-native-theme;1", &kNS_THEMERENDERER_CID },
-//    { "@mozilla.org/widget/idleservice;1", &kNS_IDLE_SERVICE_CID },
+    { "@mozilla.org/widget/htmlformatconverter;1", &kNS_HTMLFORMATCONVERTER_CID },
     { NULL }
 };
 
@@ -125,7 +82,6 @@ static void
 nsWidgetGonkModuleDtor()
 {
     nsLookAndFeel::Shutdown();
- //   nsWindow::ReleaseGlobals();
     nsAppShellShutdown();
 }
 

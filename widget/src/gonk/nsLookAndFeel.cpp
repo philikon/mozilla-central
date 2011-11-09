@@ -70,9 +70,6 @@ nsLookAndFeel::NativeGetColor(ColorID aID, nscolor &aColor)
 #define TEXT_NORMAL_COLOR     NS_RGB(0x00,0x00,0x00)
 #define TEXT_SELECTED_COLOR   NS_RGB(0x00,0x00,0x00)
 
-    // XXX we'll want to use context.obtainStyledAttributes on the java side to
-    // get all of these; see TextView.java for a good exmaple.
-
     switch (aID) {
         // These colors don't seem to be used for anything anymore in Mozilla
         // (except here at least TextSelectBackground and TextSelectForeground)

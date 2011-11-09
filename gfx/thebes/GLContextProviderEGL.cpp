@@ -215,9 +215,6 @@ static EGLConfig
 CreateEGLSurfaceForXSurface(gfxASurface* aSurface, EGLConfig* aConfig = nsnull, EGLenum aDepth = 0);
 #endif
 
-#ifdef ANDROID
-#define printf_stderr(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk EGL" , ## args)
-#endif
 static int
 next_power_of_two(int v)
 {

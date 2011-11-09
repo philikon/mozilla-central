@@ -53,9 +53,12 @@
 
 #define IS_TOPLEVEL() (mWindowType == eWindowType_toplevel || mWindowType == eWindowType_dialog)
 
+using namespace mozilla::gl;
+using namespace mozilla::layers;
+
 nsIntRect gScreenBounds;
 
-static nsRefPtr<mozilla::gl::GLContext> sGLContext;
+static nsRefPtr<GLContext> sGLContext;
 static nsTArray<nsWindow *> sTopWindows;
 static nsWindow *gWindowToRedraw = nsnull;
 static nsWindow *gFocusedWindow = nsnull;
@@ -65,7 +68,7 @@ nsWindow::nsWindow()
 {
     if (!sGLContext) {
         gNativeWindow = new android::FramebufferNativeWindow();
-        sGLContext = mozilla::gl::GLContextProvider::CreateForWindow(this);
+        sGLContext = GLContextProvider::CreateForWindow(this);
         // CreateForWindow sets up gScreenBounds
     }
 }
@@ -82,7 +85,7 @@ nsWindow::DoDraw(void)
 
     nsPaintEvent event(true, NS_PAINT, gWindowToRedraw);
     event.region = gScreenBounds;
-    static_cast<mozilla::layers::LayerManagerOGL*>(gWindowToRedraw->GetLayerManager(nsnull))->
+    static_cast<LayerManagerOGL*>(gWindowToRedraw->GetLayerManager(nsnull))->
                     SetClippingRegion(nsIntRegion(gScreenBounds));
     gWindowToRedraw->mEventCallback(&event);
 }
@@ -287,7 +290,13 @@ nsWindow::ReparentNativeWidget(nsIWidget* aNewParent)
     return NS_OK;
 }
 
-mozilla::layers::LayerManager *
+float
+nsWindow::GetDPI()
+{
+    return gNativeWindow->xdpi;
+}
+
+LayerManager *
 nsWindow::GetLayerManager(PLayersChild* aShadowManager,
                           LayersBackend aBackendHint,
                           LayerManagerPersistence aPersistence,
@@ -310,10 +319,10 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
         return nsnull;
     }
 
-    nsRefPtr<mozilla::layers::LayerManagerOGL> layerManager =
-        new mozilla::layers::LayerManagerOGL(this);
+    nsRefPtr<LayerManagerOGL> layerManager =
+        new LayerManagerOGL(this);
 
-    if (layerManager && layerManager->Initialize(sGLContext))
+    if (layerManager->Initialize(sGLContext))
         mLayerManager = layerManager;
     else
         LOG("Could not create LayerManager");
