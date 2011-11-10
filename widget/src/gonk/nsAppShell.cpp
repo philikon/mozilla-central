@@ -84,32 +84,6 @@ static nsAppShell *gAppShell = NULL;
 static int epollfd = 0;
 static int signalfds[2] = {0};
 
-class FdHandler;
-typedef void(*FdHandlerCallback)(int, FdHandler *);
-
-class FdHandler {
-public:
-    FdHandler() : mtState(MT_START), mtDown(false) { }
-
-    int fd;
-    FdHandlerCallback func;
-    enum mtStates {
-        MT_START,
-        MT_COLLECT,
-        MT_IGNORE
-    } mtState;
-    int mtX, mtY;
-    int mtMajor;
-    bool mtDown;
-
-    void run()
-    {
-        func(fd, this);
-    }
-};
-
-static nsTArray<FdHandler> gHandlers;
-
 namespace mozilla {
 
 bool ProcessNextEvent()
@@ -372,6 +346,7 @@ keyHandler(int fd, FdHandler *data)
 
 nsAppShell::nsAppShell()
     : mNativeCallbackRequest(false)
+    , mHandlers()
 {
     gAppShell = this;
 }
@@ -398,10 +373,10 @@ nsAppShell::Init()
     int ret = pipe2(signalfds, O_NONBLOCK);
     NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
-    FdHandler *handler = gHandlers.AppendElement();
+    FdHandler *handler = mHandlers.AppendElement();
     handler->fd = signalfds[0];
     handler->func = pipeHandler;
-    event.data.u32 = gHandlers.Length() - 1;
+    event.data.u32 = mHandlers.Length() - 1;
     ret = epoll_ctl(epollfd, EPOLL_CTL_ADD, signalfds[0], &event);
     NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
@@ -438,10 +413,10 @@ nsAppShell::Init()
         if (!handlerFunc)
             continue;
 
-        handler = gHandlers.AppendElement();
+        handler = mHandlers.AppendElement();
         handler->fd = fd;
         handler->func = handlerFunc;
-        event.data.u32 = gHandlers.Length() - 1;
+        event.data.u32 = mHandlers.Length() - 1;
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event))
             LOG("Failed to add fd to epoll fd");
     }
@@ -466,7 +441,7 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
         return true;
 
     for (int i = 0; i < event_count; i++)
-        gHandlers[events[i].data.u32].run();
+        mHandlers[events[i].data.u32].run();
 
     // NativeEventCallback always schedules more if it needs it
     // so we can coalesce these.

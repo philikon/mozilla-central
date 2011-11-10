@@ -47,6 +47,30 @@ void NotifyEvent();
 
 extern bool gDrawRequest;
 
+class FdHandler;
+typedef void(*FdHandlerCallback)(int, FdHandler *);
+
+class FdHandler {
+public:
+    FdHandler() : mtState(MT_START), mtDown(false) { }
+
+    int fd;
+    FdHandlerCallback func;
+    enum mtStates {
+        MT_START,
+        MT_COLLECT,
+        MT_IGNORE
+    } mtState;
+    int mtX, mtY;
+    int mtMajor;
+    bool mtDown;
+
+    void run()
+    {
+        func(fd, this);
+    }
+};
+
 class nsAppShell : public nsBaseAppShell {
 public:
     nsAppShell();
@@ -62,6 +86,7 @@ protected:
     virtual void ScheduleNativeEventCallback();
 
     bool mNativeCallbackRequest;
+    nsTArray<FdHandler> mHandlers;
 };
 
 #endif /* nsAppShell_h */
