@@ -338,11 +338,6 @@ if test -n "$gonkdir" ; then
     MOZ_CHROME_FILE_FORMAT=omni
     ZLIB_DIR=yes
     direct_nspr_config=1
-
-    dnl to trick the nss wrapper into doing the right thing
-    ANDROID_VERSION=8
-    AC_DEFINE_UNQUOTED(ANDROID_VERSION, 8)
-    AC_SUBST(ANDROID_VERSION)
 else
 case "$target" in
 *-android*|*-linuxandroid*)
