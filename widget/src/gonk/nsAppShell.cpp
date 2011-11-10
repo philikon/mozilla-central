@@ -310,34 +310,27 @@ keyHandler(int fd, FdHandler *data)
         const char* upOrDown = pressed ? "pressed" : "released";
         switch (e.code) {
         case KEY_BACK:
-            LOG("Back key %s", upOrDown);
             sendKeyEvent(NS_VK_ESCAPE, pressed, e.time);
             break;
         case KEY_MENU:
-            LOG("Menu key %s", upOrDown);
             if (!pressed)
                 sendSpecialKeyEvent(nsGkAtoms::Menu, e.time);
             break;
         case KEY_SEARCH:
-            LOG("Search key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::Search, e.time);
             break;
         case KEY_HOME:
-            LOG("Home key %s", upOrDown);
             sendKeyEvent(NS_VK_HOME, pressed, e.time);
             break;
         case KEY_POWER:
-            LOG("Power key %s", upOrDown);
             sendKeyEvent(NS_VK_SLEEP, pressed, e.time);
             break;
         case KEY_VOLUMEUP:
-            LOG("Volume up key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::VolumeUp, e.time);
             break;
         case KEY_VOLUMEDOWN:
-            LOG("Volume down key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::VolumeDown, e.time);
             break;
