@@ -46,8 +46,6 @@ const kDefaultSystemHomeScreen = "/system/home/homescreen.html";
 
 var LocalFile = CC("@mozilla.org/file/local;1", "nsILocalFile", "initWithPath");
 
-Cu.import("resource:///modules/dbg-logger.jsm");
-
 var shell = {
   get home() {
     delete this.home;
@@ -73,7 +71,7 @@ var shell = {
     DebuggerServer.addActors("resource:///modules/marionette-actors.js");
     DebuggerServer.init();
     DebuggerServer.openListener(2929, true);
-    gWriteLog('opened listener on 2929');
+    dump('Marionette: opened listener on port 2929');
   },
 
   start: function shell_init() {
