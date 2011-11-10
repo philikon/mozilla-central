@@ -43,6 +43,7 @@
 #include "jsobj.h"
 #include "jslibmath.h"
 #include "jsiter.h"
+#include "jsgcmark.h"
 #include "jsnum.h"
 #include "jsxml.h"
 #include "jsbool.h"
@@ -1214,6 +1215,8 @@ stubs::DebuggerStatement(VMFrame &f, jsbytecode *pc)
 void JS_FASTCALL
 stubs::Interrupt(VMFrame &f, jsbytecode *pc)
 {
+    gc::VerifyBarriers(f.cx);
+
     if (!js_HandleExecutionInterrupt(f.cx))
         THROW();
 }
@@ -1943,19 +1946,6 @@ stubs::FastInstanceOf(VMFrame &f)
 }
 
 void JS_FASTCALL
-stubs::ArgCnt(VMFrame &f)
-{
-    JSContext *cx = f.cx;
-    JSRuntime *rt = cx->runtime;
-    StackFrame *fp = f.fp();
-
-    jsid id = ATOM_TO_JSID(rt->atomState.lengthAtom);
-    f.regs.sp++;
-    if (!js_GetArgsProperty(cx, fp, id, &f.regs.sp[-1]))
-        THROW();
-}
-
-void JS_FASTCALL
 stubs::EnterBlock(VMFrame &f, JSObject *obj)
 {
     FrameRegs &regs = f.regs;
@@ -2181,16 +2171,6 @@ stubs::Pos(VMFrame &f)
         THROW();
     if (!f.regs.sp[-1].isInt32())
         TypeScript::MonitorOverflow(f.cx, f.script(), f.pc());
-}
-
-void JS_FASTCALL
-stubs::ArgSub(VMFrame &f, uint32 n)
-{
-    jsid id = INT_TO_JSID(n);
-    Value rval;
-    if (!js_GetArgsProperty(f.cx, f.fp(), id, &rval))
-        THROW();
-    f.regs.sp[0] = rval;
 }
 
 void JS_FASTCALL
@@ -2570,4 +2550,18 @@ stubs::ConvertToTypedFloat(JSContext *cx, Value *vp)
         JS_ASSERT(success);
         vp->setDouble(d);
     }
+}
+
+void JS_FASTCALL
+stubs::WriteBarrier(VMFrame &f, Value *addr)
+{
+    js::gc::MarkValueUnbarriered(f.cx->compartment->barrierTracer(), *addr, "write barrier");
+}
+
+void JS_FASTCALL
+stubs::GCThingWriteBarrier(VMFrame &f, Value *addr)
+{
+    gc::Cell *cell = (gc::Cell *)addr->toGCThing();
+    if (cell && !cell->isMarked())
+        gc::MarkValueUnbarriered(f.cx->compartment->barrierTracer(), *addr, "write barrier");
 }

@@ -410,14 +410,15 @@ public:
 //   class Comparator {
 //     public:
 //       /** @return True if the elements are equals; false otherwise. */
-//       bool Equals(const elem_type& a, const elem_type& b) const;
+//       bool Equals(const elem_type& a, const Item& b) const;
 //
 //       /** @return True if (a < b); false otherwise. */
-//       bool LessThan(const elem_type& a, const elem_type& b) const;
+//       bool LessThan(const elem_type& a, const Item& b) const;
 //   };
 //
 // The Equals method is used for searching, and the LessThan method is used
-// for sorting.
+// for sorting.  The |Item| type above can be arbitrary, but must match the
+// Item type passed to the sort or search function.
 //
 // The Alloc template parameter can be used to choose between
 // "fallible" and "infallible" nsTArray (if available), defaulting to
@@ -441,6 +442,7 @@ public:
   typedef nsTArray_SafeElementAtHelper<E, self_type> safeelementat_helper_type;
 
   using safeelementat_helper_type::SafeElementAt;
+  using base_type::EmptyHdr;
 
   // A special value that is used to indicate an invalid or unknown index
   // into the array.
@@ -514,10 +516,13 @@ public:
   }
 
   // @return The amount of memory taken used by this nsTArray, not including
-  // sizeof(this)
+  // sizeof(*this).
   size_t SizeOf() const {
-    return this->UsesAutoArrayBuffer() ?
-      0 : this->Capacity() * sizeof(elem_type) + sizeof(*this->Hdr());
+    if (this->UsesAutoArrayBuffer() || Hdr() == EmptyHdr())
+      return 0;
+    size_t usable = moz_malloc_usable_size(this->Hdr());
+    return usable ? usable : 
+      this->Capacity() * sizeof(elem_type) + sizeof(*this->Hdr());
   }
 
   //

@@ -164,8 +164,8 @@ JSObject::allocateArrayBufferSlots(JSContext *cx, uint32 size)
     JS_ASSERT(isArrayBuffer() && !hasSlotsArray());
 
     uint32 bytes = size + sizeof(Value);
-    if (size > sizeof(Value) * ARRAYBUFFER_RESERVED_SLOTS - sizeof(Value) ) {
-        Value *tmpslots = (Value *)cx->calloc_(bytes);
+    if (size > sizeof(HeapValue) * ARRAYBUFFER_RESERVED_SLOTS - sizeof(HeapValue) ) {
+        HeapValue *tmpslots = (HeapValue *)cx->calloc_(bytes);
         if (!tmpslots)
             return false;
         slots = tmpslots;
@@ -174,7 +174,7 @@ JSObject::allocateArrayBufferSlots(JSContext *cx, uint32 size)
          * |capacity * sizeof(Value)| may underestimate the size by up to
          * |sizeof(Value) - 1| bytes.
          */
-        capacity = bytes / sizeof(Value);
+        capacity = bytes / sizeof(HeapValue);
     } else {
         slots = fixedSlots();
         memset(slots, 0, bytes);
@@ -232,9 +232,13 @@ ArrayBuffer::~ArrayBuffer()
 void
 ArrayBuffer::obj_trace(JSTracer *trc, JSObject *obj)
 {
+    /*
+     * If this object changes, it will get marked via the private data barrier,
+     * so it's safe to leave it Unbarriered.
+     */
     JSObject *delegate = static_cast<JSObject*>(obj->getPrivate());
     if (delegate)
-        MarkObject(trc, *delegate, "arraybuffer.delegate");
+        MarkObjectUnbarriered(trc, delegate, "arraybuffer.delegate");
 }
 
 static JSProperty * const PROPERTY_FOUND = reinterpret_cast<JSProperty *>(1);
@@ -390,6 +394,16 @@ ArrayBuffer::obj_getElement(JSContext *cx, JSObject *obj, JSObject *receiver, ui
     if (!delegate)
         return false;
     return js_GetElement(cx, delegate, receiver, index, vp);
+}
+
+JSBool
+ArrayBuffer::obj_getElementIfPresent(JSContext *cx, JSObject *obj, JSObject *receiver,
+                                     uint32 index, Value *vp, bool *present)
+{
+    JSObject *delegate = DelegateObject(cx, getArrayBuffer(obj));
+    if (!delegate)
+        return false;
+    return delegate->getElementIfPresent(cx, receiver, index, vp, present);
 }
 
 JSBool
@@ -812,7 +826,7 @@ TypedArray::obj_setSpecialAttributes(JSContext *cx, JSObject *obj, SpecialId sid
 /* static */ int
 TypedArray::lengthOffset()
 {
-    return JSObject::getFixedSlotOffset(FIELD_LENGTH) + offsetof(jsval_layout, s.payload);
+    return JSObject::getFixedSlotOffset(FIELD_LENGTH);
 }
 
 /* static */ int
@@ -985,9 +999,7 @@ class TypedArrayTemplate
     static void
     obj_trace(JSTracer *trc, JSObject *obj)
     {
-        JSObject *buffer = static_cast<JSObject*>(getBuffer(obj));
-        if (buffer)
-            MarkObject(trc, *buffer, "typedarray.buffer");
+        MarkValue(trc, obj->getFixedSlotRef(FIELD_BUFFER), "typedarray.buffer");
     }
 
     static JSBool
@@ -1004,31 +1016,16 @@ class TypedArrayTemplate
         if (isArrayIndex(cx, tarray, id, &index)) {
             // this inline function is specialized for each type
             copyIndexToValue(cx, tarray, index, vp);
-        } else {
-            JSObject *obj2;
-            JSProperty *prop;
-            const Shape *shape;
-
-            JSObject *proto = obj->getProto();
-            if (!proto) {
-                vp->setUndefined();
-                return true;
-            }
-
-            vp->setUndefined();
-            if (!LookupPropertyWithFlags(cx, proto, id, cx->resolveFlags, &obj2, &prop))
-                return false;
-
-            if (prop) {
-                if (obj2->isNative()) {
-                    shape = (Shape *) prop;
-                    if (!js_NativeGet(cx, obj, obj2, shape, JSGET_METHOD_BARRIER, vp))
-                        return false;
-                }
-            }
+            return true;
         }
 
-        return true;
+        JSObject *proto = obj->getProto();
+        if (!proto) {
+            vp->setUndefined();
+            return true;
+        }
+
+        return proto->getGeneric(cx, receiver, id, vp);
     }
 
     static JSBool
@@ -1055,22 +1052,29 @@ class TypedArrayTemplate
             return true;
         }
 
-        vp->setUndefined();
+        return proto->getElement(cx, receiver, index, vp);
+    }
 
-        jsid id;
-        if (!IndexToId(cx, index, &id))
-            return false;
+    static JSBool
+    obj_getElementIfPresent(JSContext *cx, JSObject *obj, JSObject *receiver, uint32 index, Value *vp, bool *present)
+    {
+        // Fast-path the common case of index < length
+        JSObject *tarray = getTypedArray(obj);
 
-        JSObject *obj2;
-        JSProperty *prop;
-        if (!LookupPropertyWithFlags(cx, proto, id, cx->resolveFlags, &obj2, &prop))
-            return false;
-
-        if (!prop || !obj2->isNative())
+        if (index < getLength(tarray)) {
+            // this inline function is specialized for each type
+            copyIndexToValue(cx, tarray, index, vp);
+            *present = true;
             return true;
+        }
 
-        const Shape *shape = (Shape *) prop;
-        return js_NativeGet(cx, obj, obj2, shape, JSGET_METHOD_BARRIER, vp);
+        JSObject *proto = obj->getProto();
+        if (!proto) {
+            vp->setUndefined();
+            return true;
+        }
+
+        return proto->getElementIfPresent(cx, receiver, index, vp, present);
     }
 
     static JSBool
@@ -2105,6 +2109,7 @@ Class js::ArrayBufferClass = {
         ArrayBuffer::obj_getGeneric,
         ArrayBuffer::obj_getProperty,
         ArrayBuffer::obj_getElement,
+        ArrayBuffer::obj_getElementIfPresent,
         ArrayBuffer::obj_getSpecial,
         ArrayBuffer::obj_setGeneric,
         ArrayBuffer::obj_setProperty,
@@ -2217,6 +2222,7 @@ JSFunctionSpec _typedArray::jsfuncs[] = {                                      \
         _typedArray::obj_getGeneric,                                           \
         _typedArray::obj_getProperty,                                          \
         _typedArray::obj_getElement,                                           \
+        _typedArray::obj_getElementIfPresent,                                  \
         _typedArray::obj_getSpecial,                                           \
         _typedArray::obj_setGeneric,                                           \
         _typedArray::obj_setProperty,                                          \

@@ -409,6 +409,39 @@ mjit::Compiler::compileGetChar(FrameEntry *thisValue, FrameEntry *arg, GetCharMo
 }
 
 CompileStatus
+mjit::Compiler::compileStringFromCode(FrameEntry *arg)
+{
+    /* Load Char-Code into argReg */
+    RegisterID argReg;
+    if (arg->isConstant()) {
+        argReg = frame.allocReg();
+        masm.move(Imm32(arg->getValue().toInt32()), argReg);
+    } else {
+        argReg = frame.copyDataIntoReg(arg);
+    }
+
+    /* Slow path if there's no unit string for this character. */
+    Jump notUnitString = masm.branch32(Assembler::AboveOrEqual, argReg,
+                                       Imm32(StaticStrings::UNIT_STATIC_LIMIT));
+    stubcc.linkExit(notUnitString, Uses(3));
+
+    /* Load unit string in reg. */
+    masm.lshiftPtr(Imm32(sizeof(JSAtom *) == 4 ? 2 : 3), argReg);
+    masm.addPtr(ImmPtr(&cx->runtime->staticStrings.unitStaticTable), argReg);
+    masm.loadPtr(Address(argReg), argReg);
+
+    stubcc.leave();
+    stubcc.masm.move(Imm32(1), Registers::ArgReg1);
+    OOL_STUBCALL(stubs::SlowCall, REJOIN_FALLTHROUGH);
+
+    frame.popn(3);
+    frame.pushTypedPayload(JSVAL_TYPE_STRING, argReg);
+
+    stubcc.rejoin(Changes(1));
+    return Compile_Okay;
+}
+
+CompileStatus
 mjit::Compiler::compileArrayPush(FrameEntry *thisValue, FrameEntry *arg)
 {
     /* This behaves like an assignment this[this.length] = arg; */
@@ -434,7 +467,7 @@ mjit::Compiler::compileArrayPush(FrameEntry *thisValue, FrameEntry *arg)
     Int32Key key = Int32Key::FromRegister(lengthReg);
 
     /* Test for 'length == initializedLength' */
-    Jump initlenGuard = masm.guardArrayExtent(offsetof(JSObject, initializedLength),
+    Jump initlenGuard = masm.guardArrayExtent(JSObject::offsetOfInitializedLength(),
                                               objReg, key, Assembler::NotEqual);
     stubcc.linkExit(initlenGuard, Uses(3));
 
@@ -448,7 +481,7 @@ mjit::Compiler::compileArrayPush(FrameEntry *thisValue, FrameEntry *arg)
 
     masm.bumpKey(key, 1);
     masm.store32(lengthReg, Address(objReg, offsetof(JSObject, privateData)));
-    masm.store32(lengthReg, Address(objReg, offsetof(JSObject, initializedLength)));
+    masm.store32(lengthReg, Address(objReg, JSObject::offsetOfInitializedLength()));
 
     stubcc.leave();
     stubcc.masm.move(Imm32(1), Registers::ArgReg1);
@@ -470,6 +503,12 @@ mjit::Compiler::compileArrayPopShift(FrameEntry *thisValue, bool isPacked, bool 
     /* Filter out silly cases. */
     if (thisValue->isConstant())
         return Compile_InlineAbort;
+
+#ifdef JSGC_INCREMENTAL_MJ
+    /* Write barrier. */
+    if (cx->compartment->needsBarrier())
+        return Compile_InlineAbort;
+#endif
 
     RegisterID objReg = frame.tempRegForData(thisValue);
     frame.pinReg(objReg);
@@ -500,7 +539,7 @@ mjit::Compiler::compileArrayPopShift(FrameEntry *thisValue, bool isPacked, bool 
 
     /* Test for 'length == initializedLength' */
     Int32Key key = Int32Key::FromRegister(lengthReg);
-    Jump initlenGuard = masm.guardArrayExtent(offsetof(JSObject, initializedLength),
+    Jump initlenGuard = masm.guardArrayExtent(JSObject::offsetOfInitializedLength(),
                                               objReg, key, Assembler::NotEqual);
     stubcc.linkExit(initlenGuard, Uses(3));
 
@@ -536,7 +575,7 @@ mjit::Compiler::compileArrayPopShift(FrameEntry *thisValue, bool isPacked, bool 
     }
 
     masm.store32(lengthReg, Address(objReg, offsetof(JSObject, privateData)));
-    masm.store32(lengthReg, Address(objReg, offsetof(JSObject, initializedLength)));
+    masm.store32(lengthReg, Address(objReg, JSObject::offsetOfInitializedLength()));
 
     if (!isArrayPop)
         INLINE_STUBCALL(stubs::ArrayShift, REJOIN_NONE);
@@ -635,13 +674,13 @@ mjit::Compiler::compileArrayConcat(types::TypeSet *thisTypes, types::TypeSet *ar
 
     RegisterID objReg = frame.tempRegForData(thisValue);
     masm.load32(Address(objReg, offsetof(JSObject, privateData)), reg);
-    Jump initlenOneGuard = masm.guardArrayExtent(offsetof(JSObject, initializedLength),
+    Jump initlenOneGuard = masm.guardArrayExtent(JSObject::offsetOfInitializedLength(),
                                                  objReg, key, Assembler::NotEqual);
     stubcc.linkExit(initlenOneGuard, Uses(3));
 
     objReg = frame.tempRegForData(argValue);
     masm.load32(Address(objReg, offsetof(JSObject, privateData)), reg);
-    Jump initlenTwoGuard = masm.guardArrayExtent(offsetof(JSObject, initializedLength),
+    Jump initlenTwoGuard = masm.guardArrayExtent(JSObject::offsetOfInitializedLength(),
                                                  objReg, key, Assembler::NotEqual);
     stubcc.linkExit(initlenTwoGuard, Uses(3));
 
@@ -752,7 +791,7 @@ mjit::Compiler::compileArrayWithArgs(uint32 argc)
     }
 
     masm.storePtr(ImmIntPtr(intptr_t(argc)),
-                  Address(result, offsetof(JSObject, initializedLength)));
+                  Address(result, JSObject::offsetOfInitializedLength()));
 
     stubcc.leave();
 
@@ -871,6 +910,10 @@ mjit::Compiler::inlineNativeFunction(uint32 argc, bool callingNew)
         if (native == js_str_charAt && argType == JSVAL_TYPE_INT32 &&
             thisType == JSVAL_TYPE_STRING && type == JSVAL_TYPE_STRING) {
             return compileGetChar(thisValue, arg, GetChar);
+        }
+        if (native == js::str_fromCharCode && argType == JSVAL_TYPE_INT32 &&
+            type == JSVAL_TYPE_STRING) {
+            return compileStringFromCode(arg);
         }
         if (native == js::array_push &&
             thisType == JSVAL_TYPE_OBJECT && type == JSVAL_TYPE_INT32) {

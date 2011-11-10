@@ -207,6 +207,8 @@
  * were non-null and minimal-length.  Until a scope is searched
  * MAX_LINEAR_SEARCHES times, we use linear search from obj->lastProp to find a
  * given id, and save on the time and space overhead of creating a hash table.
+ * Also, we don't create tables for property tree Shapes that have shape
+ * lineages smaller than MIN_ENTRIES.
  */
 
 #define SHAPE_INVALID_SLOT              0xffffffff
@@ -215,12 +217,11 @@ namespace js {
 
 /*
  * Shapes use multiplicative hashing, _a la_ jsdhash.[ch], but specialized to
- * minimize footprint.  But if a Shape lineage has been searched fewer than
- * MAX_LINEAR_SEARCHES times, we use linear search and avoid allocating
- * scope->table.
+ * minimize footprint.
  */
 struct PropertyTable {
     static const uint32 MAX_LINEAR_SEARCHES = 7;
+    static const uint32 MIN_ENTRIES         = 7;
     static const uint32 MIN_SIZE_LOG2       = 4;
     static const uint32 MIN_SIZE            = JS_BIT(MIN_SIZE_LOG2);
 
@@ -329,7 +330,7 @@ struct Shape : public js::gc::Cell
 
     inline void freeTable(JSContext *cx);
 
-    jsid                propid;
+    HeapId              propid;
 
   protected:
     union {
@@ -357,26 +358,27 @@ struct Shape : public js::gc::Cell
     int16               shortid;        /* tinyid, or local arg/var index */
 
   protected:
-    mutable js::Shape   *parent;        /* parent node, reverse for..in order */
+    mutable HeapPtrShape parent;        /* parent node, reverse for..in order */
     /* kids is valid when !inDictionary(), listp is valid when inDictionary(). */
     union {
         mutable js::KidsPointer kids;   /* null, single child, or a tagged ptr
                                            to many-kids data structure */
-        mutable js::Shape **listp;      /* dictionary list starting at lastProp
+        mutable HeapPtrShape *listp;    /* dictionary list starting at lastProp
                                            has a double-indirect back pointer,
                                            either to shape->parent if not last,
                                            else to obj->lastProp */
     };
 
-    static inline js::Shape **search(JSContext *cx, js::Shape **startp, jsid id,
+    static inline js::Shape **search(JSContext *cx, HeapPtr<Shape> *startp, jsid id,
                                      bool adding = false);
-    static js::Shape *newDictionaryShape(JSContext *cx, const js::Shape &child, js::Shape **listp);
-    static js::Shape *newDictionaryList(JSContext *cx, js::Shape **listp);
+    static js::Shape *newDictionaryShape(JSContext *cx, const js::Shape &child,
+                                         HeapPtr<Shape> *listp);
+    static js::Shape *newDictionaryList(JSContext *cx, HeapPtr<Shape> *listp);
 
     inline void removeFromDictionary(JSObject *obj) const;
-    inline void insertIntoDictionary(js::Shape **dictp);
+    inline void insertIntoDictionary(HeapPtr<Shape> *dictp);
 
-    js::Shape *getChild(JSContext *cx, const js::Shape &child, js::Shape **listp);
+    js::Shape *getChild(JSContext *cx, const js::Shape &child, HeapPtr<Shape> *listp);
 
     bool hashify(JSContext *cx);
 
@@ -453,7 +455,8 @@ struct Shape : public js::gc::Cell
 
     size_t sizeOfKids(JSUsableSizeFun usf) const {
         /* Nb: |countMe| is true because the kids HashTable is on the heap. */
-        return (!inDictionary() && kids.isHash())
+        JS_ASSERT(!inDictionary());
+        return kids.isHash()
              ? kids.toHash()->sizeOf(usf, /* countMe */true)
              : 0;
     }
@@ -521,7 +524,7 @@ struct Shape : public js::gc::Cell
     /* Used by sharedNonNative. */
     explicit Shape(uint32 shape);
 
-    bool inDictionary() const   { return (flags & IN_DICTIONARY) != 0; }
+  protected:
     bool frozen() const         { return (flags & FROZEN) != 0; }
     void setFrozen()            { flags |= FROZEN; }
 
@@ -535,6 +538,7 @@ struct Shape : public js::gc::Cell
         PUBLIC_FLAGS    = HAS_SHORTID | METHOD
     };
 
+    bool inDictionary() const   { return (flags & IN_DICTIONARY) != 0; }
     uintN getFlags() const  { return flags & PUBLIC_FLAGS; }
     bool hasShortID() const { return (flags & HAS_SHORTID) != 0; }
     bool isMethod() const   { return (flags & METHOD) != 0; }
@@ -570,6 +574,8 @@ struct Shape : public js::gc::Cell
     Value setterOrUndefined() const {
         return hasSetterValue() && setterObj ? js::ObjectValue(*setterObj) : js::UndefinedValue();
     }
+
+    void update(js::PropertyOp getter, js::StrictPropertyOp setter, uint8 attrs);
 
     inline JSDHashNumber hash() const;
     inline bool matches(const js::Shape *p) const;
@@ -625,6 +631,18 @@ struct Shape : public js::gc::Cell
         return count;
     }
 
+    bool isBigEnoughForAPropertyTable() const {
+        JS_ASSERT(!hasTable());
+        const js::Shape *shape = this;
+        uint32 count = 0;
+        for (js::Shape::Range r = shape->all(); !r.empty(); r.popFront()) {
+            ++count;
+            if (count >= PropertyTable::MIN_ENTRIES)
+                return true;
+        }
+        return false;
+    }
+
 #ifdef DEBUG
     void dump(JSContext *cx, FILE *fp) const;
     void dumpSubtree(JSContext *cx, int level, FILE *fp) const;
@@ -632,7 +650,16 @@ struct Shape : public js::gc::Cell
 
     void finalize(JSContext *cx);
     void removeChild(js::Shape *child);
-    void removeChildSlowly(js::Shape *child);
+
+    inline static void writeBarrierPre(const js::Shape *shape);
+    inline static void writeBarrierPost(const js::Shape *shape, void *addr);
+
+    /*
+     * All weak references need a read barrier for incremental GC. This getter
+     * method implements the read barrier. It's used to obtain initial shapes
+     * from the compartment.
+     */
+    inline static void readBarrier(const js::Shape *shape);
 };
 
 struct EmptyShape : public js::Shape
@@ -648,18 +675,10 @@ struct EmptyShape : public js::Shape
         return new (eprop) EmptyShape(cx->compartment, clasp);
     }
 
-    static EmptyShape *ensure(JSContext *cx, js::Class *clasp, EmptyShape **shapep) {
-        EmptyShape *shape = *shapep;
-        if (!shape) {
-            if (!(shape = create(cx, clasp)))
-                return NULL;
-            return *shapep = shape;
-        }
-        return shape;
-    }
+    static inline EmptyShape *ensure(JSContext *cx, js::Class *clasp,
+                                     ReadBarriered<EmptyShape> *shapep);
 
     static inline EmptyShape *getEmptyArgumentsShape(JSContext *cx);
-
     static inline EmptyShape *getEmptyBlockShape(JSContext *cx);
     static inline EmptyShape *getEmptyCallShape(JSContext *cx);
     static inline EmptyShape *getEmptyDeclEnvShape(JSContext *cx);
@@ -704,17 +723,31 @@ js_GenerateShape(JSContext *cx);
 
 namespace js {
 
+/*
+ * The search succeeds if it finds a Shape with the given id.  There are two
+ * success cases:
+ * - If the Shape is the last in its shape lineage, we return |startp|, which
+ *   is &obj->lastProp or something similar.
+ * - Otherwise, we return &shape->parent, where |shape| is the successor to the
+ *   found Shape.
+ *
+ * There is one failure case:  we return &emptyShape->parent, where
+ * |emptyShape| is the EmptyShape at the start of the shape lineage.
+ */
 JS_ALWAYS_INLINE js::Shape **
-Shape::search(JSContext *cx, js::Shape **startp, jsid id, bool adding)
+Shape::search(JSContext *cx, HeapPtr<js::Shape> *startp, jsid id, bool adding)
 {
     js::Shape *start = *startp;
     if (start->hasTable())
         return start->getTable()->search(id, adding);
 
     if (start->numLinearSearches == PropertyTable::MAX_LINEAR_SEARCHES) {
-        if (start->hashify(cx))
+        if (start->isBigEnoughForAPropertyTable() && start->hashify(cx))
             return start->getTable()->search(id, adding);
-        /* OOM!  Don't increment numLinearSearches, to keep hasTable() false. */
+        /* 
+         * No table built -- there weren't enough entries, or OOM occurred.
+         * Don't increment numLinearSearches, to keep hasTable() false.
+         */
         JS_ASSERT(!start->hasTable());
     } else {
         JS_ASSERT(start->numLinearSearches < PropertyTable::MAX_LINEAR_SEARCHES);
@@ -725,16 +758,16 @@ Shape::search(JSContext *cx, js::Shape **startp, jsid id, bool adding)
      * Not enough searches done so far to justify hashing: search linearly
      * from *startp.
      *
-     * We don't use a Range here, or stop at null parent (the empty shape
-     * at the end), to avoid an extra load per iteration just to save a
-     * load and id test at the end (when missing).
+     * We don't use a Range here, or stop at null parent (the empty shape at
+     * the end).  This avoids an extra load per iteration at the cost (if the
+     * search fails) of an extra load and id test at the end.
      */
-    js::Shape **spp;
+    HeapPtr<js::Shape> *spp;
     for (spp = startp; js::Shape *shape = *spp; spp = &shape->parent) {
-        if (shape->propid == id)
-            return spp;
+        if (shape->propid.get() == id)
+            return spp->unsafeGet();
     }
-    return spp;
+    return spp->unsafeGet();
 }
 
 } // namespace js

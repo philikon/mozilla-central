@@ -123,7 +123,7 @@ COMPONENT_LIBS += \
 	i18n \
 	chardet \
 	jar$(VERSION_NUMBER) \
-        startupcache \
+	startupcache \
 	pref \
 	htmlpars \
 	imglib2 \
@@ -145,6 +145,8 @@ COMPONENT_LIBS += \
 	telemetry \
 	jsdebugger \
 	storagecomps \
+	rdf \
+	windowds \
 	$(NULL)
 
 ifdef BUILD_CTYPES
@@ -272,6 +274,10 @@ endif
 
 STATIC_LIBS += thebes ycbcr
 
+ifeq ($(OS_TARGET),Android)
+STATIC_LIBS += profiler
+endif
+
 STATIC_LIBS += angle
 
 ifeq (windows,$(MOZ_WIDGET_TOOLKIT))
@@ -361,6 +367,10 @@ endif
 
 ifdef HAVE_CLOCK_MONOTONIC
 EXTRA_DSO_LDOPTS += $(REALTIME_LIBS)
+endif
+
+ifeq (,$(filter-out cocoa android,$(MOZ_WIDGET_TOOLKIT)))
+EXTRA_DSO_LDOPTS += $(MOZ_SKIA_LIBS)
 endif
 
 ifeq (android,$(MOZ_WIDGET_TOOLKIT))
