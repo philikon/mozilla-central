@@ -85,6 +85,7 @@ protected:
 
     virtual void ScheduleNativeEventCallback();
 
+    // This is somewhat racy but is perfectly safe given how the callback works
     bool mNativeCallbackRequest;
     nsTArray<FdHandler> mHandlers;
 };

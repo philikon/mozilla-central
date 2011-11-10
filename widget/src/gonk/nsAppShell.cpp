@@ -46,6 +46,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -138,12 +139,15 @@ sendMouseEvent(PRUint32 msg, struct timeval *time, int x, int y)
 static void
 multitouchHandler(int fd, FdHandler *data)
 {
+    // The Linux's input documentation (Documentation/input/input.txt)
+    // says that we'll always read a multiple of sizeof(input_event) bytes here.
     input_event events[16];
     int event_count = read(fd, events, sizeof(events));
     if (event_count < 0) {
         LOG("Error reading in multitouchHandler");
         return;
     }
+    MOZ_ASSERT(event_count % sizeof(input_event) == 0);
 
     event_count /= sizeof(struct input_event);
 
@@ -267,8 +271,6 @@ handlePowerKeyPressed()
 static void
 keyHandler(int fd, FdHandler *data)
 {
-    // The Linux kernel's input documentation (Documentation/input/input.txt)
-    // says that we'll always read a multiple of sizeof(input_event) bytes here.
     input_event events[16];
     ssize_t bytesRead = read(fd, events, sizeof(events));
     if (bytesRead < 0) {
@@ -383,14 +385,18 @@ nsAppShell::Init()
     DIR *dir = opendir("/dev/input");
     NS_ENSURE_TRUE(dir, NS_ERROR_UNEXPECTED);
 
-    chdir("/dev/input");
-
 #define BITSET(bit, flags) (flags[bit >> 3] & (1 << (bit & 0x7)))
 
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         char entryName[64];
-        int fd = open(entry->d_name, O_RDONLY);
+        char entryPath[MAXPATHLEN];
+        if (snprintf(entryPath, sizeof(entryPath),
+                     "/dev/input/%s", entry->d_name) < 0) {
+            LOG("Couldn't generate path while enumerating input devices!");
+            continue;
+        }
+        int fd = open(entryPath, O_RDONLY);
         if (ioctl(fd, EVIOCGNAME(sizeof(entryName)), entryName) >= 0)
             LOG("Found device %s - %s", entry->d_name, entryName);
         else
