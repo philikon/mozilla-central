@@ -124,13 +124,6 @@ void NotifyEvent()
 
 }
 
-// XXX we wouldn't have to do this if we had epoll_pwait
-static void
-wakeupSigHandler(int signal)
-{
-    write(signalfds[1], "w", 1);
-}
-
 static void
 pipeHandler(int fd, FdHandler *data)
 {
@@ -400,8 +393,7 @@ nsAppShell::Init()
 
             LOG("Found absolute input device");
             handlerFunc = multitouchHandler;
-        }
-        else if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(flags)), flags) >= 0) {
+        } else if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(flags)), flags) >= 0) {
             LOG("Found key input device");
             handlerFunc = keyHandler;
         }
@@ -417,15 +409,6 @@ nsAppShell::Init()
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event))
             LOG("Failed to add fd to epoll fd");
     }
-
-    struct sigaction sig = {
-        { wakeupSigHandler },
-        0,
-        0,
-        NULL
-    };
-    ret = sigaction(SIGUSR2, &sig, NULL);
-    NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
     return rv;
 }
@@ -449,6 +432,9 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
     for (int i = 0; i < event_count; i++)
         gHandlers[events[i].data.u32].run();
 
+    // NativeEventCallback always schedules more if it needs it
+    // so we can coalesce these.
+    // See the implementation in nsBaseAppShell.cpp for more info
     if (mNativeCallbackRequest) {
         mNativeCallbackRequest = false;
         NativeEventCallback();
@@ -465,6 +451,6 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
 void
 nsAppShell::NotifyNativeEvent()
 {
-    kill(getpid(), SIGUSR2);
+    write(signalfds[1], "w", 1);
 }
 
