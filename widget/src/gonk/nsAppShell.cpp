@@ -311,8 +311,7 @@ keyHandler(int fd, FdHandler *data)
         switch (e.code) {
         case KEY_BACK:
             LOG("Back key %s", upOrDown);
-            if (!pressed)
-                sendSpecialKeyEvent(nsGkAtoms::Clear, e.time);
+            sendKeyEvent(NS_VK_ESCAPE, pressed, e.time);
             break;
         case KEY_MENU:
             LOG("Menu key %s", upOrDown);
