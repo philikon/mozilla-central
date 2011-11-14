@@ -68,10 +68,11 @@ var shell = {
 
   startMarionetteServer: function shell_startMarionetteServer() {
     Cu.import("resource:///modules/dbg-server.jsm");
+    Cu.import("resource:///modules/marionette-logger.jsm");
     DebuggerServer.addActors("resource:///modules/marionette-actors.js");
     DebuggerServer.init();
     DebuggerServer.openListener(2929, true);
-    dump('Marionette: opened listener on port 2929');
+    MarionetteLogger.write('opened listener on port 2929');
   },
 
   start: function shell_init() {
