@@ -37,6 +37,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsScreenManagerGonk.h"
+#include "nsWindow.h"
 
 using namespace mozilla;
 
@@ -54,12 +55,11 @@ NS_IMETHODIMP
 nsScreenGonk::GetRect(PRInt32 *outLeft,  PRInt32 *outTop,
                       PRInt32 *outWidth, PRInt32 *outHeight)
 {
-    // XXX
-    *outLeft = 0;
-    *outTop = 0;
+    *outLeft = gScreenBounds.x;
+    *outTop = gScreenBounds.y;
 
-    *outWidth = 480;
-    *outHeight = 800;
+    *outWidth = gScreenBounds.width;
+    *outHeight = gScreenBounds.height;
 
     return NS_OK;
 }

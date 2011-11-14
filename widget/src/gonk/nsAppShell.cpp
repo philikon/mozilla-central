@@ -46,6 +46,7 @@
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -84,32 +85,6 @@ static nsAppShell *gAppShell = NULL;
 static int epollfd = 0;
 static int signalfds[2] = {0};
 
-class fdHandler;
-typedef void(*fdHandlerCallback)(int, fdHandler *);
-
-class fdHandler {
-public:
-    fdHandler() : mtState(MT_START), mtDown(false) { }
-
-    int fd;
-    fdHandlerCallback func;
-    enum mtStates {
-        MT_START,
-        MT_COLLECT,
-        MT_IGNORE
-    } mtState;
-    int mtX, mtY;
-    int mtMajor;
-    bool mtDown;
-
-    void run()
-    {
-        func(fd, this);
-    }
-};
-
-static nsTArray<fdHandler> gHandlers;
-
 namespace mozilla {
 
 bool ProcessNextEvent()
@@ -124,15 +99,8 @@ void NotifyEvent()
 
 }
 
-// XXX we wouldn't have to do this if we had epoll_pwait
 static void
-wakeupSigHandler(int signal)
-{
-    write(signalfds[1], "w", 1);
-}
-
-static void
-pipeHandler(int fd, fdHandler *data)
+pipeHandler(int fd, FdHandler *data)
 {
     ssize_t len;
     do {
@@ -169,14 +137,17 @@ sendMouseEvent(PRUint32 msg, struct timeval *time, int x, int y)
 }
 
 static void
-multitouchHandler(int fd, fdHandler *data)
+multitouchHandler(int fd, FdHandler *data)
 {
+    // The Linux's input documentation (Documentation/input/input.txt)
+    // says that we'll always read a multiple of sizeof(input_event) bytes here.
     input_event events[16];
     int event_count = read(fd, events, sizeof(events));
     if (event_count < 0) {
         LOG("Error reading in multitouchHandler");
         return;
     }
+    MOZ_ASSERT(event_count % sizeof(input_event) == 0);
 
     event_count /= sizeof(struct input_event);
 
@@ -184,10 +155,10 @@ multitouchHandler(int fd, fdHandler *data)
         input_event *event = &events[i];
 
         if (event->type == EV_ABS) {
-            if (data->mtState == fdHandler::MT_IGNORE)
+            if (data->mtState == FdHandler::MT_IGNORE)
                 continue;
-            if (data->mtState == fdHandler::MT_START)
-                data->mtState = fdHandler::MT_COLLECT;
+            if (data->mtState == FdHandler::MT_START)
+                data->mtState = FdHandler::MT_COLLECT;
 
             switch (event->code) {
             case ABS_MT_TOUCH_MAJOR:
@@ -215,11 +186,11 @@ multitouchHandler(int fd, fdHandler *data)
         } else if (event->type == EV_SYN) {
             switch (event->code) {
             case SYN_MT_REPORT:
-                if (data->mtState == fdHandler::MT_COLLECT)
-                    data->mtState = fdHandler::MT_IGNORE;
+                if (data->mtState == FdHandler::MT_COLLECT)
+                    data->mtState = FdHandler::MT_IGNORE;
                 break;
             case SYN_REPORT:
-                if ((!data->mtMajor || data->mtState == fdHandler::MT_START)) {
+                if ((!data->mtMajor || data->mtState == FdHandler::MT_START)) {
                     sendMouseEvent(NS_MOUSE_BUTTON_UP, &event->time,
                                    data->mtX, data->mtY);
                     data->mtDown = false;
@@ -234,7 +205,7 @@ multitouchHandler(int fd, fdHandler *data)
                                    data->mtX, data->mtY);
                     data->mtDown = true;
                 }
-                data->mtState = fdHandler::MT_START;
+                data->mtState = FdHandler::MT_START;
                 break;
             default:
                 LOG("Got unknown event type 0x%04x with code 0x%04x and value %d",
@@ -273,11 +244,33 @@ sendSpecialKeyEvent(nsIAtom *command, const struct timeval &time)
     nsWindow::DispatchInputEvent(event);
 }
 
+static int screenFd = -1;
+static bool sScreenOn = true;
+
 static void
-keyHandler(int fd, fdHandler *data)
+handlePowerKeyPressed()
 {
-    // The Linux kernel's input documentation (Documentation/input/input.txt)
-    // says that we'll always read a multiple of sizeof(input_event) bytes here.
+    if (screenFd == -1) {
+        screenFd = open("/sys/power/state", O_RDWR);
+        if (screenFd < 0) {
+            LOG("Unable to open /sys/power/state.");
+            return;
+        }
+    }
+
+    // No idea why the screen-off string is "mem" rather than "off".
+    const char *state = sScreenOn ? "mem" : "on";
+    if (write(screenFd, state, strlen(state)) < 0) {
+        LOG("Unable to write to /sys/power/state.");
+        return;
+    }
+
+    sScreenOn = !sScreenOn;
+}
+
+static void
+keyHandler(int fd, FdHandler *data)
+{
     input_event events[16];
     ssize_t bytesRead = read(fd, events, sizeof(events));
     if (bytesRead < 0) {
@@ -306,39 +299,43 @@ keyHandler(int fd, fdHandler *data)
             continue;
         }
 
+        if (!sScreenOn && e.code != KEY_POWER) {
+            LOG("Ignoring key event, because the screen is off. "
+                "type 0x%04x code 0x%04x value %d",
+                e.type, e.code, e.value);
+            continue;
+        }
+
         bool pressed = e.value == 1;
         const char* upOrDown = pressed ? "pressed" : "released";
         switch (e.code) {
         case KEY_BACK:
-            LOG("Back key %s", upOrDown);
-            if (!pressed)
-                sendSpecialKeyEvent(nsGkAtoms::Clear, e.time);
+            sendKeyEvent(NS_VK_ESCAPE, pressed, e.time);
             break;
         case KEY_MENU:
-            LOG("Menu key %s", upOrDown);
             if (!pressed)
                 sendSpecialKeyEvent(nsGkAtoms::Menu, e.time);
             break;
         case KEY_SEARCH:
-            LOG("Search key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::Search, e.time);
             break;
         case KEY_HOME:
-            LOG("Home key %s", upOrDown);
             sendKeyEvent(NS_VK_HOME, pressed, e.time);
             break;
         case KEY_POWER:
             LOG("Power key %s", upOrDown);
-            sendKeyEvent(NS_VK_SLEEP, pressed, e.time);
+            // Ideally, we'd send a NS_VK_SLEEP event here and let the front-end
+            // sort out what to do.  But for now, let's just turn off the screen
+            // ourselves.
+            if (pressed)
+                handlePowerKeyPressed();
             break;
         case KEY_VOLUMEUP:
-            LOG("Volume up key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::VolumeUp, e.time);
             break;
         case KEY_VOLUMEDOWN:
-            LOG("Volume down key %s", upOrDown);
             if (pressed)
                 sendSpecialKeyEvent(nsGkAtoms::VolumeDown, e.time);
             break;
@@ -351,6 +348,7 @@ keyHandler(int fd, fdHandler *data)
 
 nsAppShell::nsAppShell()
     : mNativeCallbackRequest(false)
+    , mHandlers()
 {
     gAppShell = this;
 }
@@ -377,30 +375,34 @@ nsAppShell::Init()
     int ret = pipe2(signalfds, O_NONBLOCK);
     NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
-    fdHandler *handler = gHandlers.AppendElement();
+    FdHandler *handler = mHandlers.AppendElement();
     handler->fd = signalfds[0];
     handler->func = pipeHandler;
-    event.data.u32 = gHandlers.Length() - 1;
+    event.data.u32 = mHandlers.Length() - 1;
     ret = epoll_ctl(epollfd, EPOLL_CTL_ADD, signalfds[0], &event);
     NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
     DIR *dir = opendir("/dev/input");
     NS_ENSURE_TRUE(dir, NS_ERROR_UNEXPECTED);
 
-    chdir("/dev/input");
-
 #define BITSET(bit, flags) (flags[bit >> 3] & (1 << (bit & 0x7)))
 
     struct dirent *entry;
     while ((entry = readdir(dir))) {
         char entryName[64];
-        int fd = open(entry->d_name, O_RDONLY);
+        char entryPath[MAXPATHLEN];
+        if (snprintf(entryPath, sizeof(entryPath),
+                     "/dev/input/%s", entry->d_name) < 0) {
+            LOG("Couldn't generate path while enumerating input devices!");
+            continue;
+        }
+        int fd = open(entryPath, O_RDONLY);
         if (ioctl(fd, EVIOCGNAME(sizeof(entryName)), entryName) >= 0)
             LOG("Found device %s - %s", entry->d_name, entryName);
         else
             continue;
 
-        fdHandlerCallback handlerFunc = NULL;
+        FdHandlerCallback handlerFunc = NULL;
 
         char flags[(NS_MAX(ABS_MAX, KEY_MAX) + 1) / 8];
         if (ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(flags)), flags) >= 0 &&
@@ -408,8 +410,7 @@ nsAppShell::Init()
 
             LOG("Found absolute input device");
             handlerFunc = multitouchHandler;
-        }
-        else if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(flags)), flags) >= 0) {
+        } else if (ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(flags)), flags) >= 0) {
             LOG("Found key input device");
             handlerFunc = keyHandler;
         }
@@ -418,22 +419,13 @@ nsAppShell::Init()
         if (!handlerFunc)
             continue;
 
-        handler = gHandlers.AppendElement();
+        handler = mHandlers.AppendElement();
         handler->fd = fd;
         handler->func = handlerFunc;
-        event.data.u32 = gHandlers.Length() - 1;
+        event.data.u32 = mHandlers.Length() - 1;
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event))
             LOG("Failed to add fd to epoll fd");
     }
-
-    struct sigaction sig = {
-        { wakeupSigHandler },
-        0,
-        0,
-        NULL
-    };
-    ret = sigaction(SIGUSR2, &sig, NULL);
-    NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
 
     return rv;
 }
@@ -455,8 +447,11 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
         return true;
 
     for (int i = 0; i < event_count; i++)
-        gHandlers[events[i].data.u32].run();
+        mHandlers[events[i].data.u32].run();
 
+    // NativeEventCallback always schedules more if it needs it
+    // so we can coalesce these.
+    // See the implementation in nsBaseAppShell.cpp for more info
     if (mNativeCallbackRequest) {
         mNativeCallbackRequest = false;
         NativeEventCallback();
@@ -473,6 +468,6 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
 void
 nsAppShell::NotifyNativeEvent()
 {
-    kill(getpid(), SIGUSR2);
+    write(signalfds[1], "w", 1);
 }
 

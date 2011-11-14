@@ -75,6 +75,9 @@
       }
 
       request2.onupgradeneeded = null;
+      request2.onsuccess = grabEventAndContinueHandler;
+
+      yield;
 
       finishTest();
       yield;

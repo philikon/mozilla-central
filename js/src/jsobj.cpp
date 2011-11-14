@@ -82,7 +82,7 @@
 #include "jswrapper.h"
 
 #include "frontend/BytecodeCompiler.h"
-#include "frontend/BytecodeGenerator.h"
+#include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
 
 #include "jsarrayinlines.h"
@@ -463,7 +463,7 @@ js_LeaveSharpObject(JSContext *cx, JSIdArray **idap)
 static intN
 gc_sharp_table_entry_marker(JSHashEntry *he, intN i, void *arg)
 {
-    MarkObject((JSTracer *)arg, *(JSObject *)he->key, "sharp table entry");
+    MarkRoot((JSTracer *)arg, (JSObject *)he->key, "sharp table entry");
     return JS_DHASH_NEXT;
 }
 
@@ -1028,14 +1028,14 @@ EvalCacheLookup(JSContext *cx, JSLinearString *str, StackFrame *caller, uintN st
               script->principals->subsume(script->principals, principals)))) {
             /*
              * Get the prior (cache-filling) eval's saved caller function.
-             * See BytecodeCompiler::compileScript.
+             * See frontend::CompileScript.
              */
             JSFunction *fun = script->getCallerFunction();
 
             if (fun == caller->fun()) {
                 /*
                  * Get the source string passed for safekeeping in the atom map
-                 * by the prior eval to BytecodeCompiler::compileScript.
+                 * by the prior eval to frontend::CompileScript.
                  */
                 JSAtom *src = script->atoms[0];
 
@@ -1061,8 +1061,8 @@ EvalCacheLookup(JSContext *cx, JSLinearString *str, StackFrame *caller, uintN st
                     if (i < 0 ||
                         objarray->vector[i]->getParent() == &scopeobj) {
                         JS_ASSERT(staticLevel == script->staticLevel);
-                        *scriptp = script->u.evalHashLink;
-                        script->u.evalHashLink = NULL;
+                        *scriptp = script->evalHashLink();
+                        script->evalHashLink() = NULL;
                         return script;
                     }
                 }
@@ -1071,7 +1071,7 @@ EvalCacheLookup(JSContext *cx, JSLinearString *str, StackFrame *caller, uintN st
 
         if (++count == EVAL_CACHE_CHAIN_LIMIT)
             return NULL;
-        scriptp = &script->u.evalHashLink;
+        scriptp = &script->evalHashLink();
     }
     return NULL;
 }
@@ -1085,7 +1085,7 @@ EvalCacheLookup(JSContext *cx, JSLinearString *str, StackFrame *caller, uintN st
  * a jsdbgapi user's perspective, we want each eval() to create and destroy a
  * script. This hides implementation details and means we don't have to deal
  * with calls to JS_GetScriptObject for scripts in the eval cache (currently,
- * script->u.object aliases script->u.evalHashLink).
+ * script->object aliases script->evalHashLink()).
  */
 class EvalScriptGuard
 {
@@ -1107,7 +1107,7 @@ class EvalScriptGuard
             js_CallDestroyScriptHook(cx_, script_);
             script_->isActiveEval = false;
             script_->isCachedEval = true;
-            script_->u.evalHashLink = *bucket_;
+            script_->evalHashLink() = *bucket_;
             *bucket_ = script_;
         }
     }
@@ -1124,7 +1124,7 @@ class EvalScriptGuard
     }
 
     void setNewScript(JSScript *script) {
-        /* NewScriptFromCG has already called js_CallNewScriptHook. */
+        /* NewScriptFromEmitter has already called js_CallNewScriptHook. */
         JS_ASSERT(!script_ && script);
         script_ = script;
         script_->isActiveEval = true;
@@ -1272,11 +1272,11 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, StackFrame *c
                                                         evalType == DIRECT_EVAL
                                                         ? CALLED_FROM_JSOP_EVAL
                                                         : NOT_CALLED_FROM_JSOP_EVAL);
-        uint32 tcflags = TCF_COMPILE_N_GO | TCF_NEED_MUTABLE_SCRIPT | TCF_COMPILE_FOR_EVAL;
-        JSScript *compiled = BytecodeCompiler::compileScript(cx, &scopeobj, caller, principals,
-                                                             tcflags, chars, length, filename,
-                                                             lineno, cx->findVersion(), linearStr,
-                                                             staticLevel);
+        uint32 tcflags = TCF_COMPILE_N_GO | TCF_COMPILE_FOR_EVAL;
+        JSScript *compiled = frontend::CompileScript(cx, &scopeobj, caller, principals,
+                                                     tcflags, chars, length, filename,
+                                                     lineno, cx->findVersion(), linearStr,
+                                                     staticLevel);
         if (!compiled)
             return false;
 
@@ -3004,7 +3004,7 @@ CreateThisForFunctionWithType(JSContext *cx, types::TypeObject *type, JSObject *
         gc::AllocKind kind = type->newScript->allocKind;
         JSObject *res = NewObjectWithType(cx, type, parent, kind);
         if (res)
-            res->setMap((Shape *) type->newScript->shape);
+            res->initMap((Shape *) type->newScript->shape.get());
         return res;
     }
 
@@ -3457,6 +3457,7 @@ Class js::WithClass = {
         with_GetGeneric,
         with_GetProperty,
         with_GetElement,
+        NULL,             /* getElementIfPresent */
         with_GetSpecial,
         with_SetGeneric,
         with_SetProperty,
@@ -3503,7 +3504,7 @@ js_NewWithObject(JSContext *cx, JSObject *proto, JSObject *parent, jsint depth)
     if (!emptyWithShape)
         return NULL;
 
-    obj->setMap(emptyWithShape);
+    obj->initMap(emptyWithShape);
     OBJ_SET_BLOCK_DEPTH(cx, obj, depth);
 
     AutoObjectRooter tvr(cx, obj);
@@ -3532,7 +3533,7 @@ js_NewBlockObject(JSContext *cx)
     if (!emptyBlockShape)
         return NULL;
     blockObj->init(cx, &BlockClass, &emptyTypeObject, NULL, NULL, false);
-    blockObj->setMap(emptyBlockShape);
+    blockObj->initMap(emptyBlockShape);
 
     return blockObj;
 }
@@ -3590,7 +3591,7 @@ js_PutBlockObject(JSContext *cx, JSBool normalUnwind)
     if (normalUnwind) {
         uintN slot = JSSLOT_BLOCK_FIRST_FREE_SLOT;
         depth += fp->numFixed();
-        obj->copySlotRange(slot, fp->slots() + depth, count);
+        obj->copySlotRange(slot, fp->slots() + depth, count, true);
     }
 
     /* We must clear the private slot even with errors. */
@@ -3793,8 +3794,8 @@ struct JSObject::TradeGutsReserved {
     JSContext *cx;
     Vector<Value> avals;
     Vector<Value> bvals;
-    Value *newaslots;
-    Value *newbslots;
+    HeapValue *newaslots;
+    HeapValue *newbslots;
 
     TradeGutsReserved(JSContext *cx)
         : cx(cx), avals(cx), bvals(cx), newaslots(NULL), newbslots(NULL)
@@ -3842,12 +3843,12 @@ JSObject::ReserveForTradeGuts(JSContext *cx, JSObject *a, JSObject *b,
     unsigned bfixed = b->numFixedSlots();
 
     if (afixed < bcap) {
-        reserved.newaslots = (Value *) cx->malloc_(sizeof(Value) * (bcap - afixed));
+        reserved.newaslots = (HeapValue *) cx->malloc_(sizeof(HeapValue) * (bcap - afixed));
         if (!reserved.newaslots)
             return false;
     }
     if (bfixed < acap) {
-        reserved.newbslots = (Value *) cx->malloc_(sizeof(Value) * (acap - bfixed));
+        reserved.newbslots = (HeapValue *) cx->malloc_(sizeof(HeapValue) * (acap - bfixed));
         if (!reserved.newbslots)
             return false;
     }
@@ -3883,6 +3884,19 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
      */
     JS_ASSERT(!a->isDenseArray() && !b->isDenseArray());
     JS_ASSERT(!a->isArrayBuffer() && !b->isArrayBuffer());
+
+#ifdef JSGC_INCREMENTAL
+    /*
+     * We need a write barrier here. If |a| was marked and |b| was not, then
+     * after the swap, |b|'s guts would never be marked. The write barrier
+     * solves this.
+     */
+    JSCompartment *comp = a->compartment();
+    if (comp->needsBarrier()) {
+        MarkChildren(comp->barrierTracer(), a);
+        MarkChildren(comp->barrierTracer(), b);
+    }
+#endif
 
     /* New types for a JSObject need to be stable when trading guts. */
     TypeObject *newTypeA = a->newType;
@@ -3937,7 +3951,7 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
         unsigned afixed = a->numFixedSlots();
         unsigned bfixed = b->numFixedSlots();
 
-        JSObject tmp;
+        char tmp[sizeof(JSObject)];
         memcpy(&tmp, a, sizeof tmp);
         memcpy(a, b, sizeof tmp);
         memcpy(b, &tmp, sizeof tmp);
@@ -3945,13 +3959,13 @@ JSObject::TradeGuts(JSContext *cx, JSObject *a, JSObject *b, TradeGutsReserved &
         a->updateFixedSlots(afixed);
         a->slots = reserved.newaslots;
         a->capacity = Max(afixed, bcap);
-        a->copySlotRange(0, reserved.bvals.begin(), bcap);
+        a->copySlotRange(0, reserved.bvals.begin(), bcap, false);
         a->clearSlotRange(bcap, a->capacity - bcap);
 
         b->updateFixedSlots(bfixed);
         b->slots = reserved.newbslots;
         b->capacity = Max(bfixed, acap);
-        b->copySlotRange(0, reserved.avals.begin(), acap);
+        b->copySlotRange(0, reserved.avals.begin(), acap, false);
         b->clearSlotRange(acap, b->capacity - acap);
 
         /* Make sure the destructor for reserved doesn't free the slots. */
@@ -4447,27 +4461,31 @@ JSObject::clearSlotRange(size_t start, size_t length)
 {
     JS_ASSERT(start + length <= capacity);
     if (isDenseArray()) {
-        ClearValueRange(slots + start, length, true);
+        ClearValueRange(compartment(), slots + start, length, true);
     } else {
         size_t fixed = numFixedSlots();
         if (start < fixed) {
             if (start + length < fixed) {
-                ClearValueRange(fixedSlots() + start, length, false);
+                ClearValueRange(compartment(), fixedSlots() + start, length, false);
             } else {
                 size_t localClear = fixed - start;
-                ClearValueRange(fixedSlots() + start, localClear, false);
-                ClearValueRange(slots, length - localClear, false);
+                ClearValueRange(compartment(), fixedSlots() + start, localClear, false);
+                ClearValueRange(compartment(), slots, length - localClear, false);
             }
         } else {
-            ClearValueRange(slots + start - fixed, length, false);
+            ClearValueRange(compartment(), slots + start - fixed, length, false);
         }
     }
 }
 
 void
-JSObject::copySlotRange(size_t start, const Value *vector, size_t length)
+JSObject::copySlotRange(size_t start, const Value *vector, size_t length, bool valid)
 {
     JS_ASSERT(start + length <= capacity);
+
+    if (valid)
+        prepareSlotRangeForOverwrite(start, start + length);
+
     if (isDenseArray()) {
         memcpy(slots + start, vector, length * sizeof(Value));
     } else {
@@ -4521,7 +4539,7 @@ JSObject::allocSlots(JSContext *cx, size_t newcap)
 
     uint32 allocCount = numDynamicSlots(newcap);
 
-    Value *tmpslots = (Value*) cx->malloc_(allocCount * sizeof(Value));
+    HeapValue *tmpslots = (HeapValue*) cx->malloc_(allocCount * sizeof(HeapValue));
     if (!tmpslots)
         return false;  /* Leave slots at inline buffer. */
     slots = tmpslots;
@@ -4529,12 +4547,12 @@ JSObject::allocSlots(JSContext *cx, size_t newcap)
 
     if (isDenseArray()) {
         /* Copy over anything from the inline buffer. */
-        memcpy(slots, fixedSlots(), getDenseArrayInitializedLength() * sizeof(Value));
+        memcpy(slots, fixedSlots(), getDenseArrayInitializedLength() * sizeof(HeapValue));
         if (!cx->typeInferenceEnabled())
             backfillDenseArrayHoles(cx);
     } else {
         /* Clear out the new slots without copying. */
-        ClearValueRange(slots, allocCount, false);
+        InitValueRange(slots, allocCount, false);
     }
 
     Probes::resizeObject(cx, this, oldSize, slotsAndStructSize());
@@ -4591,8 +4609,8 @@ JSObject::growSlots(JSContext *cx, size_t newcap)
     uint32 oldAllocCount = numDynamicSlots(oldcap);
     uint32 allocCount = numDynamicSlots(actualCapacity);
 
-    Value *tmpslots = (Value*) cx->realloc_(slots, oldAllocCount * sizeof(Value),
-                                            allocCount * sizeof(Value));
+    HeapValue *tmpslots = (HeapValue*) cx->realloc_(slots, oldAllocCount * sizeof(HeapValue),
+                                                    allocCount * sizeof(HeapValue));
     if (!tmpslots)
         return false;    /* Leave dslots as its old size. */
 
@@ -4605,7 +4623,7 @@ JSObject::growSlots(JSContext *cx, size_t newcap)
             backfillDenseArrayHoles(cx);
     } else {
         /* Clear the new slots we added. */
-        ClearValueRange(slots + oldAllocCount, allocCount - oldAllocCount, false);
+        InitValueRange(slots + oldAllocCount, allocCount - oldAllocCount, false);
     }
 
     if (changed && isGlobal())
@@ -4628,6 +4646,8 @@ JSObject::shrinkSlots(JSContext *cx, size_t newcap)
     if (isCall())
         return;
 
+    JS_ASSERT_IF(isDenseArray(), initializedLength() <= newcap);
+
     uint32 oldcap = numSlots();
     JS_ASSERT(newcap <= oldcap);
     JS_ASSERT(newcap >= slotSpan());
@@ -4649,7 +4669,7 @@ JSObject::shrinkSlots(JSContext *cx, size_t newcap)
     newcap = Max(newcap, size_t(SLOT_CAPACITY_MIN));
     newcap = Max(newcap, numFixedSlots());
 
-    Value *tmpslots = (Value*) cx->realloc_(slots, newcap * sizeof(Value));
+    HeapValue *tmpslots = (HeapValue*) cx->realloc_(slots, newcap * sizeof(HeapValue));
     if (!tmpslots)
         return;  /* Leave slots at its old size. */
 

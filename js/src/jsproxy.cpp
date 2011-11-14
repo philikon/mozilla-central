@@ -57,17 +57,27 @@
 using namespace js;
 using namespace js::gc;
 
-static inline const Value &
-GetCall(JSObject *proxy) {
+static inline const HeapValue &
+GetCall(JSObject *proxy)
+{
     JS_ASSERT(IsFunctionProxy(proxy));
-    return proxy->getSlot(JSSLOT_PROXY_CALL);
+    return proxy->getSlotRef(JSSLOT_PROXY_CALL);
 }
 
 static inline Value
-GetConstruct(JSObject *proxy) {
+GetConstruct(JSObject *proxy)
+{
     if (proxy->numSlots() <= JSSLOT_PROXY_CONSTRUCT)
         return UndefinedValue();
     return proxy->getSlot(JSSLOT_PROXY_CONSTRUCT);
+}
+
+static inline const HeapValue &
+GetFunctionProxyConstruct(JSObject *proxy)
+{
+    JS_ASSERT(IsFunctionProxy(proxy));
+    JS_ASSERT(proxy->numSlots() > JSSLOT_PROXY_CONSTRUCT);
+    return proxy->getSlotRef(JSSLOT_PROXY_CONSTRUCT);
 }
 
 static bool
@@ -138,6 +148,24 @@ ProxyHandler::get(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, V
         id = INT_TO_JSID(desc.shortid);
     return CallJSPropertyOp(cx, desc.getter, receiver, id, vp);
 }
+
+bool
+ProxyHandler::getElementIfPresent(JSContext *cx, JSObject *proxy, JSObject *receiver, uint32 index, Value *vp, bool *present)
+{
+    jsid id;
+    if (!IndexToId(cx, index, &id))
+        return false;
+
+    if (!has(cx, proxy, id, present))
+        return false;
+
+    if (!*present) {
+        Debug_SetValueRangeToCrashOnTouch(vp, 1);
+        return true;
+    }
+
+    return get(cx, proxy, receiver, id, vp);
+}   
 
 bool
 ProxyHandler::set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, bool strict,
@@ -810,6 +838,15 @@ Proxy::get(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, Value *v
 }
 
 bool
+Proxy::getElementIfPresent(JSContext *cx, JSObject *proxy, JSObject *receiver, uint32 index,
+                           Value *vp, bool *present)
+{
+    JS_CHECK_RECURSION(cx, return false);
+    AutoPendingProxyOperation pending(cx, proxy);
+    return GetProxyHandler(proxy)->getElementIfPresent(cx, proxy, receiver, index, vp, present);
+}
+
+bool
 Proxy::set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, bool strict, Value *vp)
 {
     JS_CHECK_RECURSION(cx, return false);
@@ -1018,6 +1055,13 @@ proxy_GetElement(JSContext *cx, JSObject *obj, JSObject *receiver, uint32 index,
 }
 
 static JSBool
+proxy_GetElementIfPresent(JSContext *cx, JSObject *obj, JSObject *receiver, uint32 index,
+                          Value *vp, bool *present)
+{
+    return Proxy::getElementIfPresent(cx, obj, receiver, index, vp, present);
+}
+
+static JSBool
 proxy_GetSpecial(JSContext *cx, JSObject *obj, JSObject *receiver, SpecialId sid, Value *vp)
 {
     return proxy_GetGeneric(cx, obj, receiver, SPECIALID_TO_JSID(sid), vp);
@@ -1157,12 +1201,12 @@ static void
 proxy_TraceObject(JSTracer *trc, JSObject *obj)
 {
     GetProxyHandler(obj)->trace(trc, obj);
-    MarkCrossCompartmentValue(trc, GetProxyPrivate(obj), "private");
-    MarkCrossCompartmentValue(trc, GetProxyExtra(obj, 0), "extra0");
-    MarkCrossCompartmentValue(trc, GetProxyExtra(obj, 1), "extra1");
+    MarkCrossCompartmentValue(trc, obj->getReservedSlotRef(JSSLOT_PROXY_PRIVATE), "private");
+    MarkCrossCompartmentValue(trc, obj->getReservedSlotRef(JSSLOT_PROXY_EXTRA + 0), "extra0");
+    MarkCrossCompartmentValue(trc, obj->getReservedSlotRef(JSSLOT_PROXY_EXTRA + 1), "extra1");
     if (IsFunctionProxy(obj)) {
         MarkCrossCompartmentValue(trc, GetCall(obj), "call");
-        MarkCrossCompartmentValue(trc, GetConstruct(obj), "construct");
+        MarkCrossCompartmentValue(trc, GetFunctionProxyConstruct(obj), "construct");
     }
 }
 
@@ -1171,7 +1215,7 @@ proxy_TraceFunction(JSTracer *trc, JSObject *obj)
 {
     proxy_TraceObject(trc, obj);
     MarkCrossCompartmentValue(trc, GetCall(obj), "call");
-    MarkCrossCompartmentValue(trc, GetConstruct(obj), "construct");
+    MarkCrossCompartmentValue(trc, GetFunctionProxyConstruct(obj), "construct");
 }
 
 static JSBool
@@ -1251,6 +1295,7 @@ JS_FRIEND_DATA(Class) js::ObjectProxyClass = {
         proxy_GetGeneric,
         proxy_GetProperty,
         proxy_GetElement,
+        proxy_GetElementIfPresent,
         proxy_GetSpecial,
         proxy_SetGeneric,
         proxy_SetProperty,
@@ -1312,6 +1357,7 @@ JS_FRIEND_DATA(Class) js::OuterWindowProxyClass = {
         proxy_GetGeneric,
         proxy_GetProperty,
         proxy_GetElement,
+        proxy_GetElementIfPresent,
         proxy_GetSpecial,
         proxy_SetGeneric,
         proxy_SetProperty,
@@ -1385,6 +1431,7 @@ JS_FRIEND_DATA(Class) js::FunctionProxyClass = {
         proxy_GetGeneric,
         proxy_GetProperty,
         proxy_GetElement,
+        proxy_GetElementIfPresent,
         proxy_GetSpecial,
         proxy_SetGeneric,
         proxy_SetProperty,

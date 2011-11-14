@@ -90,7 +90,8 @@ PluginPRLibrary::NP_Initialize(NPNetscapeFuncs* bFuncs, NPError* error)
 }
 #elif defined(XP_UNIX) && !defined(XP_MACOSX)
 nsresult
-PluginPRLibrary::NP_Initialize(NPNetscapeFuncs* bFuncs, NPError* error)
+PluginPRLibrary::NP_Initialize(NPNetscapeFuncs* bFuncs,
+                               NPPluginFuncs* pFuncs, NPError* error)
 {
   if (mNP_Initialize) {
     *error = mNP_Initialize(bFuncs, pFuncs);

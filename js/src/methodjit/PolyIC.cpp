@@ -2777,7 +2777,7 @@ GetElementIC::attachTypedArray(VMFrame &f, JSObject *obj, const Value &v, jsid i
 
     // Bounds check.
     Jump outOfBounds;
-    Address typedArrayLength(objReg, TypedArray::lengthOffset());
+    Address typedArrayLength = masm.payloadOf(Address(objReg, TypedArray::lengthOffset()));
     if (idRemat.isConstant()) {
         JS_ASSERT(idRemat.value().toInt32() == v.toInt32());
         outOfBounds = masm.branch32(Assembler::BelowOrEqual, typedArrayLength, Imm32(v.toInt32()));
@@ -3125,7 +3125,7 @@ SetElementIC::attachTypedArray(VMFrame &f, JSObject *obj, int32 key)
 
     // Bounds check.
     Jump outOfBounds;
-    Address typedArrayLength(objReg, TypedArray::lengthOffset());
+    Address typedArrayLength = masm.payloadOf(Address(objReg, TypedArray::lengthOffset()));
     if (hasConstantKey)
         outOfBounds = masm.branch32(Assembler::BelowOrEqual, typedArrayLength, Imm32(keyValue));
     else
@@ -3222,6 +3222,21 @@ SetElementIC::update(VMFrame &f, const Value &objval, const Value &idval)
 #endif
 
     return disable(f.cx, "unsupported object type");
+}
+
+bool
+SetElementIC::shouldUpdate(JSContext *cx)
+{
+    if (!hit) {
+        hit = true;
+        spew(cx, "ignored", "first hit");
+        return false;
+    }
+#ifdef JSGC_INCREMENTAL_MJ
+    JS_ASSERT(!cx->compartment->needsBarrier());
+#endif
+    JS_ASSERT(stubsGenerated < MAX_PIC_STUBS);
+    return true;
 }
 
 template<JSBool strict>

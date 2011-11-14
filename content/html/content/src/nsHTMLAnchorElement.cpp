@@ -77,7 +77,22 @@ public:
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_BASIC(nsGenericHTMLElement::)
+  NS_SCRIPTABLE NS_IMETHOD Click() {
+    return nsGenericHTMLElement::Click();
+  }
+  NS_SCRIPTABLE NS_IMETHOD GetTabIndex(PRInt32* aTabIndex);
+  NS_SCRIPTABLE NS_IMETHOD SetTabIndex(PRInt32 aTabIndex);
+  NS_SCRIPTABLE NS_IMETHOD Focus() {
+    return nsGenericHTMLElement::Focus();
+  }
+  NS_SCRIPTABLE NS_IMETHOD GetDraggable(bool* aDraggable);
+  NS_SCRIPTABLE NS_IMETHOD GetInnerHTML(nsAString& aInnerHTML) {
+    return nsGenericHTMLElement::GetInnerHTML(aInnerHTML);
+  }
+  NS_SCRIPTABLE NS_IMETHOD SetInnerHTML(const nsAString& aInnerHTML) {
+    return nsGenericHTMLElement::SetInnerHTML(aInnerHTML);
+  }
 
   // nsIDOMHTMLAnchorElement
   NS_DECL_NSIDOMHTMLANCHORELEMENT  
@@ -90,9 +105,6 @@ public:
   // nsILink
   NS_IMETHOD LinkAdded() { return NS_OK; }
   NS_IMETHOD LinkRemoved() { return NS_OK; }
-
-  // override from nsGenericHTMLElement
-  NS_IMETHOD GetDraggable(bool* aDraggable);
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
@@ -131,18 +143,12 @@ public:
   virtual nsXPCClassInfo* GetClassInfo();
 };
 
-// Indicates if a DNS Prefetch has been requested from this Anchor elem
-#define HTML_ANCHOR_DNS_PREFETCH_REQUESTED \
-  (1 << ELEMENT_TYPE_SPECIFIC_BITS_OFFSET)
-
-// Make sure we have enough space for those bits
-PR_STATIC_ASSERT(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET < 32);
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Anchor)
 
 nsHTMLAnchorElement::nsHTMLAnchorElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-  : nsGenericHTMLElement(aNodeInfo)
-  , Link(this)
+  : nsGenericHTMLElement(aNodeInfo),
+    Link(this)
 {
 }
 
@@ -212,7 +218,6 @@ nsHTMLAnchorElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   // Prefetch links
   if (aDocument && nsHTMLDNSPrefetch::IsAllowed(OwnerDoc())) {
     nsHTMLDNSPrefetch::PrefetchLow(this);
-    SetFlags(HTML_ANCHOR_DNS_PREFETCH_REQUESTED);
   }
   return rv;
 }
@@ -220,14 +225,6 @@ nsHTMLAnchorElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
 void
 nsHTMLAnchorElement::UnbindFromTree(bool aDeep, bool aNullParent)
 {
-  // Cancel any DNS prefetches
-  // Note: Must come before ResetLinkState.  If called after, it will recreate
-  // mCachedURI based on data that is invalid - due to a call to GetHostname.
-  if (HasFlag(HTML_ANCHOR_DNS_PREFETCH_REQUESTED)) {
-    nsHTMLDNSPrefetch::CancelPrefetchLow(this, NS_ERROR_ABORT);
-    UnsetFlags(HTML_ANCHOR_DNS_PREFETCH_REQUESTED);
-  }
-    
   // If this link is ever reinserted into a document, it might
   // be under a different xml:base, so forget the cached state now.
   Link::ResetLinkState(false);

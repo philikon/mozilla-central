@@ -139,13 +139,38 @@ Shape::removeChild(Shape *child)
     JS_ASSERT(!JSID_IS_VOID(propid));
 
     KidsPointer *kidp = &kids;
+
     if (kidp->isShape()) {
         JS_ASSERT(kidp->toShape() == child);
-        kids.setNull();
+        kidp->setNull();
         return;
     }
 
-    kidp->toHash()->remove(child);
+    KidsHash *hash = kidp->toHash();
+    JS_ASSERT(hash->count() >= 2);      /* otherwise kidp->isShape() should be true */
+    hash->remove(child);
+    if (hash->count() == 1) {
+        /* Convert from HASH form back to SHAPE form. */
+        KidsHash::Range r = hash->all(); 
+        Shape *otherChild = r.front();
+        JS_ASSERT((r.popFront(), r.empty()));    /* No more elements! */
+        kidp->setShape(otherChild);
+        js::UnwantedForeground::delete_(hash);
+    }
+}
+
+/*
+ * We need a read barrier for the shape tree, since these are weak pointers.
+ */
+static Shape *
+ReadBarrier(Shape *shape)
+{
+#ifdef JSGC_INCREMENTAL
+    JSCompartment *comp = shape->compartment();
+    if (comp->needsBarrier())
+        MarkShapeUnbarriered(comp->barrierTracer(), shape, "read barrier");
+#endif
+    return shape;
 }
 
 Shape *
@@ -168,11 +193,11 @@ PropertyTree::getChild(JSContext *cx, Shape *parent, const Shape &child)
     if (kidp->isShape()) {
         shape = kidp->toShape();
         if (shape->matches(&child))
-            return shape;
+            return ReadBarrier(shape);
     } else if (kidp->isHash()) {
         shape = *kidp->toHash()->lookup(&child);
         if (shape)
-            return shape;
+            return ReadBarrier(shape);
     } else {
         /* If kidp->isNull(), we always insert. */
     }
@@ -181,7 +206,7 @@ PropertyTree::getChild(JSContext *cx, Shape *parent, const Shape &child)
     if (!shape)
         return NULL;
 
-    new (shape) Shape(child.propid, child.rawGetter, child.rawSetter, child.slot, child.attrs,
+    new (shape) Shape(child.propid, child.getter(), child.setter(), child.slot, child.attrs,
                       child.flags, child.shortid, js_GenerateShape(cx));
 
     if (!insertChild(cx, parent, shape))
@@ -245,8 +270,8 @@ Shape::dump(JSContext *cx, FILE *fp) const
     }
 
     fprintf(fp, " g/s %p/%p slot %u attrs %x ",
-            JS_FUNC_TO_DATA_PTR(void *, rawGetter),
-            JS_FUNC_TO_DATA_PTR(void *, rawSetter),
+            JS_FUNC_TO_DATA_PTR(void *, getter()),
+            JS_FUNC_TO_DATA_PTR(void *, setter()),
             slot, attrs);
     if (attrs) {
         int first = 1;

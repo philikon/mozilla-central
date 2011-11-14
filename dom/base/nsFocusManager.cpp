@@ -466,6 +466,19 @@ nsFocusManager::SetFocus(nsIDOMElement* aElement, PRUint32 aFlags)
 }
 
 NS_IMETHODIMP
+nsFocusManager::ElementIsFocusable(nsIDOMElement* aElement, PRUint32 aFlags,
+                                   bool* aIsFocusable)
+{
+  NS_ENSURE_TRUE(aElement, NS_ERROR_INVALID_ARG);
+
+  nsCOMPtr<nsIContent> aContent = do_QueryInterface(aElement);
+
+  *aIsFocusable = CheckIfFocusable(aContent, aFlags) != nsnull;
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsFocusManager::MoveFocus(nsIDOMWindow* aWindow, nsIDOMElement* aStartElement,
                           PRUint32 aType, PRUint32 aFlags, nsIDOMElement** aElement)
 {
@@ -1442,8 +1455,7 @@ nsFocusManager::CheckIfFocusable(nsIContent* aContent, PRUint32 aFlags)
     // HTML areas do not have their own frame, and the img frame we get from
     // GetPrimaryFrame() is not relevant as to whether it is focusable or
     // not, so we have to do all the relevant checks manually for them.
-    return frame->AreAncestorViewsVisible() &&
-           frame->GetStyleVisibility()->IsVisible() &&
+    return frame->IsVisibleConsideringAncestors() &&
            aContent->IsFocusable() ? aContent : nsnull;
   }
 

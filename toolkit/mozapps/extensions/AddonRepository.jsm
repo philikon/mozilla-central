@@ -47,6 +47,7 @@ Components.utils.import("resource://gre/modules/FileUtils.jsm");
 Components.utils.import("resource://gre/modules/NetUtil.jsm");
 Components.utils.import("resource://gre/modules/Services.jsm");
 Components.utils.import("resource://gre/modules/AddonManager.jsm");
+Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 var EXPORTED_SYMBOLS = [ "AddonRepository" ];
 
@@ -61,13 +62,17 @@ const PREF_GETADDONS_BROWSESEARCHRESULTS = "extensions.getAddons.search.browseUR
 const PREF_GETADDONS_GETSEARCHRESULTS    = "extensions.getAddons.search.url";
 
 const PREF_CHECK_COMPATIBILITY_BASE = "extensions.checkCompatibility";
+
+const BRANCH_REGEXP                   = /^([^\.]+\.[0-9]+[a-z]*).*/gi;
+
+XPCOMUtils.defineLazyGetter(this, "PREF_CHECK_COMPATIBILITY", function () {
 #ifdef MOZ_COMPATIBILITY_NIGHTLY
-const PREF_CHECK_COMPATIBILITY = PREF_CHECK_COMPATIBILITY_BASE +
-                                 ".nightly";
+  return PREF_CHECK_COMPATIBILITY_BASE + ".nightly";
 #else
-const PREF_CHECK_COMPATIBILITY = PREF_CHECK_COMPATIBILITY_BASE + "." +
-                                 Services.appinfo.version.replace(BRANCH_REGEXP, "$1");
+  return PREF_CHECK_COMPATIBILITY_BASE + "." +
+         Services.appinfo.version.replace(BRANCH_REGEXP, "$1");
 #endif
+});
 
 const XMLURI_PARSE_ERROR  = "http://www.mozilla.org/newlayout/xml/parsererror.xml";
 
@@ -729,25 +734,11 @@ var AddonRepository = {
    *         The callback to pass results to
    */
   getAddonsByIDs: function(aIDs, aCallback) {
-    let startupInfo = Cc["@mozilla.org/toolkit/app-startup;1"].
-                      getService(Ci.nsIAppStartup).
-                      getStartupInfo();
-
     let ids = aIDs.slice(0);
 
     let params = {
       API_VERSION : API_VERSION,
       IDS : ids.map(encodeURIComponent).join(',')
-    };
-
-    if (startupInfo.process) {
-      if (startupInfo.main)
-        params.TIME_MAIN = startupInfo.main - startupInfo.process;
-      if (startupInfo.firstPaint)
-        params.TIME_FIRST_PAINT = startupInfo.firstPaint - startupInfo.process;
-      if (startupInfo.sessionRestored)
-        params.TIME_SESSION_RESTORED = startupInfo.sessionRestored -
-                                       startupInfo.process;
     };
 
     let url = this._formatURLPref(PREF_GETADDONS_BYIDS, params);
@@ -1290,10 +1281,10 @@ var AddonDatabase = {
   // false if there was an unrecoverable error openning the database
   databaseOk: true,
   // A cache of statements that are used and need to be finalized on shutdown
-  statementCache: {},
+  asyncStatementsCache: {},
 
-  // The statements used by the database
-  statements: {
+  // The queries used by the database
+  queries: {
     getAllAddons: "SELECT internal_id, id, type, name, version, " +
                   "creator, creatorURL, description, fullDescription, " +
                   "developerComments, eula, iconURL, homepageURL, supportURL, " +
@@ -1445,9 +1436,9 @@ var AddonDatabase = {
 
     this.initialized = false;
 
-    for each (let stmt in this.statementCache)
+    for each (let stmt in this.asyncStatementsCache)
       stmt.finalize();
-    this.statementCache = {};
+    this.asyncStatementsCache = {};
 
     if (this.connection.transactionInProgress) {
       ERROR("Outstanding transaction, rolling back.");
@@ -1485,20 +1476,21 @@ var AddonDatabase = {
   },
 
   /**
-   * Gets a cached statement or creates a new statement if it doesn't already
-   * exist.
+   * Gets a cached async statement or creates a new statement if it doesn't
+   * already exist.
    *
    * @param  aKey
    *         A unique key to reference the statement
-   * @return a mozIStorageStatement for the SQL corresponding to the unique key
+   * @return a mozIStorageAsyncStatement for the SQL corresponding to the
+   *         unique key
    */
-  getStatement: function AD_getStatement(aKey) {
-    if (aKey in this.statementCache)
-      return this.statementCache[aKey];
+  getAsyncStatement: function AD_getAsyncStatement(aKey) {
+    if (aKey in this.asyncStatementsCache)
+      return this.asyncStatementsCache[aKey];
 
-    let sql = this.statements[aKey];
+    let sql = this.queries[aKey];
     try {
-      return this.statementCache[aKey] = this.connection.createStatement(sql);
+      return this.asyncStatementsCache[aKey] = this.connection.createAsyncStatement(sql);
     } catch (e) {
       ERROR("Error creating statement " + aKey + " (" + sql + ")");
       throw e;
@@ -1518,7 +1510,7 @@ var AddonDatabase = {
 
     // Retrieve all data from the addon table
     function getAllAddons() {
-      self.getStatement("getAllAddons").executeAsync({
+      self.getAsyncStatement("getAllAddons").executeAsync({
         handleResult: function(aResults) {
           let row = null;
           while (row = aResults.getNextRow()) {
@@ -1543,7 +1535,7 @@ var AddonDatabase = {
 
     // Retrieve all data from the developer table
     function getAllDevelopers() {
-      self.getStatement("getAllDevelopers").executeAsync({
+      self.getAsyncStatement("getAllDevelopers").executeAsync({
         handleResult: function(aResults) {
           let row = null;
           while (row = aResults.getNextRow()) {
@@ -1577,7 +1569,7 @@ var AddonDatabase = {
 
     // Retrieve all data from the screenshot table
     function getAllScreenshots() {
-      self.getStatement("getAllScreenshots").executeAsync({
+      self.getAsyncStatement("getAllScreenshots").executeAsync({
         handleResult: function(aResults) {
           let row = null;
           while (row = aResults.getNextRow()) {
@@ -1628,7 +1620,7 @@ var AddonDatabase = {
     let self = this;
 
     // Completely empty the database
-    let stmts = [this.getStatement("emptyAddon")];
+    let stmts = [this.getAsyncStatement("emptyAddon")];
 
     this.connection.executeAsync(stmts, stmts.length, {
       handleResult: function() {},
@@ -1694,7 +1686,7 @@ var AddonDatabase = {
         if (!aArray || aArray.length == 0)
           return;
 
-        let stmt = self.getStatement(aStatementKey);
+        let stmt = self.getAsyncStatement(aStatementKey);
         let params = stmt.newBindingParamsArray();
         aArray.forEach(function(aElement, aIndex) {
           aAddParams(params, internal_id, aElement, aIndex);
@@ -1761,7 +1753,7 @@ var AddonDatabase = {
    * @return The asynchronous mozIStorageStatement
    */
   _makeAddonStatement: function AD__makeAddonStatement(aAddon) {
-    let stmt = this.getStatement("insertAddon");
+    let stmt = this.getAsyncStatement("insertAddon");
     let params = stmt.params;
 
     PROP_SINGLE.forEach(function(aProperty) {

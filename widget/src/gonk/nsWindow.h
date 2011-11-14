@@ -40,6 +40,8 @@
 
 #include "nsBaseWidget.h"
 
+extern nsIntRect gScreenBounds;
+
 namespace mozilla {
 namespace gl {
 class GLContext;
@@ -100,7 +102,6 @@ public:
     virtual nsIntPoint WidgetToScreenOffset();
     NS_IMETHOD DispatchEvent(nsGUIEvent *aEvent, nsEventStatus &aStatus);
     NS_IMETHOD CaptureRollupEvents(nsIRollupListener *aListener,
-                                   nsIMenuRollup *aMenuRollup,
                                    bool aDoCapture,
                                    bool aConsumeRollupEvent)
     {
@@ -108,6 +109,7 @@ public:
     }
     NS_IMETHOD ReparentNativeWidget(nsIWidget* aNewParent);
 
+    virtual float GetDPI();
     virtual mozilla::layers::LayerManager*
         GetLayerManager(PLayersChild* aShadowManager = nsnull,
                         LayersBackend aBackendHint = LayerManager::LAYERS_NONE,
@@ -116,7 +118,6 @@ public:
     gfxASurface* GetThebesSurface();
 
 protected:
-    android::FramebufferNativeWindow *mNativeWindow;
     nsWindow* mParent;
     bool mVisible;
 
