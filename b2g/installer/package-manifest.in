@@ -305,7 +305,7 @@
 @BINPATH@/components/GPSDGeolocationProvider.js
 @BINPATH@/components/nsSidebar.manifest
 @BINPATH@/components/nsSidebar.js
-; @BINPATH@/components/extensions.manifest
+@BINPATH@/components/extensions.manifest
 @BINPATH@/components/addonManager.js
 @BINPATH@/components/amContentHandler.js
 @BINPATH@/components/amWebInstallListener.js
