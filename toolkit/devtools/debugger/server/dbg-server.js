@@ -70,7 +70,7 @@ const ServerSocket = CC("@mozilla.org/network/server-socket;1",
  */
 var DebuggerServer = {
   _listener: null,
-
+  _transportInitialized: false,
   xpcInspector: null,
 
   /**
@@ -81,13 +81,24 @@ var DebuggerServer = {
       return;
     }
 
-    //Cu.import("resource://gre/modules/jsdebugger.jsm");
-    //this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
-    this.xpcInspector = true;
+    Cu.import("resource://gre/modules/jsdebugger.jsm");
+    this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
+    this.initTransport();
+    this.addActors("resource:///modules/dbg-script-actors.js");
+  },
+
+  /**
+   * Initialize the debugger server's transport variables.  This can be
+   * in place of init() for cases where the jsdebugger isn't needed.
+   */
+  initTransport: function DH_initTransport() {
+    if (this._transportInitialized) {
+        return;
+    }
+
     this._connections = {};
     this._nextConnID = 0;
-
-    //this.addActors("resource:///modules/dbg-script-actors.js");
+    this._transportInitialized = true;
   },
 
   get initialized() { return !!this.xpcInspector; },
@@ -198,7 +209,7 @@ var DebuggerServer = {
    * Raises an exception if the server has not been properly initialized.
    */
   _checkInit: function DH_checkInit() {
-    if (!this.xpcInspector) {
+    if (!this._transportInitialized) {
       throw "DebuggerServer has not been initialized.";
     }
 
