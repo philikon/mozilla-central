@@ -37,7 +37,7 @@
 
 ifndef LIBXUL_SDK
 # Needed for building our components as part of libxul
-APP_LIBXUL_DIRS += mobile/components/build
+APP_LIBXUL_DIRS += mobile/xul/components/build
 
 include $(topsrcdir)/toolkit/toolkit-tiers.mk
 else
