@@ -80,6 +80,7 @@ MarionetteRootActor.prototype = {
   },
 
   disconnect: function MRA_disconnect() {
+    this._marionetteActor.deleteSession();
   },
 
   /* used to get the running marionette actor, so we can issue commands */
@@ -126,7 +127,7 @@ MarionetteDriverActor.prototype = {
       this.browser = win.Browser; //BrowserApp?
       this.tab = this.browser.addTab("about:blank", true);
     }
-    return { value: 'mobile' };
+    this.messageManager.sendAsyncMessage("Marionette:newSession", {});
   },
 
   setContext: function MDA_setContext(aRequest) {
@@ -144,21 +145,26 @@ MarionetteDriverActor.prototype = {
   },
 
   execute: function MDA_execute(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args, session: aRequest.session });
+    this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args});
   },
 
   setScriptTimeout: function MDA_setScriptTimeout(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:setScriptTimeout", {value: aRequest.value, session: aRequest.session });
+    this.messageManager.sendAsyncMessage("Marionette:setScriptTimeout", {value: aRequest.value});
   },
 
   executeAsync: function MDA_executeAsync(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:executeAsyncScript", {value: aRequest.value, args: aRequest.args, session: aRequest.session });
+    this.messageManager.sendAsyncMessage("Marionette:executeAsyncScript", {value: aRequest.value, args: aRequest.args});
+  },
+
+  goUrl: function MDA_goUrl(aRequest) {
+    this.messageManager.sendAsyncMessage("Marionette:goUrl", {value: aRequest.value});
   },
 
   deleteSession: function MDA_deleteSession(aRequest) {
     //this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
-    if (!isB2G) {
+    if (!isB2G && this.tab != null) {
       this.browser.closeTab(this.tab);
+      this.tab == null
     }
     this.conn.send({from:this.actorID, ok: true});
   },
@@ -170,6 +176,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeAsync,
+  "goUrl": MarionetteDriverActor.prototype.goUrl,
   "deleteSession": MarionetteDriverActor.prototype.deleteSession
 };
 
@@ -185,7 +192,6 @@ function MarionetteResponder(actor) {
   this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
-  //this.messageManager.addMessageListener("Marionette:deleteSession", this);
 }
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");  
@@ -199,7 +205,7 @@ MarionetteResponder.prototype = {
   receiveMessage: function(message) {
     dumpn("MDAS got message:" + message.name);
     if (message.name == "Marionette:done") {
-      this.actor.conn.send({from:this.actor.actorID, session: message.json.session, value: message.json.value});
+      this.actor.conn.send({from:this.actor.actorID, value: message.json.value});
     }
     else if (message.name == "Marionette:ok") {
       this.actor.conn.send({from:this.actor.actorID, ok: true});
@@ -208,13 +214,5 @@ MarionetteResponder.prototype = {
       var error_msg = {status: message.json.error.status, message: message.json.error.message, stacktrace: message.json.error.stacktrace };
       this.actor.conn.send({from:this.actor.actorID, error: error_msg});
     }
-    /*
-    else if (message.name == "Marionette:deleteSession") {
-      this.messageManager.removeMessageListener("Marionette:ok", this);
-      this.messageManager.removeMessageListener("Marionette:done", this);
-      this.messageManager.removeMessageListener("Marionette:error", this);
-      this.messageManager.removeMessageListener("Marionette:deleteSession", this);
-      this.actor.conn.send({from:this.actor.actorID, ok:true});
-    }*/
   }
 }

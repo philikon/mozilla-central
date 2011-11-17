@@ -1,3 +1,41 @@
+/* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
+/* ***** BEGIN LICENSE BLOCK *****
+ * Version: MPL 1.1/GPL 2.0/LGPL 2.1
+ *
+ * The contents of this file are subject to the Mozilla Public License Version
+ * 1.1 (the "License"); you may not use this file except in compliance with
+ * the License. You may obtain a copy of the License at
+ * http://www.mozilla.org/MPL/
+ *
+ * Software distributed under the License is distributed on an "AS IS" basis,
+ * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
+ * for the specific language governing rights and limitations under the
+ * License.
+ *
+ * The Original Code is mozilla.org code.
+ *
+ * The Initial Developer of the Original Code is
+ *   Mozilla Foundation
+ * Portions created by the Initial Developer are Copyright (C) 2011
+ * the Initial Developer. All Rights Reserved.
+ *
+ * Contributor(s):
+ *
+ * Alternatively, the contents of this file may be used under the terms of
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * in which case the provisions of the GPL or the LGPL are applicable instead
+ * of those above. If you wish to allow use of your version of this file only
+ * under the terms of either the GPL or the LGPL, and not to allow others to
+ * use your version of this file under the terms of the MPL, indicate your
+ * decision by deleting the provisions above and replace them with the notice
+ * and other provisions required by the GPL or the LGPL. If you do not delete
+ * the provisions above, a recipient may use your version of this file under
+ * the terms of any one of the MPL, the GPL or the LGPL.
+ *
+ * ***** END LICENSE BLOCK ***** */
+
 /* we only need one instance of each listener running in content space */
 var prefs = Components.classes["@mozilla.org/preferences-service;1"]
                      .getService(Components.interfaces.nsIPrefBranch);
@@ -7,23 +45,31 @@ if (!prefs.getBoolPref("marionette.contentListener")) {
   var curWindow = null; //holds the current window
   var curContext = "content"; //holds the current context
   prefs.setBoolPref("marionette.contentListener", true);
+  addMessageListener("Marionette:newSession", newSession);
   addMessageListener("Marionette:setContext", setContext);
   addMessageListener("Marionette:executeScript", executeScript);
   addMessageListener("Marionette:setScriptTimeout", setScriptTimeout);
   addMessageListener("Marionette:executeAsyncScript", executeAsyncScript);
+  addMessageListener("Marionette:goUrl", goUrl);
 }
 
-/*
 function newSession() {
-  //getCurrentWindow();
-  curContext = content;
-  sendAsyncMessage("Marionette:done", {type:"newSession", value: 'mobile'});
+  resetValues();
+  getCurrentWindow();
+  sendAsyncMessage("Marionette:done", {value: 'mobile'});
 }
-*/
 
 /*
  * Helper methods 
  */ 
+
+function resetValues() {
+  marionetteTimeout = null;
+  marionetteTimer = null; //nsITimer instance for timing async chrome scripts
+  curWindow = null; //holds the current window
+  curContext = "content"; //holds the current context
+}
+
 function getCurrentWindow() {
   if (curWindow == null) {
     var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
@@ -63,14 +109,13 @@ function asyncResponse() {
   }
 
   var res = curWindow.document.getUserData('__marionetteRes');
-  var session = curWindow.document.getUserData('__marionetteSession');
  // var type = 'executeAsyncScript';
   if (res.status == 0){
-    sendAsyncMessage("Marionette:done", {session: session, value: res.value, status: res.status});
+    sendAsyncMessage("Marionette:done", {value: res.value, status: res.status});
   }
   else {
     var error = { status: res.status, message: res.value, stacktrace: null };
-    sendAsyncMessage("Marionette:error", {session: session, error: error});
+    sendAsyncMessage("Marionette:error", {error: error});
   }
 }
 
@@ -93,11 +138,12 @@ function executeScript(msg) {
       var params = msg.json.args;
       var script = "var func = function() {" + msg.json.value + "}; func.apply(null, params);";
       var res = eval(script);
-      sendAsyncMessage("Marionette:done", {session: msg.json.session, value: res});
+      sendAsyncMessage("Marionette:done", {value: res});
     }
     catch (e) {
-      var error = { status: null, message: e, stacktrace: null };
-      sendAsyncMessage("Marionette:error", {session: msg.json.session, error: error});
+      // 17 = JavascriptException
+      var error = { status: 17, message: e.name + ': ' + e.message, stacktrace: null };
+      sendAsyncMessage("Marionette:error", {error: error});
     }
   }
   else {
@@ -115,14 +161,14 @@ function executeScript(msg) {
     var scriptSrc = "with(window) { var __marionetteFunc = function(){" + script +
                     "};  __marionetteFunc.apply(null, __marionetteParams); }";
     //var type = "executeScript";
-    var session = msg.json.session;
     try {
        var res = Components.utils.evalInSandbox(scriptSrc, sandbox);
-       sendAsyncMessage("Marionette:done", {session: session, value: res});
+       sendAsyncMessage("Marionette:done", {value: res});
      } catch (e) {
        //TODO: check the error status and if there is a stacktrace.
-       var error = { status: 500, message: e, stacktrace: null };
-       sendAsyncMessage("Marionette:error", { session: session, error: error});
+       // 17 = JavascriptException
+       var error = { status: 17, message: e.name + ': ' + e.message, stacktrace: null };
+       sendAsyncMessage("Marionette:error", { error: error});
      }
    }
  }
@@ -142,57 +188,83 @@ function setScriptTimeout(msg) {
 /* execute given asynchronous script in the current context */
 function executeAsyncScript(msg) {
   getCurrentWindow();
-  curWindow.window.addEventListener("unload", errUnload, false);
-  curWindow.window.document.addEventListener("marionette-async-response", asyncResponse, false);
-  var doc = curWindow.document;
-  var body = curWindow.document.body;
-  var script = msg.json.value;
-  var args = msg.json.args ? msg.json.args : []; //TODO: handle WebElement JSON Objects
+  //TODO: make this work
+  if (curContext == "chrome") {
+    var marionetteTimer = Components.classes["@mozilla.org/timer;1"]
+                .createInstance(Components.interfaces.nsITimer);
+    
+    var params = msg.json.args;
+    var script = "var func = function() {" + msg.json.value + "}; func.apply(null, params);";
+    var runScript = {
+      run: function() {
+      while(true){dump("asdf");}
+      }
+    }
+    dump("MDAS: Running script in thread\n");
+    var thread = Components.classes["@mozilla.org/thread-manager;1"]
+                           .getService(Components.interfaces.nsIThreadManager)
+                             .newThread(0)
+    thread.dispatch(runScript, Components.interfaces.nsIThread.DISPATCH_NORMAL);
+    dump("MDAS: dispatched\n");
+    //marionetteTimer.initWithCallback(function() { thread.shutdown(); } , marionetteTimeout, 1000);
 
-  /* the function to return values/error from sandbox by triggering an event we listen for */
-  //TODO: do we reset timeout?
-  var asyncComplete = 
-  "function(value, status) { " + 
-   "var __marionetteRes = document.getUserData('__marionetteRes');" +
-   "if(__marionetteRes.status == undefined) { " +
-   " __marionetteRes.value = value; " +
-   " __marionetteRes.status = status; " +
-   " document.setUserData('__marionetteRes', __marionetteRes, null); " +
-   " var ev = document.createEvent('Events'); " +
-   " ev.initEvent('marionette-async-response', true, false); "+
-   " document.dispatchEvent(ev);" +
-   "} " +
-  "}"
-
-  var window = curWindow;
-  var sandbox = new Components.utils.Sandbox(window);
-  sandbox.window = window;
-  sandbox.document = doc;
-  sandbox.timeoutId = null;
-  sandbox.navigator = window.navigator;
-  sandbox.__marionetteParams = args;
-  sandbox.document.setUserData("__marionetteRes", {}, null);
-  sandbox.document.setUserData("__marionetteSession", msg.json.session, null);
-  //TODO: odd. error code 28 is scriptTimeout, but spec says executeAsync should return code 21: Timeout...
-  //and selenium code returns 28 (http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js)
-  var scriptSrc = "with(window) {" +
-                  "var asyncComplete = " + asyncComplete + " ; " +
-                  "var callback = function(value) { return asyncComplete(value,0);};" +
-                  "__marionetteParams.push(callback);" +
-                  "var __marionetteFunc = function() { " + script +
-                  "};  __marionetteFunc.apply(null, __marionetteParams); " +
-                  "var timeoutId = window.setTimeout(asyncComplete," +
-                   marionetteTimeout +  ", 'timed out', 28);" +
-                  "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);}";
-  try {
-   Components.utils.evalInSandbox(scriptSrc, sandbox);
-  } catch (e) {
-    //var type = "executeAsyncScript";
-    var session = msg.json.session;
-    //TODO: check the error status and if there is a stacktrace.
-    var error = { status: null, message: e, stacktrace: null };
-    sendAsyncMessage("Marionette:error", {session: session, error: error});
   }
+  else {
+    curWindow.window.addEventListener("unload", errUnload, false);
+    curWindow.window.document.addEventListener("marionette-async-response", asyncResponse, false);
+    var doc = curWindow.document;
+    var body = curWindow.document.body;
+    var script = msg.json.value;
+    var args = msg.json.args ? msg.json.args : []; //TODO: handle WebElement JSON Objects
+  
+    /* the function to return values/error from sandbox by triggering an event we listen for */
+    var asyncComplete = 
+    "function(value, status) { " + 
+     "var __marionetteRes = document.getUserData('__marionetteRes');" +
+     "if(__marionetteRes.status == undefined) { " +
+     " __marionetteRes.value = value; " +
+     " __marionetteRes.status = status; " +
+     " document.setUserData('__marionetteRes', __marionetteRes, null); " +
+     " var ev = document.createEvent('Events'); " +
+     " ev.initEvent('marionette-async-response', true, false); "+
+     " document.dispatchEvent(ev);" +
+     "} " +
+    "}"
+  
+    var window = curWindow;
+    var sandbox = new Components.utils.Sandbox(window);
+    sandbox.window = window;
+    sandbox.document = doc;
+    sandbox.timeoutId = null;
+    sandbox.navigator = window.navigator;
+    sandbox.__marionetteParams = args;
+    sandbox.document.setUserData("__marionetteRes", {}, null);
+    //TODO: odd. error code 28 is scriptTimeout, but spec says executeAsync should return code 21: Timeout...
+    //and selenium code returns 28 (http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js)
+    var scriptSrc = "with(window) {" +
+                    "var asyncComplete = " + asyncComplete + " ; " +
+                    "var callback = function(value) { return asyncComplete(value,0);};" +
+                    "__marionetteParams.push(callback);" +
+                    "var __marionetteFunc = function() { " + script +
+                    "};  __marionetteFunc.apply(null, __marionetteParams); " +
+                    "var timeoutId = window.setTimeout(asyncComplete," +
+                     marionetteTimeout +  ", 'timed out', 28);" +
+                    "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);}";
+    try {
+     Components.utils.evalInSandbox(scriptSrc, sandbox);
+    } catch (e) {
+      //var type = "executeAsyncScript";
+      //TODO: check the error status and if there is a stacktrace.
+      // 17 = JavascriptException
+      var error = { status: 17, message: e.name + ': ' + e.message, stacktrace: null };
+      sendAsyncMessage("Marionette:error", {error: error});
+    }
+  }
+}
+
+function goUrl(msg) {
+  curWindow.window.location.href = msg.json.value;
+  sendAsyncMessage("Marionette:ok", {});
 }
 
 function clickElement(msg) {
