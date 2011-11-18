@@ -40,11 +40,7 @@
 
 #include "nsBaseAppShell.h"
 #include "nsTArray.h"
-
-namespace mozilla {
-bool ProcessNextEvent();
-void NotifyEvent();
-}
+#include "GonkGlue.h"
 
 extern bool gDrawRequest;
 
@@ -85,6 +81,9 @@ protected:
     virtual ~nsAppShell();
 
     virtual void ScheduleNativeEventCallback();
+
+private:
+    nsresult AddFdHandler(int fd, FdHandlerCallback handlerFunc);
 
     // This is somewhat racy but is perfectly safe given how the callback works
     bool mNativeCallbackRequest;

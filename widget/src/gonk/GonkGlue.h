@@ -1,11 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=8 et ft=cpp : */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at:
+ * the License. You may obtain a copy of the License at
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -13,15 +11,14 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Code.
+ * The Original Code is Gonk.
  *
  * The Initial Developer of the Original Code is
- *   The Mozilla Foundation
+ * the Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Chris Jones <jones.chris.g@gmail.com>
  *   Michael Wu <mwu@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
@@ -38,55 +35,14 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "GonkGlue.h"
-#include "Hal.h"
-#include "mozilla/dom/battery/Constants.h"
-#include <stdio.h>
-
-using mozilla::hal::WindowIdentifier;
+#ifndef GonkGlue_h
+#define GonkGlue_h
 
 namespace mozilla {
-namespace hal_impl {
-
-void
-Vibrate(const nsTArray<uint32>& pattern, const hal::WindowIdentifier &)
-{}
-
-void
-CancelVibrate(const hal::WindowIdentifier &)
-{}
-
-void
-EnableBatteryNotifications()
-{
-    mozilla::CheckBattery(true);
+bool ProcessNextEvent();
+void NotifyEvent();
+void CheckBattery(bool enable);
 }
 
-void
-DisableBatteryNotifications()
-{
-    mozilla::CheckBattery(false);
-}
+#endif /* GonkGlue_h */
 
-void
-GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo)
-{
-  FILE *capacityFile = fopen("/sys/class/power_supply/battery/capacity", "r");
-  double capacity = dom::battery::kDefaultLevel * 100;
-  if (capacityFile)
-    fscanf(capacityFile, "%lf", &capacity);
-  fclose(capacityFile);
-
-  FILE *chargingFile = fopen("/sys/class/power_supply/battery/charging_source", "r");
-  int chargingSrc = 1;
-  if (chargingFile)
-    fscanf(chargingFile, "%d", &chargingSrc);
-  fclose(chargingFile);
-
-  aBatteryInfo->level() = capacity / 100;
-  aBatteryInfo->charging() = chargingSrc == 1;
-  aBatteryInfo->remainingTime() = dom::battery::kUnknownRemainingTime;
-}
-
-} // hal_impl
-} // namespace mozilla

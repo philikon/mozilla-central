@@ -50,6 +50,7 @@ MODULE_NAME     = nsWidgetGonkModule
 GRE_MODULE      = 1
 LIBXUL_LIBRARY  = 1
 
+EXPORTS = GonkGlue.h
 
 CPPSRCS	= \
 	nsAppShell.cpp \
