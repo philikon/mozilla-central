@@ -39,16 +39,6 @@
 
 #define _GNU_SOURCE
 
-#include "mozilla/Hal.h"
-#include "mozilla/Services.h"
-#include "nsAppShell.h"
-#include "nsGkAtoms.h"
-#include "nsGUIEvent.h"
-#include "nsIObserverService.h"
-#include "nsWindow.h"
-
-#include "android/log.h"
-
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
@@ -61,6 +51,16 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include "mozilla/Hal.h"
+#include "mozilla/Services.h"
+#include "nsAppShell.h"
+#include "nsGkAtoms.h"
+#include "nsGUIEvent.h"
+#include "nsIObserverService.h"
+#include "nsWindow.h"
+
+#include "android/log.h"
 
 #ifndef ABS_MT_TOUCH_MAJOR
 // Taken from include/linux/input.h
@@ -373,7 +373,6 @@ ueventHandler(int fd, FdHandler *data)
     buf[4095] = 0;
     char *payload = buf;
     if (strstr(payload, "battery")) {
-        LOG("received power supply event from kernel");
         hal::BatteryInformation info;
         hal_impl::GetCurrentBatteryInformation(&info);
         hal::NotifyBatteryChange(info);
