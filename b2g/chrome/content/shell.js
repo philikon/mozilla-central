@@ -38,7 +38,6 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 const CC = Components.Constructor;
-const Cu = Components.utils;
 
 Cu.import('resource://gre/modules/Services.jsm');
 
@@ -74,12 +73,18 @@ var shell = {
   },
 
   startMarionetteServer: function shell_startMarionetteServer() {
-    Cu.import("resource:///modules/dbg-server.jsm");
-    Cu.import("resource:///modules/marionette-logger.jsm");
-    DebuggerServer.addActors("resource:///modules/marionette-actors.js");
-    DebuggerServer.initTransport();
-    DebuggerServer.openListener(2828, true);
-    MarionetteLogger.write('opened listener on port 2828');
+    dump("starting Marionette....");
+    try {
+      Cu.import("resource:///modules/marionette-logger.jsm");
+      Cu.import("resource:///modules/dbg-server.jsm");
+      DebuggerServer.addActors("resource:///modules/marionette-actors.js");
+      DebuggerServer.initTransport();
+      DebuggerServer.openListener(2828, true);
+      MarionetteLogger.write('opened listener on port 2828');
+    }
+    catch(e) {
+      dump("exception: " + e.name + ", " + e.message);
+    }
   },
 
   start: function shell_init() {
