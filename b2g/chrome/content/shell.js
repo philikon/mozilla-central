@@ -78,8 +78,8 @@ var shell = {
     Cu.import("resource:///modules/marionette-logger.jsm");
     DebuggerServer.addActors("resource:///modules/marionette-actors.js");
     DebuggerServer.initTransport();
-    DebuggerServer.openListener(2929, true);
-    MarionetteLogger.write('opened listener on port 2929');
+    DebuggerServer.openListener(2828, true);
+    MarionetteLogger.write('opened listener on port 2828');
   },
 
   start: function shell_init() {
