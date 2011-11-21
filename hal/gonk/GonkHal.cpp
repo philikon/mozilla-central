@@ -38,6 +38,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "GonkGlue.h"
 #include "Hal.h"
 #include "mozilla/dom/battery/Constants.h"
 #include <stdio.h>
@@ -57,11 +58,15 @@ CancelVibrate(const hal::WindowIdentifier &)
 
 void
 EnableBatteryNotifications()
-{}
+{
+    mozilla::CheckBattery(true);
+}
 
 void
 DisableBatteryNotifications()
-{}
+{
+    mozilla::CheckBattery(false);
+}
 
 void
 GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo)
