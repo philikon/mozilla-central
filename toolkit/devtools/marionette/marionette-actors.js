@@ -50,7 +50,12 @@ var prefs = Components.classes["@mozilla.org/preferences-service;1"]
 var running = prefs.setBoolPref("marionette.contentListener", false);
 var messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                          getService(Ci.nsIChromeFrameMessageManager);
-messageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
+/* we only need one instance of each listener running in content space */
+if (!prefs.getBoolPref("marionette.contentListener")) {
+  messageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
+  prefs.setBoolPref("marionette.contentListener", true);
+}
+
 var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
                  .getService(Ci.nsIXULAppInfo);
 var isB2G = xulAppInfo.name.indexOf('B2G') > -1;
@@ -127,19 +132,16 @@ MarionetteDriverActor.prototype = {
       this.browser = win.Browser; //BrowserApp?
       this.tab = this.browser.addTab("about:blank", true);
     }
-    this.messageManager.sendAsyncMessage("Marionette:newSession", {});
+    this.messageManager.sendAsyncMessage("Marionette:newSession", {B2G: isB2G});
   },
 
   setContext: function MDA_setContext(aRequest) {
-    dumpn("MDAS: got: " + aRequest.value);
     var context = aRequest.value;
     if (context != "content" && context != "chrome") {
-      dumpn("MDAS: err: " + aRequest.value);
       var error = { message: "invalid context", status: null, stacktrace: null};
       this.messageManager.sendAsyncMessage("Marionette:error", {error:error});
     }
     else {
-      dumpn("MDAS: sending: " + aRequest.value);
       this.messageManager.sendAsyncMessage("Marionette:setContext", {value:context});
     }
   },
@@ -157,7 +159,8 @@ MarionetteDriverActor.prototype = {
   },
 
   goUrl: function MDA_goUrl(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:goUrl", {value: aRequest.value});
+    this.messageManager.addMessageListener("DOMContentLoaded", this,true);
+    this.browser.selectedBrowser.loadURI(aRequest.value);
   },
 
   deleteSession: function MDA_deleteSession(aRequest) {
@@ -167,6 +170,12 @@ MarionetteDriverActor.prototype = {
       this.tab == null
     }
     this.conn.send({from:this.actorID, ok: true});
+  },
+  receiveMessage: function(message) {
+    if (message.name == "DOMContentLoaded") {
+      this.conn.send({from:this.actorID, ok: true});
+      this.messageManager.removeMessageListener("DOMContentLoaded", this,true);
+    }
   },
 };
 
@@ -203,7 +212,6 @@ MarionetteResponder.prototype = {
   QueryInterface: XPCOMUtils.generateQI(Ci.nsIFrameMessageListener),
 
   receiveMessage: function(message) {
-    dumpn("MDAS got message:" + message.name);
     if (message.name == "Marionette:done") {
       this.actor.conn.send({from:this.actor.actorID, value: message.json.value});
     }
