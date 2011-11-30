@@ -21,6 +21,8 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *    Malini Das (mdas@mozilla.com)
+ *    Jonathan Griffin (jgriffin@mozilla.com)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -43,18 +45,11 @@
 
 var Ci = Components.interfaces;
 var Cc = Components.classes;
+var Cu = Components.utils;
 
-//set up the marionette content listener
 var prefs = Components.classes["@mozilla.org/preferences-service;1"]
                      .getService(Components.interfaces.nsIPrefBranch);
-var running = prefs.setBoolPref("marionette.contentListener", false);
-var messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
-                         getService(Ci.nsIChromeFrameMessageManager);
-/* we only need one instance of each listener running in content space */
-if (!prefs.getBoolPref("marionette.contentListener")) {
-  messageManager.loadFrameScript("resource:///modules/marionette-listener.js", true);
-  prefs.setBoolPref("marionette.contentListener", true);
-}
+prefs.setBoolPref("marionette.contentListener", false);
 
 var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
                  .getService(Ci.nsIXULAppInfo);
@@ -93,12 +88,6 @@ MarionetteRootActor.prototype = {
     return { "from": "root",
              "id": this._marionetteActor.actorID } ;
   },
-  /* //for use with future actors
-  listActors: function MRA_listActors() {
-    return { "from": "root",
-             "actors": [actor.actorID for each (actor in this._marionetteActors)] };
-  },
-  */
 }
 
 MarionetteRootActor.prototype.requestTypes = {
@@ -111,19 +100,51 @@ function MarionetteDriverActor(aConnection)
   this.conn = aConnection;
   this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                              getService(Ci.nsIChromeFrameMessageManager);
-  this.messageListener = new MarionetteResponder(this);
+  this.messageManager.addMessageListener("Marionette:ok", this);
+  this.messageManager.addMessageListener("Marionette:done", this);
+  this.messageManager.addMessageListener("Marionette:error", this);
+  this.windowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService(Components.interfaces.nsIWindowMediator);
   this.browser = null;
   this.tab = null;
+  this.context = "content";
+  this.scriptTimeout = null;
+  this.timer = null;
 }
 
 MarionetteDriverActor.prototype = {
 
   actorPrefix: "marionette",
 
+  sendResponse: function (value) {
+    this.conn.send({from:this.actorID, value: value});
+  },
+
+  sendOk: function() {
+    this.conn.send({from:this.actorID, ok: true});
+  },
+
+  sendError: function (message, status, trace) {
+    var error_msg = {message: message, status: status, stacktrace: trace};
+    this.conn.send({from:this.actorID, error: error_msg});
+  },
+
+  getCurrentWindow: function() {
+    var type = null;
+    if (!isB2G) {
+      type = 'navigator:browser';
+    }
+    return this.windowMediator.getMostRecentWindow(type);
+  },
+
   //We will only ever be running one browser at a time
   //If no browser is running (ie: in B2G) start one up
   newSession: function MDA_newSession(aRequest) {
-    if (!isB2G) {
+    if (isB2G) {
+      if (!prefs.getBoolPref("marionette.contentListener")) {
+        this.messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
+        prefs.setBoolPref("marionette.contentListener", true);
+      }
+    } else {
       //XXX: this doesn't work in b2g
       //TODO: check if browser has started, if not, kick it off
       var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
@@ -131,6 +152,11 @@ MarionetteDriverActor.prototype = {
       var win = WindowMediator.getMostRecentWindow('navigator:browser');
       this.browser = win.Browser; //BrowserApp?
       this.tab = this.browser.addTab("about:blank", true);
+      /* we only need one instance of each listener running in content space */
+      if (!prefs.getBoolPref("marionette.contentListener")) {
+        this.tab.browser.messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
+        prefs.setBoolPref("marionette.contentListener", true);
+      }
     }
     this.messageManager.sendAsyncMessage("Marionette:newSession", {B2G: isB2G});
   },
@@ -138,24 +164,80 @@ MarionetteDriverActor.prototype = {
   setContext: function MDA_setContext(aRequest) {
     var context = aRequest.value;
     if (context != "content" && context != "chrome") {
-      var error = { message: "invalid context", status: null, stacktrace: null};
-      this.messageManager.sendAsyncMessage("Marionette:error", {error:error});
+      this.sendError("invalid context", 17, null); //TODO find more appropriate errmsg
     }
     else {
-      this.messageManager.sendAsyncMessage("Marionette:setContext", {value:context});
+      this.context = context;
+      this.sendOk();
     }
   },
 
   execute: function MDA_execute(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args});
+    if (this.context == "chrome") {
+      var curWindow = this.getCurrentWindow();
+      try {
+        var params = aRequest.args;
+        var _chromeSandbox = new Cu.Sandbox(curWindow,
+           { sandboxPrototype: curWindow, wantXrays: false, 
+             sandboxName: ''});
+        _chromeSandbox.__marionetteParams = params;
+        var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
+        var res = Cu.evalInSandbox(script, _chromeSandbox);
+        this.sendResponse({value:res});
+      }
+      catch (e) {
+        // 17 = JavascriptException
+        this.sendError(e.name + ': ' + e.message, 17, null);
+      }
+    }
+    else {
+      this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args});
+    }
   },
 
   setScriptTimeout: function MDA_setScriptTimeout(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:setScriptTimeout", {value: aRequest.value});
+    var timeout = parseInt(aRequest.value);
+    if(isNaN(timeout)){
+      this.sendError("Not a Number", 17, null); //TODO: find more appropriate error message
+    }
+    else {
+      this.scriptTimeout = timeout;
+      this.messageManager.sendAsyncMessage("Marionette:setScriptTimeout", {value: timeout});
+      this.sendOk();
+    }
   },
 
   executeAsync: function MDA_executeAsync(aRequest) {
-    this.messageManager.sendAsyncMessage("Marionette:executeAsyncScript", {value: aRequest.value, args: aRequest.args});
+    if (this.context == "chrome") {
+      var curWindow = this.getCurrentWindow();
+      this.timer = Components.classes["@mozilla.org/timer;1"]
+                  .createInstance(Components.interfaces.nsITimer);
+      var params = aRequest.args;
+      var _chromeSandbox = new Cu.Sandbox(curWindow,
+         { sandboxPrototype: curWindow, wantXrays: false, 
+           sandboxName: ''});
+      _chromeSandbox.__marionetteParams = params;
+      _chromeSandbox.__marionetteTimer = this.timer;
+      _chromeSandbox.__conn = this.conn; //must send msgs on actual connection, since we can't send messages from chrome->chrome
+      _chromeSandbox.__actorID = this.actorID;
+      var returnFunc = 'var returnFunc = function(value, status) { __conn.send({from: __actorID, value: value, status: status});' 
+                                                               +'__marionetteTimer.cancel(); __marionetteTimer = null;};';
+      var script = returnFunc
+                  +'__marionetteParams.push(returnFunc);'
+                  +'var marionetteScriptFinished = returnFunc;'
+                  +'var timeoutFunc = function() {returnFunc("timed out", 28);};'
+                  +'var __marionetteFunc = function() {' + aRequest.value + '};'
+                  +'__marionetteFunc.apply(null, __marionetteParams);'
+                  +'if(__marionetteTimer != null) {__marionetteTimer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
+      try {
+       Cu.evalInSandbox(script, _chromeSandbox);
+      } catch (e) {
+        sendError("e.message", 17, null);
+      }
+    }
+    else {
+      this.messageManager.sendAsyncMessage("Marionette:executeAsyncScript", {value: aRequest.value, args: aRequest.args});
+    }
   },
 
   goUrl: function MDA_goUrl(aRequest) {
@@ -163,18 +245,45 @@ MarionetteDriverActor.prototype = {
     this.browser.selectedBrowser.loadURI(aRequest.value);
   },
 
+  setSearchTimeout: function MDA_setSearchTimeout(aRequest) {
+    this.messageManager.sendAsyncMessage("Marionette:setSearchTimeout", {value: aRequest.value});
+  },
+
+  findElement: function MDA_findElement(aRequest) {
+    this.messageManager.sendAsyncMessage("Marionette:findElement", {value: aRequest.value, using: aRequest.using, element: aRequest.element});
+  },
+
+  clickElement: function MDA_clickElement(aRequest) {
+    this.messageManager.sendAsyncMessage("Marionette:clickElement", {element: aRequest.element});
+  },
+
   deleteSession: function MDA_deleteSession(aRequest) {
-    //this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
     if (!isB2G && this.tab != null) {
       this.browser.closeTab(this.tab);
       this.tab == null
+      //don't set this pref for B2G since the framescript can be safely reused
+      this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
+      prefs.setBoolPref("marionette.contentListener", false);
     }
-    this.conn.send({from:this.actorID, ok: true});
+    this.messageManager.removeMessageListener("Marionette:ok", this);
+    this.messageManager.removeMessageListener("Marionette:done", this);
+    this.messageManager.removeMessageListener("Marionette:error", this);
+    this.sendOk();
   },
+
   receiveMessage: function(message) {
     if (message.name == "DOMContentLoaded") {
-      this.conn.send({from:this.actorID, ok: true});
+      this.sendOk();
       this.messageManager.removeMessageListener("DOMContentLoaded", this,true);
+    }
+    else if (message.name == "Marionette:done") {
+      this.sendResponse(message.json.value);
+    }
+    else if (message.name == "Marionette:ok") {
+      this.sendOk();
+    }
+    else if (message.name == "Marionette:error") {
+      this.sendError(message.json.message, message.json.status, message.json.stacktrace);
     }
   },
 };
@@ -185,42 +294,9 @@ MarionetteDriverActor.prototype.requestTypes = {
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeAsync,
+  "setSearchTimeout": MarionetteDriverActor.prototype.setSearchTimeout,
+  "findElement": MarionetteDriverActor.prototype.findElement,
+  "clickElement": MarionetteDriverActor.prototype.clickElement,
   "goUrl": MarionetteDriverActor.prototype.goUrl,
   "deleteSession": MarionetteDriverActor.prototype.deleteSession
 };
-
-/* 
- * MarionetteResponder listener was created instead of using a 
- * listener function since we need the actor's connection and id
- * in order to respond. We will only ever service one marionette JSON protocol user at a time.
- */
-function MarionetteResponder(actor) {
-  this.actor = actor;
-  this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"]
-                        .getService(Ci.nsIChromeFrameMessageManager);
-  this.messageManager.addMessageListener("Marionette:ok", this);
-  this.messageManager.addMessageListener("Marionette:done", this);
-  this.messageManager.addMessageListener("Marionette:error", this);
-}
-
-Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");  
-
-MarionetteResponder.prototype = {
-  classDescription: "MarionetteResponder",
-  contractID: "@mozilla.org/marionette-responder;1",
-  classID: Components.ID("{7FF808DA-FF1D-11E0-B50D-F84B4824019B}"),
-  QueryInterface: XPCOMUtils.generateQI(Ci.nsIFrameMessageListener),
-
-  receiveMessage: function(message) {
-    if (message.name == "Marionette:done") {
-      this.actor.conn.send({from:this.actor.actorID, value: message.json.value});
-    }
-    else if (message.name == "Marionette:ok") {
-      this.actor.conn.send({from:this.actor.actorID, ok: true});
-    }
-    else if (message.name == "Marionette:error") {
-      var error_msg = {status: message.json.error.status, message: message.json.error.message, stacktrace: message.json.error.stacktrace };
-      this.actor.conn.send({from:this.actor.actorID, error: error_msg});
-    }
-  }
-}
