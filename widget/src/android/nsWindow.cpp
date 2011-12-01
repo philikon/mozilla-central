@@ -84,6 +84,7 @@ using mozilla::unused;
 #define TILE_HEIGHT     2048
 
 using namespace mozilla;
+using namespace mozilla::widget;
 
 NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 
@@ -306,8 +307,7 @@ void
 nsWindow::RedrawAll()
 {
     nsIntRect entireRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
-    AndroidGeckoEvent *event = new AndroidGeckoEvent(AndroidGeckoEvent::DRAW,
-                                                     entireRect);
+    AndroidGeckoEvent *event = new AndroidGeckoEvent(AndroidGeckoEvent::DRAW, entireRect);
     nsAppShell::gAppShell->PostEvent(event);
 }
 
@@ -796,6 +796,22 @@ nsWindow::GetThebesSurface()
     return new gfxImageSurface(gfxIntSize(5,5), gfxImageSurface::ImageFormatRGB24);
 }
 
+
+class DrawToFileRunnable : public nsRunnable {
+public:
+    DrawToFileRunnable(nsWindow* win, const nsAString &path) {
+       mPath = path;
+       mWindow = win;
+   }
+    NS_IMETHOD Run() {
+        mWindow->DrawToFile(mPath);
+        return NS_OK;
+    }
+private:
+    nsString mPath;
+    nsRefPtr<nsWindow> mWindow;
+};
+
 bool
 nsWindow::DrawToFile(const nsAString &path)
 {
@@ -1009,7 +1025,11 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             break;
 
         case AndroidGeckoEvent::SAVE_STATE:
-            win->DrawToFile(ae->Characters());
+            {
+                nsCOMPtr<nsIThread> thread;
+                nsRefPtr<DrawToFileRunnable> runnable = new DrawToFileRunnable(win, ae->Characters());
+                NS_NewThread(getter_AddRefs(thread), runnable);
+            }
             break;
 
         default:
@@ -1064,7 +1084,10 @@ nsWindow::DrawTo(gfxASurface *targetSurface, const nsIntRect &invalidRect)
     // If we have no covering child, then we need to render this.
     if (coveringChildIndex == -1) {
         nsPaintEvent event(true, NS_PAINT, this);
-        event.region = boundsRect.Intersect(invalidRect);
+
+        nsIntRect tileRect(0, 0, TILE_WIDTH, TILE_HEIGHT);
+        event.region = boundsRect.Intersect(invalidRect).Intersect(tileRect);
+
         switch (GetLayerManager(nsnull)->GetBackendType()) {
             case LayerManager::LAYERS_BASIC: {
                 nsRefPtr<gfxContext> ctx = new gfxContext(targetSurface);
@@ -1072,6 +1095,7 @@ nsWindow::DrawTo(gfxASurface *targetSurface, const nsIntRect &invalidRect)
                 {
                     AutoLayerManagerSetup
                       setupLayerManager(this, ctx, BasicLayerManager::BUFFER_NONE);
+
                     status = DispatchEvent(&event);
                 }
 
@@ -1152,6 +1176,7 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
     AndroidGeckoSoftwareLayerClient &client =
         AndroidBridge::Bridge()->GetSoftwareLayerClient();
     client.BeginDrawing();
+
     unsigned char *bits = client.LockBufferBits();
     nsRefPtr<gfxImageSurface> targetSurface =
         new gfxImageSurface(bits, gfxIntSize(TILE_WIDTH, TILE_HEIGHT), TILE_WIDTH * 2,
@@ -1160,10 +1185,19 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
         ALOG("### Failed to create a valid surface from the bitmap");
     } else {
         DrawTo(targetSurface, ae->Rect());
+
+        nsAutoString metadata;
+        {
+            nsCOMPtr<nsIAndroidDrawMetadataProvider> metadataProvider =
+                AndroidBridge::Bridge()->GetDrawMetadataProvider();
+            if (metadataProvider)
+                metadataProvider->GetDrawMetadata(metadata);
+        }
+
         client.UnlockBuffer();
-        client.EndDrawing(ae->Rect());
+        client.EndDrawing(ae->Rect(), metadata);
     }
-        return;
+    return;
 #endif
 
     if (!sSurfaceExists) {
@@ -2012,33 +2046,36 @@ nsWindow::ResetInputState()
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsWindow::SetInputMode(const IMEContext& aContext)
+NS_IMETHODIMP_(void)
+nsWindow::SetInputContext(const InputContext& aContext,
+                          const InputContextAction& aAction)
 {
-    ALOGIME("IME: SetInputMode: s=%d trusted=%d", aContext.mStatus, aContext.mReason);
+    ALOGIME("IME: SetInputContext: s=0x%X, 0x%X, action=0x%X, 0x%X",
+            aContext.mIMEState.mEnabled, aContext.mIMEState.mOpen,
+            aAction.mCause, aAction.mFocusChange);
 
-    mIMEContext = aContext;
+    mInputContext = aContext;
 
     // Ensure that opening the virtual keyboard is allowed for this specific
-    // IMEContext depending on the content.ime.strict.policy pref
-    if (aContext.mStatus != nsIWidget::IME_STATUS_DISABLED && 
-        aContext.mStatus != nsIWidget::IME_STATUS_PLUGIN) {
-      if (Preferences::GetBool("content.ime.strict_policy", false) &&
-          !aContext.FocusMovedByUser() &&
-          aContext.FocusMovedInContentProcess()) {
-        return NS_OK;
-      }
+    // InputContext depending on the content.ime.strict.policy pref
+    if (aContext.mIMEState.mEnabled != IMEState::DISABLED && 
+        aContext.mIMEState.mEnabled != IMEState::PLUGIN &&
+        Preferences::GetBool("content.ime.strict_policy", false) &&
+        !aAction.ContentGotFocusByTrustedCause() &&
+        !aAction.UserMightRequestOpenVKB()) {
+        return;
     }
 
-    AndroidBridge::NotifyIMEEnabled(int(aContext.mStatus), aContext.mHTMLInputType, aContext.mActionHint);
-    return NS_OK;
+    AndroidBridge::NotifyIMEEnabled(int(aContext.mIMEState.mEnabled),
+                                    aContext.mHTMLInputType,
+                                    aContext.mActionHint);
 }
 
-NS_IMETHODIMP
-nsWindow::GetInputMode(IMEContext& aContext)
+NS_IMETHODIMP_(InputContext)
+nsWindow::GetInputContext()
 {
-    aContext = mIMEContext;
-    return NS_OK;
+    mInputContext.mIMEState.mOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
+    return mInputContext;
 }
 
 NS_IMETHODIMP

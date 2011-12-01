@@ -2219,6 +2219,11 @@ DocumentViewerImpl::CreateStyleSet(nsIDocument* aDocument,
     styleSet->PrependStyleSheet(nsStyleSet::eAgentSheet, sheet);
   }
 
+  sheet = nsLayoutStylesheetCache::FullScreenOverrideSheet();
+  if (sheet) {
+    styleSet->PrependStyleSheet(nsStyleSet::eOverrideSheet, sheet);
+  }
+
   // Make sure to clone the quirk sheet so that it can be usefully
   // enabled/disabled as needed.
   nsRefPtr<nsCSSStyleSheet> quirkClone;
@@ -3593,10 +3598,8 @@ DocumentViewerImpl::Print(nsIPrintSettings*       aPrintSettings,
     return NS_ERROR_GFX_PRINTER_DOC_IS_BUSY;
   }
 
-  nsCOMPtr<nsIPresShell> presShell;
-  docShell->GetPresShell(getter_AddRefs(presShell));
-  if (!presShell || !mDocument || !mDeviceContext) {
-    PR_PL(("Can't Print without pres shell, document etc"));
+  if (!mDocument || !mDeviceContext) {
+    PR_PL(("Can't Print without a document and a device context"));
     return NS_ERROR_FAILURE;
   }
 

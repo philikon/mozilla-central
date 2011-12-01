@@ -52,6 +52,7 @@
 #include "nsIMutableArray.h"
 #include "nsIMIMEInfo.h"
 #include "nsColor.h"
+#include "nsIURIFixup.h"
 
 #include "nsIAndroidBridge.h"
 
@@ -185,6 +186,8 @@ public:
 
     bool ClipboardHasText();
 
+    bool CanCreateFixupURI(const nsACString& aURIText);
+
     void ShowAlertNotification(const nsAString& aImageUrl,
                                const nsAString& aAlertTitle,
                                const nsAString& aAlertText,
@@ -230,30 +233,50 @@ public:
 
     bool GetAccessibilityEnabled();
 
-    struct AutoLocalJNIFrame {
-        AutoLocalJNIFrame(int nEntries = 128) : mEntries(nEntries) {
-            // Make sure there is enough space to store a local ref to the
-            // exception.  I am not completely sure this is needed, but does
-            // not hurt.
-            AndroidBridge::Bridge()->JNI()->PushLocalFrame(mEntries + 1);
+    class AutoLocalJNIFrame {
+    public:
+        AutoLocalJNIFrame(int nEntries = 128)
+            : mEntries(nEntries)
+            , mJNIEnv(JNI())
+        {
+            Push();
         }
+
+        AutoLocalJNIFrame(JNIEnv* aJNIEnv, int nEntries = 128)
+            : mEntries(nEntries)
+            , mJNIEnv(aJNIEnv ? aJNIEnv : JNI())
+        {
+            Push();
+        }
+
         // Note! Calling Purge makes all previous local refs created in
         // the AutoLocalJNIFrame's scope INVALID; be sure that you locked down
         // any local refs that you need to keep around in global refs!
         void Purge() {
-            AndroidBridge::Bridge()->JNI()->PopLocalFrame(NULL);
-            AndroidBridge::Bridge()->JNI()->PushLocalFrame(mEntries);
+            mJNIEnv->PopLocalFrame(NULL);
+            Push();
         }
+
         ~AutoLocalJNIFrame() {
-            jthrowable exception =
-                AndroidBridge::Bridge()->JNI()->ExceptionOccurred();
+            jthrowable exception = mJNIEnv->ExceptionOccurred();
             if (exception) {
-                AndroidBridge::Bridge()->JNI()->ExceptionDescribe();
-                AndroidBridge::Bridge()->JNI()->ExceptionClear();
+                mJNIEnv->ExceptionDescribe();
+                mJNIEnv->ExceptionClear();
             }
-            AndroidBridge::Bridge()->JNI()->PopLocalFrame(NULL);
+
+            mJNIEnv->PopLocalFrame(NULL);
         }
+
+    private:
+        void Push() {
+            // Make sure there is enough space to store a local ref to the
+            // exception.  I am not completely sure this is needed, but does
+            // not hurt.
+            mJNIEnv->PushLocalFrame(mEntries + 1);
+        }
+
         int mEntries;
+        JNIEnv* mJNIEnv;
     };
 
     /* See GLHelpers.java as to why this is needed */
@@ -300,6 +323,8 @@ public:
     
     void HandleGeckoMessage(const nsAString& message, nsAString &aRet);
 
+    nsCOMPtr<nsIAndroidDrawMetadataProvider> GetDrawMetadataProvider();
+
     void EmitGeckoAccessibilityEvent (PRInt32 eventType, const nsAString& role, const nsAString& text, const nsAString& description, bool enabled, bool checked, bool password);
 
     void CheckURIVisited(const nsAString& uri);
@@ -312,6 +337,9 @@ public:
     void EnableBatteryNotifications();
     void DisableBatteryNotifications();
     void GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo);
+
+    PRUint16 GetNumberOfMessagesForText(const nsAString& aText);
+    void SendMessage(const nsAString& aNumber, const nsAString& aText);
 
 protected:
     static AndroidBridge *sBridge;
@@ -397,6 +425,9 @@ protected:
     jmethodID jMarkUriVisited;
     jmethodID jEmitGeckoAccessibilityEvent;
 
+    jmethodID jNumberOfMessages;
+    jmethodID jSendMessage;
+
     // stuff we need for CallEglCreateWindowSurface
     jclass jEGLSurfaceImplClass;
     jclass jEGLContextImplClass;
@@ -404,6 +435,9 @@ protected:
     jclass jEGLDisplayImplClass;
     jclass jEGLContextClass;
     jclass jEGL10Class;
+
+    // Needed for canCreateFixupURI()
+    nsCOMPtr<nsIURIFixup> mURIFixup;
 
     // calls we've dlopened from libjnigraphics.so
     int (* AndroidBitmap_getInfo)(JNIEnv *env, jobject bitmap, void *info);
