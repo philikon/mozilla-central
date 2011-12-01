@@ -319,10 +319,10 @@ ABI_DIR = armeabi
 endif
 endif
 
-ifeq ($(MOZ_BUILD_APP),mobile/xul)
-GECKO_APP_AP_PATH = ../embedding/android
+ifneq (,$(filter mobile/xul b2g,$(MOZ_BUILD_APP)))
+GECKO_APP_AP_PATH = $(call core_abspath,$(DEPTH))/embedding/android
 else
-GECKO_APP_AP_PATH = ../mobile/android/base
+GECKO_APP_AP_PATH = $(call core_abspath,$(DEPTH))/mobile/android/base
 endif
 
 PKG_SUFFIX      = .apk
