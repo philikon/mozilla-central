@@ -222,7 +222,7 @@ menuitem.bookmark-item {
 }
 
 .bookmark-item[query][tagContainer] {
-  list-style-image: url("chrome://mozapps/skin/places/tagContainerIcon.png");
+  list-style-image: url("chrome://browser/skin/places/tag.png");
 }
 
 .bookmark-item[query][dayContainer] {
@@ -1959,7 +1959,7 @@ panel[dimmed="true"] {
 /* Highlighter */
 
 .highlighter-veil {
-  background-color: rgba(0, 0, 0, 0.5);
+  background-color: rgba(25, 25, 25, 0.5);
 }
 
 #highlighter-closebutton {
@@ -2030,6 +2030,7 @@ panel[dimmed="true"] {
   border-radius: 3px;
   background: -moz-linear-gradient(hsla(212,7%,57%,.35), hsla(212,7%,57%,.1)) padding-box;
   box-shadow: 0 1px 0 hsla(210,16%,76%,.15) inset, 0 0 0 1px hsla(210,16%,76%,.15) inset, 0 1px 0 hsla(210,16%,76%,.15);
+  margin: 0 3px;
 }
 
 #inspector-inspect-toolbutton:not([checked]):hover:active,
@@ -2169,7 +2170,7 @@ panel[dimmed="true"] {
 /* Highlighter toolbar - breadcrumbs */
 
 #inspector-breadcrumbs {
-  padding: 0 6px;
+  padding: 0 3px;
   /* A fake 1px-shadow is included in the border-images of the
      inspector-breadcrumbs-buttons, to match toolbar-buttons style.
      This negative margin compensate the extra row of pixels created

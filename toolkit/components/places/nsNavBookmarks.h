@@ -220,19 +220,9 @@ public:
    */
   nsresult CreateContainerWithID(PRInt64 aId, PRInt64 aParent,
                                  const nsACString& aTitle,
-                                 const nsAString& aContractId,
                                  bool aIsBookmarkFolder,
                                  PRInt32* aIndex,
                                  PRInt64* aNewFolder);
-
-  /**
-   * Determines if we have a real bookmark or not (not a livemark).
-   *
-   * @param aPlaceId
-   *        The place_id of the location to check against.
-   * @return true if it's a real bookmark, false otherwise.
-   */
-  bool IsRealBookmark(PRInt64 aPlaceId);
 
   /**
    * Fetches information about the specified id from the database.
@@ -327,8 +317,6 @@ private:
                            nsACString& _guid,
                            PRInt64* _parentId);
 
-  nsresult GetFolderType(PRInt64 aFolder, nsACString& aType);
-
   nsresult GetLastChildId(PRInt64 aFolder, PRInt64* aItemId);
 
   /**
@@ -365,7 +353,6 @@ private:
     BOOKMARK = TYPE_BOOKMARK,
     FOLDER = TYPE_FOLDER,
     SEPARATOR = TYPE_SEPARATOR,
-    DYNAMIC_CONTAINER = TYPE_DYNAMIC_CONTAINER
   };
 
   /**
@@ -390,9 +377,6 @@ private:
    *  @param [optional] aLastModified
    *         The last modified date for the insertion.
    *         It defaults to aDateAdded.
-   *  @param [optional] aServiceContractId
-   *         The contract id for a dynamic container.
-   *         Pass EmptyCString() for other type of containers.
    *
    *  @return The new item id that has been inserted.
    *
@@ -405,7 +389,6 @@ private:
                               const nsACString& aTitle,
                               PRTime aDateAdded,
                               PRTime aLastModified,
-                              const nsAString& aServiceContractId,
                               PRInt64* _itemId,
                               nsACString& _guid);
 
@@ -434,7 +417,6 @@ private:
   static const PRInt32 kGetChildrenIndex_Type;
   static const PRInt32 kGetChildrenIndex_PlaceID;
   static const PRInt32 kGetChildrenIndex_FolderTitle;
-  static const PRInt32 kGetChildrenIndex_ServiceContractId;
   static const PRInt32 kGetChildrenIndex_Guid;
 
   class RemoveFolderTransaction : public nsITransaction {
@@ -455,11 +437,6 @@ private:
       rv = bookmarks->GetItemTitle(mID, mTitle);
       NS_ENSURE_SUCCESS(rv, rv);
 
-      nsCAutoString type;
-      rv = bookmarks->GetFolderType(mID, type);
-      NS_ENSURE_SUCCESS(rv, rv);
-      CopyUTF8toUTF16(type, mType);
-
       return bookmarks->RemoveItem(mID);
     }
 
@@ -467,7 +444,7 @@ private:
       nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
       NS_ENSURE_TRUE(bookmarks, NS_ERROR_OUT_OF_MEMORY);
       PRInt64 newFolder;
-      return bookmarks->CreateContainerWithID(mID, mParent, mTitle, mType, true,
+      return bookmarks->CreateContainerWithID(mID, mParent, mTitle, true,
                                               &mIndex, &newFolder); 
     }
 
@@ -489,7 +466,6 @@ private:
     PRInt64 mID;
     PRInt64 mParent;
     nsCString mTitle;
-    nsString mType;
     PRInt32 mIndex;
   };
 

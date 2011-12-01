@@ -43,7 +43,6 @@ VPATH     = @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 PREF_JS_EXPORTS = $(srcdir)/b2g.js
-DIST_FILES = application.ini
 
 ifndef LIBXUL_SDK
 PROGRAM=$(MOZ_APP_NAME)$(BIN_SUFFIX)
@@ -53,6 +52,7 @@ CPPSRCS = nsBrowserApp.cpp
 LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/xre
 LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/base
 LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/build
+LOCAL_INCLUDES += -I$(DEPTH)/build
 
 DEFINES += -DXPCOM_GLUE
 STL_FLAGS=
@@ -80,31 +80,13 @@ NSDISTMODE = copy
 
 include $(topsrcdir)/config/rules.mk
 
-GRE_MILESTONE = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build Milestone)
-GRE_BUILDID = $(shell $(PYTHON) $(topsrcdir)/config/printconfigsetting.py $(LIBXUL_DIST)/bin/platform.ini Build BuildID)
-ifndef MOZ_BUILD_DATE
-APP_BUILDID = $(shell $(PYTHON) $(topsrcdir)/toolkit/xre/make-platformini.py --print-buildid)
-else
-APP_BUILDID = $(MOZ_BUILD_DATE)
-endif
 APP_ICON = b2g
 
-DEFINES += -DGRE_MILESTONE=$(GRE_MILESTONE) \
-           -DGRE_BUILDID=$(GRE_BUILDID) \
-           -DAPP_BUILDID=$(APP_BUILDID) \
-           -DAPP_NAME=$(MOZ_APP_NAME) \
-           -DAPP_VERSION=$(MOZ_APP_VERSION) \
-           -DMOZ_UPDATER=$(MOZ_UPDATER) \
-           $(NULL)
-
-ifdef MOZILLA_OFFICIAL
-DEFINES += -DMOZILLA_OFFICIAL
-endif
-
-SOURCE_STAMP := $(shell cd $(srcdir)/.. && hg identify 2>/dev/null | cut -f1 -d' ')
-ifdef SOURCE_STAMP
-DEFINES += -DMOZ_SOURCE_STAMP="$(SOURCE_STAMP)"
-endif
+DEFINES += \
+  -DAPP_NAME=$(MOZ_APP_NAME) \
+  -DAPP_VERSION=$(MOZ_APP_VERSION) \
+  -DMOZ_UPDATER=$(MOZ_UPDATER) \
+  $(NULL)
 
 # strip a trailing slash from the repo URL because it's not always present,
 # and we want to construct a working URL in buildconfig.html
@@ -145,7 +127,7 @@ else
 APPFILES = MacOS
 endif
 
-libs repackage:: application.ini
+libs repackage::
 	mkdir -p $(DIST)/$(APP_NAME).app/Contents/MacOS
 	rsync -a --exclude "*.in" $(srcdir)/macbuild/Contents $(DIST)/$(APP_NAME).app --exclude English.lproj
 	mkdir -p $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj

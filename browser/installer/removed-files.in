@@ -14,6 +14,7 @@
 @DLL_PREFIX@mozjs@DLL_SUFFIX@
 #endif
 LICENSE
+update.locale
 browserconfig.properties
 chrome/US.jar
 chrome/app-chrome.manifest
@@ -251,6 +252,7 @@ res/fonts/mathfontMath4.properties
 res/fonts/mathfontPUA.properties
 res/fonts/pangoFontEncoding.properties
 res/forms.css
+res/full-screen-override.css
 res/hiddenWindow.html
 res/html.css
 res/html/gopher-audio.gif
@@ -313,6 +315,7 @@ searchplugins/atlas-sk.src
 searchplugins/baidu.gif
 searchplugins/baidu.png
 searchplugins/baidu.src
+searchplugins/bluu.xml
 searchplugins/bok-NO.gif
 searchplugins/bok-NO.png
 searchplugins/bok-NO.src
