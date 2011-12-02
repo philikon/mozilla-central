@@ -183,7 +183,7 @@ MarionetteDriverActor.prototype = {
         _chromeSandbox.__marionetteParams = params;
         var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
         var res = Cu.evalInSandbox(script, _chromeSandbox);
-        this.sendResponse({value:res});
+        this.sendResponse(res);
       }
       catch (e) {
         // 17 = JavascriptException

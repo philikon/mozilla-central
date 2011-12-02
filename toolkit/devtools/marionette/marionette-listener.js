@@ -126,14 +126,30 @@ function inDocument(element) {
   return false;
 }
 
-/* TODO: handle WebElements */
-//also, take a look at http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/utils.js?r=11715
-function unwrapArgs(args, doc) {
-  var ret = [];
-  while(args && args.length > 0) {
-    var check = args.shift;
-    if (typeof check == "object") {
+function getKnownElement(id) {
+  var el = seenItems[id];
+  if (!el) {
+    sendError("Element has not been seen before", 17, null);
+    return null;
+  }
+  else if (!inDocument(el)) {
+    sendError("Stale element reference", 10, null);
+    return null;
+  }
+  return el;
+}
+
+function sendValue(val) {
+  if (typeof val == "object") {
+    for(var i in seenItems) {
+      if (seenItems[i] == val) {
+        return {'ELEMENT': i};
+      }
     }
+    return {'ELEMENT': addToKnownElements(val)};
+  }
+  else {
+    return val;
   }
 }
 
@@ -160,7 +176,7 @@ function asyncResponse() {
 
   var res = window.document.getUserData('__marionetteRes');
   if (res.status == 0){
-    sendResponse({value: res.value, status: res.status});
+    sendResponse({value: sendValue(res.value), status: res.status});
   }
   else {
     sendError(res.value, res.status, null);
@@ -175,7 +191,14 @@ function asyncResponse() {
 function executeScript(msg) {
   var script = msg.json.value;
   var args = msg.json.args; //TODO: handle WebElement JSON Objects
-
+  for (var i in args) {
+    if (args[i]["ELEMENT"] != undefined && args[i]["ELEMENT"] != null) {
+      args[i] = getKnownElement(args[i]["ELEMENT"]);
+      if (!args[i]) {
+        return;
+      }
+    }
+  }
   var sandbox = new Cu.Sandbox(content);
   sandbox.window = content;
   sandbox.document = sandbox.window.document;
@@ -186,7 +209,7 @@ function executeScript(msg) {
                   "};  __marionetteFunc.apply(null, __marionetteParams); }";
   try {
     var res = Cu.evalInSandbox(scriptSrc, sandbox);
-    sendResponse({value:res});
+    sendResponse({value: sendValue(res)});
   } catch (e) {
     // 17 = JavascriptException
     sendError(e.name + ': ' + e.message, 17, null);
@@ -205,6 +228,14 @@ function executeAsyncScript(msg) {
 
   var script = msg.json.value;
   var args = msg.json.args ? msg.json.args : []; //TODO: handle WebElement JSON Objects
+  for (var i in args) {
+    if (args[i]["ELEMENT"] != undefined && args[i]["ELEMENT"] != null) {
+      args[i] = getKnownElement(args[i]["ELEMENT"]);
+      if (!args[i]) {
+        return;
+      }
+    }
+  }
 
   /* the function to return values/error from sandbox by triggering an event we listen for */
   var asyncComplete = 
@@ -297,13 +328,8 @@ function findElement(msg) {
 }
 
 function clickElement(msg) {
-  var element = seenItems[msg.json.element];
+  var element = getKnownElement([msg.json.element]);
   if (!element) {
-    sendError("Element has not been seen before", 17, null); //TODO:need appropriate errno
-    return;
-  }
-  if(!inDocument(element)) {
-    sendError("Stale element", 10, null);
     return;
   }
   element.click();
