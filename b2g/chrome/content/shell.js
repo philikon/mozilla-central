@@ -145,7 +145,6 @@ var shell = {
           case evt.DOM_VK_ESCAPE:
             if (evt.getPreventDefault())
               return;
-
             this.doCommand('cmd_close');
             break;
         }
@@ -156,7 +155,6 @@ var shell = {
         break;
     }
   },
-
   sendEvent: function shell_sendEvent(content, type, details) {
     let event = content.document.createEvent('CustomEvent');
     event.initCustomEvent(type, true, true, details ? details : {});
@@ -216,7 +214,7 @@ var shell = {
     }
   };
 
-  Services.obs.addObserver(constructor, 'ime-enabled-state-changed', false);
+  Services.obs.addObserver(constructor, "ime-enabled-state-changed", false);
   ['ContentStart', 'keypress', 'mousedown'].forEach(function vkm_events(type) {
     window.addEventListener(type, constructor, true);
   });
@@ -227,13 +225,9 @@ function MozKeyboard() {
 }
 
 MozKeyboard.prototype = {
-  get utils() {
-    delete this.utils;
-    return this.utils = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                              .getInterface(Ci.nsIDOMWindowUtils);
-  },
   sendKey: function mozKeyboardSendKey(keyCode) {
-    var utils = this.utils;
+    var utils = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                      .getInterface(Ci.nsIDOMWindowUtils);
     ['keydown', 'keypress', 'keyup'].forEach(function sendKeyEvents(type) {
       utils.sendKeyEvent(type, keyCode, keyCode, null);
     });
