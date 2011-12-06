@@ -150,11 +150,22 @@ MarionetteDriverActor.prototype = {
       var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
                               .getService(Components.interfaces.nsIWindowMediator);  
       var win = WindowMediator.getMostRecentWindow('navigator:browser');
-      this.browser = win.Browser; //BrowserApp?
+      if(win.gBrowser != undefined) {
+        this.browser = win.gBrowser; 
+      }
+      else {
+        this.browser = win.Browser; //BrowserApp for birch?
+      }
+
       this.tab = this.browser.addTab("about:blank", true);
       /* we only need one instance of each listener running in content space */
       if (!prefs.getBoolPref("marionette.contentListener")) {
-        this.tab.browser.messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
+        if(win.gBrowser != undefined) {
+          this.browser.getBrowserForTab(this.tab).messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
+        }
+        else {
+          this.tab.browser.messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
+        }
         prefs.setBoolPref("marionette.contentListener", true);
       }
     }
@@ -259,7 +270,12 @@ MarionetteDriverActor.prototype = {
 
   deleteSession: function MDA_deleteSession(aRequest) {
     if (!isB2G && this.tab != null) {
-      this.browser.closeTab(this.tab);
+      if(this.browser.closeTab == undefined) {
+        this.browser.removeTab(this.tab);
+      }
+      else {
+        this.browser.closeTab(this.tab);
+      }
       this.tab == null
       //don't set this pref for B2G since the framescript can be safely reused
       this.messageManager.sendAsyncMessage("Marionette:deleteSession", {});
@@ -300,3 +316,4 @@ MarionetteDriverActor.prototype.requestTypes = {
   "goUrl": MarionetteDriverActor.prototype.goUrl,
   "deleteSession": MarionetteDriverActor.prototype.deleteSession
 };
+
