@@ -247,7 +247,7 @@ MarionetteDriverActor.prototype = {
         _chromeSandbox.Marionette = Marionette;
         var returnFunc = 'var returnFunc = function(value, status) { __conn.send({from: __actorID, value: value, status: status});' 
                                                                  +'__marionetteTimer.cancel(); __marionetteTimer = null;};';
-        var script = '__marionetteParams.push(returnFunc);'
+        var script = returnFunc + '__marionetteParams.push(returnFunc);'
                     +'var marionetteScriptFinished = returnFunc;'
                     +'var timeoutFunc = function() {returnFunc("timed out", 28);};'
                     +'var __marionetteFunc = function() {' + aRequest.value + '};'
