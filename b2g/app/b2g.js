@@ -390,3 +390,6 @@ pref("security.fileuri.strict_origin_policy", false);
 // compositing isn't default disabled in widget/src/android.
 pref("layers.acceleration.force-enabled", true);
 
+// screen.enabled and screen.brightness properties.
+pref("dom.screenEnabledProperty.enabled", true);
+pref("dom.screenBrightnessProperty.enabled", true);

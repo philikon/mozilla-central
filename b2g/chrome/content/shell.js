@@ -123,6 +123,9 @@ var shell = {
           case evt.DOM_VK_HOME:
             this.sendEvent(this.home.contentWindow, 'home');
             break;
+          case evt.DOM_VK_SLEEP:
+            screen.mozEnabled = !screen.mozEnabled;
+            break;
           case evt.DOM_VK_ESCAPE:
             if (evt.getPreventDefault())
               return;
