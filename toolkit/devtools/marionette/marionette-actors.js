@@ -47,8 +47,12 @@ var Ci = Components.interfaces;
 var Cc = Components.classes;
 var Cu = Components.utils;
 
-var prefs = Components.classes["@mozilla.org/preferences-service;1"]
-                     .getService(Components.interfaces.nsIPrefBranch);
+var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
+             .getService(Ci.mozIJSSubScriptLoader);
+loader.loadSubScript("resource:///modules/marionette-simpletest.js");
+
+var prefs = Cc["@mozilla.org/preferences-service;1"]
+            .getService(Ci.nsIPrefBranch);
 prefs.setBoolPref("marionette.contentListener", false);
 
 var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
@@ -103,7 +107,7 @@ function MarionetteDriverActor(aConnection)
   this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
-  this.windowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1'].getService(Components.interfaces.nsIWindowMediator);
+  this.windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].getService(Ci.nsIWindowMediator);
   this.browser = null;
   this.tab = null;
   this.context = "content";
@@ -147,8 +151,8 @@ MarionetteDriverActor.prototype = {
     } else {
       //XXX: this doesn't work in b2g
       //TODO: check if browser has started, if not, kick it off
-      var WindowMediator = Components.classes['@mozilla.org/appshell/window-mediator;1']  
-                              .getService(Components.interfaces.nsIWindowMediator);  
+      var WindowMediator = Cc['@mozilla.org/appshell/window-mediator;1']  
+                           .getService(Ci.nsIWindowMediator);  
       var win = WindowMediator.getMostRecentWindow('navigator:browser');
       if(win.gBrowser != undefined) {
         this.browser = win.gBrowser; 
@@ -187,11 +191,15 @@ MarionetteDriverActor.prototype = {
     if (this.context == "chrome") {
       var curWindow = this.getCurrentWindow();
       try {
+        Marionette.is_async = false;
+        Marionette.tests = [];
+        Marionette.context = "chrome";
         var params = aRequest.args;
         var _chromeSandbox = new Cu.Sandbox(curWindow,
            { sandboxPrototype: curWindow, wantXrays: false, 
              sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
+        _chromeSandbox.Marionette = Marionette;
         var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
         var res = Cu.evalInSandbox(script, _chromeSandbox);
         this.sendResponse(res);
@@ -220,30 +228,34 @@ MarionetteDriverActor.prototype = {
 
   executeAsync: function MDA_executeAsync(aRequest) {
     if (this.context == "chrome") {
-      var curWindow = this.getCurrentWindow();
-      this.timer = Components.classes["@mozilla.org/timer;1"]
-                  .createInstance(Components.interfaces.nsITimer);
-      var params = aRequest.args;
-      var _chromeSandbox = new Cu.Sandbox(curWindow,
-         { sandboxPrototype: curWindow, wantXrays: false, 
-           sandboxName: ''});
-      _chromeSandbox.__marionetteParams = params;
-      _chromeSandbox.__marionetteTimer = this.timer;
-      _chromeSandbox.__conn = this.conn; //must send msgs on actual connection, since we can't send messages from chrome->chrome
-      _chromeSandbox.__actorID = this.actorID;
-      var returnFunc = 'var returnFunc = function(value, status) { __conn.send({from: __actorID, value: value, status: status});' 
-                                                               +'__marionetteTimer.cancel(); __marionetteTimer = null;};';
-      var script = returnFunc
-                  +'__marionetteParams.push(returnFunc);'
-                  +'var marionetteScriptFinished = returnFunc;'
-                  +'var timeoutFunc = function() {returnFunc("timed out", 28);};'
-                  +'var __marionetteFunc = function() {' + aRequest.value + '};'
-                  +'__marionetteFunc.apply(null, __marionetteParams);'
-                  +'if(__marionetteTimer != null) {__marionetteTimer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
       try {
+        var curWindow = this.getCurrentWindow();
+        Marionette.tests = [];
+        Marionette.is_async = true;
+        Marionette.context = "chrome";
+        Marionette.__conn = this.conn;
+        Marionette.__actorID = this.actorID;
+        Marionette.__timer = this.timer;
+        this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+        var params = aRequest.args;
+        var _chromeSandbox = new Cu.Sandbox(curWindow,
+           { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
+        _chromeSandbox.__marionetteParams = params;
+        _chromeSandbox.__marionetteTimer = this.timer;
+        _chromeSandbox.__conn = this.conn; //must send msgs on actual connection, since we can't send messages from chrome->chrome
+        _chromeSandbox.__actorID = this.actorID;
+        _chromeSandbox.Marionette = Marionette;
+        var returnFunc = 'var returnFunc = function(value, status) { __conn.send({from: __actorID, value: value, status: status});' 
+                                                                 +'__marionetteTimer.cancel(); __marionetteTimer = null;};';
+        var script = '__marionetteParams.push(returnFunc);'
+                    +'var marionetteScriptFinished = returnFunc;'
+                    +'var timeoutFunc = function() {returnFunc("timed out", 28);};'
+                    +'var __marionetteFunc = function() {' + aRequest.value + '};'
+                    +'__marionetteFunc.apply(null, __marionetteParams);'
+                    +'if(__marionetteTimer != null) {__marionetteTimer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
        Cu.evalInSandbox(script, _chromeSandbox);
       } catch (e) {
-        sendError("e.message", 17, null);
+        sendError(e.name + ": " + e.message, 17, null);
       }
     }
     else {
