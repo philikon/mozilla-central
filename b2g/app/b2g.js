@@ -393,3 +393,7 @@ pref("layers.acceleration.force-enabled", true);
 // screen.enabled and screen.brightness properties.
 pref("dom.screenEnabledProperty.enabled", true);
 pref("dom.screenBrightnessProperty.enabled", true);
+
+//Enable/disable marionette server, set listening port
+pref("marionette.server.enabled", false);
+pref("marionette.server.port", 2828);
