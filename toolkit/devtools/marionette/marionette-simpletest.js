@@ -55,7 +55,7 @@ var Marionette = {
     }
   },
 
-  returnFuncXXX: function Marionette__returnFunc(value, status) {
+  returnFunc: function Marionette__returnFunc(value, status) {
     Marionette.__conn.send({from: Marionette.__actorID, value: value, status: status});
     Marionette.__timer.cancel();
     Marionette.__timer = null;

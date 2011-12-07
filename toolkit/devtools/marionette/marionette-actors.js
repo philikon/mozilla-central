@@ -235,24 +235,19 @@ MarionetteDriverActor.prototype = {
         Marionette.context = "chrome";
         Marionette.__conn = this.conn;
         Marionette.__actorID = this.actorID;
-        Marionette.__timer = this.timer;
         this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+        Marionette.__timer = this.timer;
         var params = aRequest.args;
         var _chromeSandbox = new Cu.Sandbox(curWindow,
            { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
-        _chromeSandbox.__marionetteTimer = this.timer;
-        _chromeSandbox.__conn = this.conn; //must send msgs on actual connection, since we can't send messages from chrome->chrome
-        _chromeSandbox.__actorID = this.actorID;
         _chromeSandbox.Marionette = Marionette;
-        var returnFunc = 'var returnFunc = function(value, status) { __conn.send({from: __actorID, value: value, status: status});' 
-                                                                 +'__marionetteTimer.cancel(); __marionetteTimer = null;};';
-        var script = returnFunc + '__marionetteParams.push(returnFunc);'
-                    +'var marionetteScriptFinished = returnFunc;'
-                    +'var timeoutFunc = function() {returnFunc("timed out", 28);};'
+        var script = '__marionetteParams.push(Marionette.returnFunc);'
+                    +'var marionetteScriptFinished = Marionette.returnFunc;'
+                    +'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
                     +'var __marionetteFunc = function() {' + aRequest.value + '};'
                     +'__marionetteFunc.apply(null, __marionetteParams);'
-                    +'if(__marionetteTimer != null) {__marionetteTimer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
+                    +'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
        Cu.evalInSandbox(script, _chromeSandbox);
       } catch (e) {
         sendError(e.name + ": " + e.message, 17, null);
