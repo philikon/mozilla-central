@@ -395,5 +395,5 @@ pref("dom.screenEnabledProperty.enabled", true);
 pref("dom.screenBrightnessProperty.enabled", true);
 
 //Enable/disable marionette server, set listening port
-pref("marionette.server.enabled", false);
+pref("marionette.server.enabled", true);
 pref("marionette.server.port", 2828);
