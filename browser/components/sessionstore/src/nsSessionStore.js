@@ -178,6 +178,16 @@ function SessionStoreService() {
     this._prefBranch.addObserver("sessionstore.resume_from_crash", this, true);
     return this._prefBranch.getBoolPref("sessionstore.resume_from_crash");
   });
+
+  XPCOMUtils.defineLazyGetter(this, "_max_tabs_undo", function () {
+    this._prefBranch.addObserver("sessionstore.max_tabs_undo", this, true);
+    return this._prefBranch.getIntPref("sessionstore.max_tabs_undo");
+  });
+
+  XPCOMUtils.defineLazyGetter(this, "_max_windows_undo", function () {
+    this._prefBranch.addObserver("sessionstore.max_windows_undo", this, true);
+    return this._prefBranch.getIntPref("sessionstore.max_windows_undo");
+  });
 }
 
 SessionStoreService.prototype = {
@@ -291,10 +301,6 @@ SessionStoreService.prototype = {
 
     // Do pref migration before we store any values and start observing changes
     this._migratePrefs();
-
-    // observe prefs changes so we can modify stored data to match
-    this._prefBranch.addObserver("sessionstore.max_tabs_undo", this, true);
-    this._prefBranch.addObserver("sessionstore.max_windows_undo", this, true);
     
     // this pref is only read at startup, so no need to observe it
     this._sessionhistory_max_entries =
@@ -642,11 +648,13 @@ SessionStoreService.prototype = {
       // if the user decreases the max number of closed tabs they want
       // preserved update our internal states to match that max
       case "sessionstore.max_tabs_undo":
+        this._max_tabs_undo = this._prefBranch.getIntPref("sessionstore.max_tabs_undo");
         for (let ix in this._windows) {
-          this._windows[ix]._closedTabs.splice(this._prefBranch.getIntPref("sessionstore.max_tabs_undo"), this._windows[ix]._closedTabs.length);
+          this._windows[ix]._closedTabs.splice(this._max_tabs_undo, this._windows[ix]._closedTabs.length);
         }
         break;
       case "sessionstore.max_windows_undo":
+        this._max_windows_undo = this._prefBranch.getIntPref("sessionstore.max_windows_undo");
         this._capClosedWindows();
         break;
       case "sessionstore.interval":
@@ -1094,10 +1102,9 @@ SessionStoreService.prototype = {
     var event = aWindow.document.createEvent("Events");
     event.initEvent("SSTabClosing", true, false);
     aTab.dispatchEvent(event);
-    
-    var maxTabsUndo = this._prefBranch.getIntPref("sessionstore.max_tabs_undo");
+
     // don't update our internal state if we don't have to
-    if (maxTabsUndo == 0) {
+    if (this._max_tabs_undo == 0) {
       return;
     }
     
@@ -1118,8 +1125,8 @@ SessionStoreService.prototype = {
         pos: aTab._tPos
       });
       var length = this._windows[aWindow.__SSi]._closedTabs.length;
-      if (length > maxTabsUndo)
-        this._windows[aWindow.__SSi]._closedTabs.splice(maxTabsUndo, length - maxTabsUndo);
+      if (length > this._max_tabs_undo)
+        this._windows[aWindow.__SSi]._closedTabs.splice(this._max_tabs_undo, length - this._max_tabs_undo);
     }
   },
 
@@ -1854,7 +1861,9 @@ SessionStoreService.prototype = {
     var entry = { url: aEntry.URI.spec };
 
     try {
-      aHostSchemeData.push({ host: aEntry.URI.host, scheme: aEntry.URI.scheme });
+      // throwing is expensive, we know that about: pages will throw
+      if (entry.url.indexOf("about:") != 0)
+        aHostSchemeData.push({ host: aEntry.URI.host, scheme: aEntry.URI.scheme });
     }
     catch (ex) {
       // We just won't attempt to get cookies for this entry.
@@ -1952,22 +1961,24 @@ SessionStoreService.prototype = {
     }
     
     if (aEntry.childCount > 0) {
-      entry.children = [];
+      let children = [];
       for (var i = 0; i < aEntry.childCount; i++) {
         var child = aEntry.GetChildAt(i);
+
         if (child) {
-          entry.children.push(this._serializeHistoryEntry(child, aFullData,
-                                                          aIsPinned, aHostSchemeData));
-        }
-        else { // to maintain the correct frame order, insert a dummy entry 
-          entry.children.push({ url: "about:blank" });
-        }
-        // don't try to restore framesets containing wyciwyg URLs (cf. bug 424689 and bug 450595)
-        if (/^wyciwyg:\/\//.test(entry.children[i].url)) {
-          delete entry.children;
-          break;
+          // don't try to restore framesets containing wyciwyg URLs (cf. bug 424689 and bug 450595)
+          if (child.URI.schemeIs("wyciwyg")) {
+            children = [];
+            break;
+          }
+
+          children.push(this._serializeHistoryEntry(child, aFullData,
+                                                    aIsPinned, aHostSchemeData));
         }
       }
+
+      if (children.length)
+        entry.children = children;
     }
     
     return entry;
@@ -2518,7 +2529,7 @@ SessionStoreService.prototype = {
       // at startup we don't accidentally add them to a popup window
       do {
         total.unshift(lastClosedWindowsCopy.shift())
-      } while (total[0].isPopup)
+      } while (total[0].isPopup && lastClosedWindowsCopy.length > 0)
     }
 #endif
 
@@ -4264,17 +4275,16 @@ SessionStoreService.prototype = {
    * resize such that we have at least one non-popup window.
    */
   _capClosedWindows : function sss_capClosedWindows() {
-    let maxWindowsUndo = this._prefBranch.getIntPref("sessionstore.max_windows_undo");
-    if (this._closedWindows.length <= maxWindowsUndo)
+    if (this._closedWindows.length <= this._max_windows_undo)
       return;
-    let spliceTo = maxWindowsUndo;
+    let spliceTo = this._max_windows_undo;
 #ifndef XP_MACOSX
     let normalWindowIndex = 0;
     // try to find a non-popup window in this._closedWindows
     while (normalWindowIndex < this._closedWindows.length &&
            !!this._closedWindows[normalWindowIndex].isPopup)
       normalWindowIndex++;
-    if (normalWindowIndex >= maxWindowsUndo)
+    if (normalWindowIndex >= this._max_windows_undo)
       spliceTo = normalWindowIndex + 1;
 #endif
     this._closedWindows.splice(spliceTo, this._closedWindows.length);
@@ -4525,7 +4535,8 @@ let gRestoreTabsProgressListener = {
   onStateChange: function (aBrowser, aWebProgress, aRequest, aStateFlags, aStatus) {
     // Ignore state changes on browsers that we've already restored and state
     // changes that aren't applicable.
-    if (aBrowser.__SS_restoreState == TAB_STATE_RESTORING &&
+    if (aBrowser.__SS_restoreState &&
+        aBrowser.__SS_restoreState == TAB_STATE_RESTORING &&
         aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
         aStateFlags & Ci.nsIWebProgressListener.STATE_IS_NETWORK &&
         aStateFlags & Ci.nsIWebProgressListener.STATE_IS_WINDOW) {
