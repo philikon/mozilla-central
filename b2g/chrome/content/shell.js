@@ -207,7 +207,7 @@ var shell = {
             screen.mozEnabled = !screen.mozEnabled;
             break;
           case evt.DOM_VK_ESCAPE:
-            if (evt.getPreventDefault())
+            if (evt.defaultPrevented)
               return;
             this.doCommand('cmd_close');
             break;

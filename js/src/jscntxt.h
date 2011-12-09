@@ -350,9 +350,6 @@ struct JSRuntime
 {
     /* Default compartment. */
     JSCompartment       *atomsCompartment;
-#ifdef JS_THREADSAFE
-    bool                atomsCompartmentIsLocked;
-#endif
 
     /* List of compartments (protected by the GC lock). */
     js::CompartmentVector compartments;
@@ -440,12 +437,8 @@ struct JSRuntime
     /* The reason that an interrupt-triggered GC should be called. */
     js::gcstats::Reason gcTriggerReason;
 
-    /* Pre-allocated space for the GC mark stacks. Pointer type ensures alignment. */
-    void                *gcMarkStackObjs[js::OBJECT_MARK_STACK_SIZE / sizeof(void *)];
-    void                *gcMarkStackRopes[js::ROPES_MARK_STACK_SIZE / sizeof(void *)];
-    void                *gcMarkStackTypes[js::TYPE_MARK_STACK_SIZE / sizeof(void *)];
-    void                *gcMarkStackXMLs[js::XML_MARK_STACK_SIZE / sizeof(void *)];
-    void                *gcMarkStackLarges[js::LARGE_MARK_STACK_SIZE / sizeof(void *)];
+    /* Pre-allocated space for the GC mark stack. */
+    uintptr_t           gcMarkStackArray[js::MARK_STACK_LENGTH];
 
     /*
      * Compartment that triggered GC. If more than one Compatment need GC,
@@ -1081,6 +1074,13 @@ struct JSContext
     inline js::LifoAlloc &typeLifoAlloc();
 
 #ifdef JS_THREADSAFE
+    /*
+     * AtomizeInline uses this flag to tell RunLastDitchGC and
+     * js_ReportOutOfMemory that they should temporarily unlock the atoms
+     * compartment.
+     */
+    bool                atomsCompartmentIsLocked;
+
     unsigned            outstandingRequests;/* number of JS_BeginRequest calls
                                                without the corresponding
                                                JS_EndRequest. */
@@ -1715,38 +1715,48 @@ class AutoLockAtomsCompartment {
       : cx(cx)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
-        JS_LOCK(cx, &cx->runtime->atomState.lock);
 #ifdef JS_THREADSAFE
-        cx->runtime->atomsCompartmentIsLocked = true;
+        JS_ASSERT(!cx->atomsCompartmentIsLocked);
+        JS_LOCK(cx, &cx->runtime->atomState.lock);
+        cx->atomsCompartmentIsLocked = true;
 #endif
     }
+
     ~AutoLockAtomsCompartment() {
 #ifdef JS_THREADSAFE
-        cx->runtime->atomsCompartmentIsLocked = false;
-#endif
+        JS_ASSERT(cx->atomsCompartmentIsLocked);
+        cx->atomsCompartmentIsLocked = false;
         JS_UNLOCK(cx, &cx->runtime->atomState.lock);
+#endif
     }
 };
 
-class AutoUnlockAtomsCompartment {
+class AutoUnlockAtomsCompartmentWhenLocked {
     JSContext *cx;
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 
   public:
-    AutoUnlockAtomsCompartment(JSContext *cx
-                                 JS_GUARD_OBJECT_NOTIFIER_PARAM)
-      : cx(cx)
+    AutoUnlockAtomsCompartmentWhenLocked(JSContext *cx
+                                         JS_GUARD_OBJECT_NOTIFIER_PARAM)
+      : cx(NULL)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
-#ifdef JS_THREADSAFE
-        cx->runtime->atomsCompartmentIsLocked = false;
+ #ifdef JS_THREADSAFE
+        if (cx->atomsCompartmentIsLocked) {
+            this->cx = cx;
+            cx->atomsCompartmentIsLocked = false;
+            JS_UNLOCK(cx, &cx->runtime->atomState.lock);
+        }
 #endif
-        JS_UNLOCK(cx, &cx->runtime->atomState.lock);
     }
-    ~AutoUnlockAtomsCompartment() {
-        JS_LOCK(cx, &cx->runtime->atomState.lock);
+
+    ~AutoUnlockAtomsCompartmentWhenLocked() {
 #ifdef JS_THREADSAFE
-        cx->runtime->atomsCompartmentIsLocked = true;
+        if (cx) {
+            JS_ASSERT(!cx->atomsCompartmentIsLocked);
+            JS_LOCK(cx, &cx->runtime->atomState.lock);
+            cx->atomsCompartmentIsLocked = true;
+        }
 #endif
     }
 };

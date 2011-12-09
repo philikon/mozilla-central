@@ -250,21 +250,6 @@ nsBaseWidget::CreateChild(const nsIntRect  &aRect,
   return nsnull;
 }
 
-NS_IMETHODIMP
-nsBaseWidget::SetEventCallback(EVENT_CALLBACK aEventFunction,
-                               nsDeviceContext *aContext)
-{
-  mEventCallback = aEventFunction;
-
-  if (aContext) {
-    NS_IF_RELEASE(mContext);
-    mContext = aContext;
-    NS_ADDREF(mContext);
-  }
-
-  return NS_OK;
-}
-
 // Attach a view to our widget which we'll send events to. 
 NS_IMETHODIMP
 nsBaseWidget::AttachViewToTopLevel(EVENT_CALLBACK aViewEventFunction,
@@ -1236,7 +1221,7 @@ nsBaseWidget::debug_GuiEventToString(nsGUIEvent * aGuiEvent)
   nsAutoString eventName(NS_LITERAL_STRING("UNKNOWN"));
 
 #define _ASSIGN_eventName(_value,_name)\
-case _value: eventName.AssignWithConversion(_name) ; break
+case _value: eventName.AssignLiteral(_name) ; break
 
   switch(aGuiEvent->message)
   {
@@ -1292,7 +1277,7 @@ case _value: eventName.AssignWithConversion(_name) ; break
       
       sprintf(buf,"UNKNOWN: %d",aGuiEvent->message);
       
-      eventName.AssignWithConversion(buf);
+      CopyASCIItoUTF16(buf, eventName);
     }
     break;
   }
@@ -1440,7 +1425,7 @@ nsBaseWidget::debug_DumpEvent(FILE *                aFileOut,
   if (!debug_GetCachedBoolPref("nglayout.debug.event_dumping"))
     return;
 
-  nsCAutoString tempString; tempString.AssignWithConversion(debug_GuiEventToString(aGuiEvent).get());
+  NS_LossyConvertUTF16toASCII tempString(debug_GuiEventToString(aGuiEvent).get());
   
   fprintf(aFileOut,
           "%4d %-26s widget=%-8p name=%-12s id=%-8p refpt=%d,%d\n",
