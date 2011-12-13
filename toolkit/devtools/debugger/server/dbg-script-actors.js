@@ -52,6 +52,7 @@ function ThreadActor(aHooks)
 {
   this._state = "detached";
   this._frameActors = [];
+  this._environmentActors = [];
   this._hooks = aHooks ? aHooks : {};
 }
 
@@ -272,7 +273,7 @@ ThreadActor.prototype = {
   },
 
   /**
-   * Handle a request to set a breakpoint.
+   * Handle a protocol request to set a breakpoint.
    */
   onSetBreakpoint: function TA_onSetBreakpoint(aRequest) {
     if (this.state !== "paused") {
@@ -306,7 +307,7 @@ ThreadActor.prototype = {
       return { from: this.actorID,
                error: "noScript" };
     }
-    let bpActor = new BreakpointActor(this, script);
+    let bpActor = new BreakpointActor(script, this);
     this.breakpointActorPool.addActor(bpActor);
     var offsets = script.getLineOffsets(location.line);
     for (var i = 0; i < offsets.length; i++) {
@@ -318,7 +319,7 @@ ThreadActor.prototype = {
   },
 
   /**
-   * Handle a request to return the list of loaded scripts.
+   * Handle a protocol request to return the list of loaded scripts.
    */
   onScripts: function TA_onScripts(aRequest) {
     let scripts = [];
@@ -488,6 +489,36 @@ ThreadActor.prototype = {
   },
 
   /**
+   * Create and return an environment actor that corresponds to the
+   * Debugger.Environment for the provided object.
+   * @param Debugger.Object aObject
+   *        The object whose lexical environment we want to extract.
+   * @param object aPool
+   *        The pool where the newly-created actor will be placed.
+   * @return The EnvironmentActor for aObject.
+   */
+  environmentActor: function TA_environmentActor(aObject, aPool) {
+    let environment = aObject.environment;
+    // XXX: need to spec this: when the object is a function proxy or not a
+    // function implemented in JavaScript, we don't return a scope property at
+    // all.
+    if (!environment) {
+      return undefined;
+    }
+
+    if (environment.actor) {
+      return environment.actor;
+    }
+
+    let actor = new EnvironmentActor(aObject, this);
+    this._environmentActors.push(actor);
+    aPool.addActor(actor);
+    environment.actor = actor;
+
+    return actor;
+  },
+
+  /**
    * Create a grip for the given debuggee value.  If the value is an
    * object, will create a pause-lifetime actor.
    */
@@ -631,11 +662,143 @@ ObjectActor.prototype = {
              "actor": this.actorID };
   },
 
-  release: function AO_release() {
+  release: function OA_release() {
     this.registeredPool.objectActors.delete(this.obj);
     this.registeredPool.removeActor(this.actorID);
   },
 
+  /**
+   * Handle a protocol request to provide the names of the properties defined on
+   * the object and not its prototype.
+   */
+  onOwnPropertyNames: function OA_onOwnPropertyNames(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+
+    return { from: this.actorID,
+             ownPropertyNames: this.obj.getOwnPropertyNames() };
+  },
+
+  /**
+   * Handle a protocol request to provide the prototype and own properties of
+   * the object.
+   */
+  onPrototypeAndProperties: function OA_onPrototypeAndProperties(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+
+    let ownProperties = {};
+    for each (let name in this.obj.getOwnPropertyNames()) {
+      try {
+        let desc = this.obj.getOwnPropertyDescriptor(name);
+        ownProperties[name] = this._propertyDescriptor(desc);
+      } catch (e if e.name == "NS_ERROR_XPC_BAD_OP_ON_WN_PROTO") {
+        // Calling getOwnPropertyDescriptor on wrapped native prototypes is not
+        // allowed.
+        dumpn("Error while getting the property descriptor for " + name +
+              ": " + e.name);
+      }
+    }
+    return { from: this.actorID,
+             prototype: this.threadActor.valueGrip(this.obj.proto),
+             ownProperties: ownProperties };
+  },
+
+  /**
+   * Handle a protocol request to provide the prototype of the object.
+   */
+  onPrototype: function OA_onPrototype(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+
+    return { from: this.actorID,
+             prototype: this.threadActor.valueGrip(this.obj.proto) };
+  },
+
+  /**
+   * Handle a protocol request to provide the property descriptor of the
+   * object's specified property.
+   */
+  onProperty: function OA_onProperty(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+    // XXX: spec this.
+    if (!aRequest.name) {
+      return { error: "noPropertyName",
+               message: "no property name was specified" };
+    }
+
+    let desc = this.obj.getOwnPropertyDescriptor(aRequest.name);
+    return { from: this.actorID,
+             descriptor: this._propertyDescriptor(desc) };
+  },
+
+  /**
+   * A helper method that creates a property descriptor, properly formatted for
+   * sending in a protocol response.
+   */
+  _propertyDescriptor: function OA_propertyDescriptor(aObject) {
+    let descriptor = {};
+    descriptor.configurable = aObject.configurable;
+    descriptor.enumerable = aObject.enumerable;
+    if (aObject.value) {
+      descriptor.writable = aObject.writable;
+      descriptor.value = this.threadActor.valueGrip(aObject.value);
+    } else {
+      descriptor.get = this.threadActor.valueGrip(aObject.get);
+      descriptor.set = this.threadActor.valueGrip(aObject.set);
+    }
+    return descriptor;
+  },
+
+  /**
+   * Handle a protocol request to provide the source code of a function.
+   */
+  onDecompile: function OA_onDecompile(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+
+    if (this.obj["class"] !== "Function") {
+      // XXXspec: Error type for this.
+      return { error: "unrecognizedPacketType",
+               message: "decompile request is only valid for object grips " +
+                        "with a 'Function' class." };
+    }
+
+    return { from: this.actorID,
+             decompiledCode: this.obj.decompile(!!aRequest.pretty) };
+  },
+
+  /**
+   * Handle a protocol request to provide the lexical scope of a function.
+   */
+  onScope: function OA_onScope(aRequest) {
+    if (this.threadActor.state !== "paused") {
+      return this.WRONG_STATE_RESPONSE;
+    }
+
+    if (this.obj["class"] !== "Function") {
+      // XXXspec: Error type for this.
+      return { error: "unrecognizedPacketType",
+               message: "scope request is only valid for object grips with a" +
+                        " 'Function' class." };
+    }
+
+    let packet = { name: this.obj.name || null };
+    let envActor = this.threadActor.environmentActor(this.obj, this.registeredPool);
+    packet.scope = envActor ? envActor.grip() : envActor;
+
+    return packet;
+  },
+
+  /**
+   * Handle a protocol request to provide the name and parameters of a function.
+   */
   onNameAndParameters: function OA_onNameAndParameters(aRequest) {
     if (this.threadActor.state !== "paused") {
       return this.WRONG_STATE_RESPONSE;
@@ -676,6 +839,12 @@ ObjectActor.prototype = {
 
 ObjectActor.prototype.requestTypes = {
   "nameAndParameters": ObjectActor.prototype.onNameAndParameters,
+  "prototypeAndProperties": ObjectActor.prototype.onPrototypeAndProperties,
+  "prototype": ObjectActor.prototype.onPrototype,
+  "property": ObjectActor.prototype.onProperty,
+  "ownPropertyNames": ObjectActor.prototype.onOwnPropertyNames,
+  "scope": ObjectActor.prototype.onScope,
+  "decompile": ObjectActor.prototype.onDecompile,
   "threadGrip": ObjectActor.prototype.onThreadGrip,
   "release": ObjectActor.prototype.onRelease,
 };
@@ -690,6 +859,23 @@ function FrameActor(aFrame, aThreadActor)
 FrameActor.prototype = {
   actorPrefix: "frame",
 
+  /**
+   * A pool that contains frame-lifetime objects, like the environment.
+   */
+  _frameLifetimePool: null,
+  get frameLifetimePool() {
+    if (!this._frameLifetimePool) {
+      this._frameLifetimePool = new ActorPool(this.conn);
+      this.conn.addActorPool(this._frameLifetimePool);
+    }
+    return this._frameLifetimePool;
+  },
+
+  disconnect: function FA_disconnect() {
+    this.conn.removeActorPool(this._frameLifetimePool);
+    this._frameLifetimePool = null;
+  },
+
   grip: function FA_grip() {
     let grip = { actor: this.actorID,
                  type: this.frame.type };
@@ -698,6 +884,9 @@ FrameActor.prototype = {
       grip.calleeName = this.frame.callee.name;
     }
 
+    let envActor = this.threadActor.environmentActor(this.frame, this.frameLifetimePool);
+    grip.environment = envActor ? envActor.grip() : envActor;
+    grip["this"] = this.threadActor.valueGrip(this.frame["this"]);
     grip.arguments = this.args();
 
     if (!this.frame.older) {
@@ -731,16 +920,15 @@ FrameActor.prototype.requestTypes = {
  * Creates a BreakpointActor. BreakpointActors exist for the lifetime of their
  * containing thread and are responsible for deleting breakpoints, handling
  * breakpoint hits and associating breakpoints with scripts.
- *
- * @param ThreadActor aThreadActor
- *        The parent thread actor that contains this breakpoint.
  * @param Debugger.Script aScript
  *        The script this breakpoint is set on.
+ * @param ThreadActor aThreadActor
+ *        The parent thread actor that contains this breakpoint.
  */
-function BreakpointActor(aThreadActor, aScript)
+function BreakpointActor(aScript, aThreadActor)
 {
-  this.threadActor = aThreadActor;
   this.script = aScript;
+  this.threadActor = aThreadActor;
 }
 
 BreakpointActor.prototype = {
@@ -772,6 +960,112 @@ BreakpointActor.prototype = {
 };
 
 BreakpointActor.prototype.requestTypes = {
-  "delete": BreakpointActor.prototype.onDelete,
+  "delete": BreakpointActor.prototype.onDelete
+};
+
+
+/**
+ * Creates an EnvironmentActor. EnvironmentActors are responsible for listing
+ * the bindings introduced by a lexical environment and assigning new values to
+ * those identifier bindings.
+ * @param Debugger.Object aObject
+ *        The object whose lexical environment will be used to create the actor.
+ * @param ThreadActor aThreadActor
+ *        The parent thread actor that contains this environment.
+ */
+function EnvironmentActor(aObject, aThreadActor)
+{
+  this.obj = aObject;
+  this.threadActor = aThreadActor;
+}
+
+EnvironmentActor.prototype = {
+  actorPrefix: "environment",
+
+  grip: function EA_grip() {
+    let parent;
+    if (this.obj.environment.parent) {
+      parent = this.threadActor.environmentActor(this.obj.environment.parent, this.registeredPool);
+    }
+    let grip = { actor: this.actorID,
+                 parent: parent ? parent.grip() : parent };
+
+    if (this.obj.environment.type == "object") {
+      grip.type = "object"; // XXX: how can we tell if it's "with"?
+      grip.object = this.threadActor.valueGrip(this.obj.environment.object);
+    } else {
+      if (this.obj["class"] == "Function") {
+        grip.type = "function";
+        grip["function"] = this.threadActor.valueGrip(this.obj);
+        grip.functionName = this.obj.name;
+      } else {
+        grip.type = "block";
+      }
+
+      grip.bindings = this._bindings();
+    }
+
+    return grip;
+  },
+
+  /**
+   * Return the identifier bindings object as required by the remote protocol
+   * specification.
+   */
+  _bindings: function EA_bindings() {
+    let bindings = { mutable: {}, immutable: {} };
+    for (let name in this.obj.environment.names()) {
+      let desc = this.obj.environment.getVariableDescriptor(name);
+      // XXX: the spec doesn't say what to do with accessor properties.
+      if (desc.writable) {
+        grip.bindings.mutable[name] = desc.value;
+      } else {
+        grip.bindings.immutable[name] = desc.value;
+      }
+    }
+
+    return bindings;
+  },
+
+  /**
+   * Handle a protocol request to change the value of a variable bound in this
+   * lexical environment.
+   */
+  onAssign: function EA_onAssign(aRequest) {
+    let desc = this.obj.environment.getVariableDescriptor(aRequest.name);
+
+    if (!desc.writable) {
+      return { error: "immutableBinding",
+               message: "Changing the value of an immutable binding is not " +
+                        "allowed" };
+    }
+
+    try {
+      this.obj.environment.setVariable(aRequest.name, aRequest.value);
+    } catch (e) {
+      if (e instanceof Debugger.DebuggeeWouldRun) {
+        // XXX: we need to spec this. Is this a real problem?
+        return { error: "debuggeeWouldRun",
+                 message: "Assigning this value would cause the debuggee to run." };
+      }
+      // This should never happen, so let it complain loudly if it does.
+      throw e;
+    }
+    return { from: this.actorID };
+  },
+
+  /**
+   * Handle a protocol request to fully enumerate the bindings introduced by the
+   * lexical environment.
+   */
+  onBindings: function EA_onBindings(aRequest) {
+    return { from: this.actorID,
+             bindings: this._bindings() };
+  }
+};
+
+EnvironmentActor.prototype.requestTypes = {
+  "assign": EnvironmentActor.prototype.onAssign,
+  "bindings": EnvironmentActor.prototype.onBindings
 };
 
