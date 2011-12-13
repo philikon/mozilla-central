@@ -151,7 +151,6 @@ js::GetBlockChain(JSContext *cx, StackFrame *fp)
     if (!fp->isScriptFrame())
         return NULL;
 
-    /* Assume that imacros don't affect blockChain */
     jsbytecode *target = fp->pcQuadratic(cx->stack);
 
     JSScript *script = fp->script();
@@ -1996,9 +1995,9 @@ END_CASE(JSOP_LINENO)
 BEGIN_CASE(JSOP_BLOCKCHAIN)
 END_CASE(JSOP_BLOCKCHAIN)
 
-BEGIN_CASE(JSOP_PUSH)
+BEGIN_CASE(JSOP_UNDEFINED)
     PUSH_UNDEFINED();
-END_CASE(JSOP_PUSH)
+END_CASE(JSOP_UNDEFINED)
 
 BEGIN_CASE(JSOP_POP)
     regs.sp--;
@@ -3084,11 +3083,6 @@ BEGIN_CASE(JSOP_LENGTH)
             }
         }
 
-        /*
-         * We do not impose the method read barrier if in an imacro,
-         * assuming any property gets it does (e.g., for 'toString'
-         * from JSOP_NEW) will not be leaked to the calling script.
-         */
         JSObject *obj;
         VALUE_TO_OBJECT(cx, vp, obj);
         JSObject *aobj = js_GetProtoIfDenseArray(obj);

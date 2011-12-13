@@ -21,6 +21,7 @@
  *   Ryan Flint <rflint@mozilla.com>
  *   Justin Dolske <dolske@mozilla.com>
  *   Gavin Sharp <gavin@gavinsharp.com>
+ *   Steffen Wilberg <steffen.wilberg@web.de>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -41,17 +42,27 @@ const Ci = Components.interfaces;
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
 
 let modules = {
-  // about:blank has some bad loading behavior we can avoid, if we use an alias
-  empty: {
-    uri: "about:blank",
-    privileged: false
-  },
-  fennec: {
+  // about:
+  "": {
     uri: "chrome://browser/content/about.xhtml",
     privileged: true
   },
-  // about:firefox is an alias for about:fennec
-  get firefox() this.fennec,
+
+  // about:fennec and about:firefox are aliases for about:,
+  // but hidden from about:about
+  fennec: {
+    uri: "chrome://browser/content/about.xhtml",
+    privileged: true,
+    hide: true
+  },
+  get firefox() this[fennec],
+
+  // about:blank has some bad loading behavior we can avoid, if we use an alias
+  empty: {
+    uri: "about:blank",
+    privileged: false,
+    hide: true
+  },
 
   rights: {
 #ifdef MOZ_OFFICIAL_BRANDING
@@ -63,11 +74,13 @@ let modules = {
   },
   blocked: {
     uri: "chrome://browser/content/blockedSite.xhtml",
-    privileged: true
+    privileged: true,
+    hide: true
   },
   certerror: {
     uri: "chrome://browser/content/aboutCertError.xhtml",
-    privileged: true
+    privileged: true,
+    hide: true
   },
   home: {
     uri: "chrome://browser/content/aboutHome.xhtml",
@@ -75,9 +88,10 @@ let modules = {
   }
 }
 
-function AboutGeneric() {}
-AboutGeneric.prototype = {
+function AboutRedirector() {}
+AboutRedirector.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIAboutModule]),
+  classID: Components.ID("{322ba47e-7047-4f71-aebf-cb7d69325cd9}"),
 
   _getModuleInfo: function (aURI) {
     let moduleName = aURI.path.replace(/[?#].*/, "").toLowerCase();
@@ -86,7 +100,12 @@ AboutGeneric.prototype = {
 
   // nsIAboutModule
   getURIFlags: function(aURI) {
-    return Ci.nsIAboutModule.ALLOW_SCRIPT;
+    let flags;
+    let moduleInfo = this._getModuleInfo(aURI);
+    if (moduleInfo.hide)
+      flags = Ci.nsIAboutModule.HIDE_FROM_ABOUTABOUT;
+
+    return flags | Ci.nsIAboutModule.ALLOW_SCRIPT;
   },
 
   newChannel: function(aURI) {
@@ -98,6 +117,7 @@ AboutGeneric.prototype = {
     var channel = ios.newChannel(moduleInfo.uri, null, null);
     
     if (!moduleInfo.privileged) {
+      // drop chrome privileges
       let secMan = Cc["@mozilla.org/scriptsecuritymanager;1"].
                    getService(Ci.nsIScriptSecurityManager);
       let principal = secMan.getCodebasePrincipal(aURI);
@@ -110,54 +130,5 @@ AboutGeneric.prototype = {
   }
 };
 
-function AboutEmpty() {}
-AboutEmpty.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{433d2d75-5923-49b0-854d-f37267b03dc7}")
-}
-
-function AboutFennec() {}
-AboutFennec.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{842a6d11-b369-4610-ba66-c3b5217e82be}")
-}
-
-function AboutFirefox() {}
-AboutFirefox.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{dd40c467-d206-4f22-9215-8fcc74c74e38}")  
-}
-
-function AboutRights() {}
-AboutRights.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{3b988fbf-ec97-4e1c-a5e4-573d999edc9c}")
-}
-
-function AboutCertError() {}
-AboutCertError.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{972efe64-8ac0-4e91-bdb0-22835d987815}")
-}
-
-function AboutHome() {}
-AboutHome.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{b071364f-ab68-4669-a9db-33fca168271a}")
-}
-
-function AboutDougt() {}
-AboutDougt.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{7490b75b-0ed4-4b2f-b80c-75e7f9c75682}")
-}
-
-function AboutBlocked() {}
-AboutBlocked.prototype = {
-  __proto__: AboutGeneric.prototype,
-  classID: Components.ID("{88fd40b6-c5c2-4120-9238-f2cb9ff98928}")
-}
-
-const components = [AboutEmpty, AboutFennec, AboutRights,
-                    AboutCertError, AboutFirefox, AboutHome, AboutDougt, AboutBlocked];
+const components = [AboutRedirector];
 const NSGetFactory = XPCOMUtils.generateNSGetFactory(components);

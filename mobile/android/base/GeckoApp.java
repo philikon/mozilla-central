@@ -114,7 +114,6 @@ abstract public class GeckoApp
 
     private IntentFilter mConnectivityFilter;
     private IntentFilter mBatteryFilter;
-    private IntentFilter mSmsFilter;
 
     private BroadcastReceiver mConnectivityReceiver;
     private BroadcastReceiver mSmsReceiver;
@@ -223,6 +222,9 @@ abstract public class GeckoApp
     public ArrayList<PackageInfo> mPackageInfoCache = new ArrayList<PackageInfo>();
 
     String[] getPluginDirectories() {
+        // we don't support Honeycomb and later
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB)
+            return new String[0];
 
         Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - start of getPluginDirectories");
 
@@ -564,21 +566,26 @@ abstract public class GeckoApp
         super.onSaveInstanceState(outState);
         if (mOwnActivityDepth > 0)
             return; // we're showing one of our own activities and likely won't get paged out
+
         if (outState == null)
             outState = new Bundle();
-        mRememberLastScreenRunnable.run();
+
+        new SessionSnapshotRunnable(null).run();
+
         outState.putString(SAVED_STATE_URI, mLastUri);
         outState.putString(SAVED_STATE_TITLE, mLastTitle);
         outState.putString(SAVED_STATE_VIEWPORT, mLastViewport);
         outState.putByteArray(SAVED_STATE_SCREEN, mLastScreen);
     }
 
-    Runnable mRememberLastScreenRunnable = new Runnable() {; 
-        public void run() {
-            synchronized (this) {
-                if (mUserDefinedProfile)
-                    return;
+    public class SessionSnapshotRunnable implements Runnable {
+        Tab mThumbnailTab;
+        SessionSnapshotRunnable(Tab thumbnailTab) {
+            mThumbnailTab = thumbnailTab;
+        }
 
+        public void run() {
+            synchronized (mSoftwareLayerClient) {
                 Tab tab = Tabs.getInstance().getSelectedTab();
                 if (tab == null)
                     return;
@@ -599,6 +606,10 @@ abstract public class GeckoApp
                 mLastTitle = lastHistoryEntry.mTitle;
                 Bitmap bitmap = mSoftwareLayerClient.getBitmap();
                 if (bitmap != null) {
+                    // Make a thumbnail for the given tab, if it's still selected
+                    if (tab == mThumbnailTab)
+                        mThumbnailTab.updateThumbnail(bitmap);
+
                     ByteArrayOutputStream bos = new ByteArrayOutputStream();
                     bitmap.compress(Bitmap.CompressFormat.PNG, 0, bos);
                     mLastScreen = bos.toByteArray();
@@ -607,7 +618,7 @@ abstract public class GeckoApp
                 }
             }
         }
-    };
+    }
 
     private void maybeCancelFaviconLoad(Tab tab) {
         long faviconLoadId = tab.getFaviconLoadId();
@@ -723,17 +734,25 @@ abstract public class GeckoApp
         });
     }
 
-    File getProfileDir() {
+    public File getProfileDir() {
+        // XXX: TO-DO read profiles.ini to get the default profile
+        return getProfileDir("default");
+    }
+
+    public File getProfileDir(final String profileName) {
         if (mProfileDir == null && !mUserDefinedProfile) {
             File mozDir = new File(GeckoAppShell.sHomeDir, "mozilla");
+            if (!mozDir.exists()) {
+                // Profile directory may have been deleted or not created yet.
+                return null;
+            }
             File[] profiles = mozDir.listFiles(new FileFilter() {
                 public boolean accept(File pathname) {
-                    return pathname.getName().endsWith(".default");
+                    return pathname.getName().endsWith("." + profileName);
                 }
             });
-            if (profiles.length == 1)
+            if (profiles != null && profiles.length == 1)
                 mProfileDir = profiles[0];
-            // XXX: TO-DO read profiles.ini to get the default profile
         }
         return mProfileDir;
     }
@@ -883,6 +902,7 @@ abstract public class GeckoApp
                 setLaunchState(GeckoApp.LaunchState.GeckoRunning);
                 GeckoAppShell.sendPendingEventsToGecko();
                 connectGeckoLayerClient();
+                Looper.myQueue().addIdleHandler(new UpdateIdleHandler());
             } else if (event.equals("ToggleChrome:Hide")) {
                 mMainHandler.post(new Runnable() {
                     public void run() {
@@ -921,7 +941,7 @@ abstract public class GeckoApp
         mMainHandler.postAtFrontOfQueue(r);
     }
 
-    public class  AboutHomeRunnable implements Runnable {
+    public class AboutHomeRunnable implements Runnable {
         boolean mShow;
         AboutHomeRunnable(boolean show) {
             mShow = show;
@@ -1016,10 +1036,6 @@ abstract public class GeckoApp
     }
 
     void handleSelectTab(int tabId) {
-        Tab selTab = Tabs.getInstance().getSelectedTab();
-        if (selTab != null)
-            selTab.updateThumbnail(mSoftwareLayerClient.getBitmap());
-
         final Tab tab = Tabs.getInstance().selectTab(tabId);
         if (tab == null)
             return;
@@ -1077,6 +1093,9 @@ abstract public class GeckoApp
                 onTabsChanged(tab);
             }
         });
+
+        Runnable r = new SessionSnapshotRunnable(tab);
+        GeckoAppShell.getHandler().postDelayed(r, 500);
     }
 
     void handleShowToast(final String message, final String duration) {
@@ -1099,18 +1118,17 @@ abstract public class GeckoApp
 
         tab.updateTitle(title);
 
+        // Make the UI changes
         mMainHandler.post(new Runnable() {
             public void run() {
                 loadFavicon(tab);
 
-                if (Tabs.getInstance().isSelectedTab(tab)) {
+                if (Tabs.getInstance().isSelectedTab(tab))
                     mBrowserToolbar.setTitle(tab.getDisplayTitle());
-                    tab.updateThumbnail(mSoftwareLayerClient.getBitmap());
-                }
+
                 onTabsChanged(tab);
             }
         });
-        GeckoAppShell.getHandler().postDelayed(mRememberLastScreenRunnable, 500);
     }
 
     void handleTitleChanged(int tabId, String title) {
@@ -1130,7 +1148,7 @@ abstract public class GeckoApp
     }
 
     void handleLinkAdded(final int tabId, String rel, final String href) {
-        if (rel.indexOf("icon") != -1) {
+        if (rel.indexOf("[icon]") != -1) {
             final Tab tab = Tabs.getInstance().getTab(tabId);
             if (tab != null) {
                 tab.updateFaviconURL(href);
@@ -1244,7 +1262,13 @@ abstract public class GeckoApp
     @Override
     public void onCreate(Bundle savedInstanceState)
     {
+        // StrictMode is set by defaults resource flag |enableStrictMode|.
+        if (getResources().getBoolean(R.bool.enableStrictMode)) {
+            enableStrictMode();
+        }
+
         System.loadLibrary("mozutils");
+        mMainHandler = new Handler();
         Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - onCreate");
         if (savedInstanceState != null) {
             mLastUri = savedInstanceState.getString(SAVED_STATE_URI);
@@ -1252,11 +1276,16 @@ abstract public class GeckoApp
             mLastViewport = savedInstanceState.getString(SAVED_STATE_VIEWPORT);
             mLastScreen = savedInstanceState.getByteArray(SAVED_STATE_SCREEN);
         }
-        if (Build.VERSION.SDK_INT >= 9) {
-            StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
-                                       .detectDiskReads().detectDiskWrites().detectNetwork()
-                                       .penaltyLog().build());
-            StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().penaltyLog().build());
+        String uri = getIntent().getDataString();
+        String title = uri;
+        if (uri != null && uri.length() > 0) {
+            mLastUri = uri;
+            mLastTitle = title;
+        }
+
+        if (mLastUri == null || mLastUri.equals("") ||
+            mLastUri.equals("about:home")) {
+            showAboutHome();
         }
 
         super.onCreate(savedInstanceState);
@@ -1268,6 +1297,7 @@ abstract public class GeckoApp
             GeckoActionBar actionBar = new GeckoActionBar();
             mBrowserToolbar = (BrowserToolbar) getLayoutInflater().inflate(R.layout.gecko_app_actionbar, null);
 
+            actionBar.setBackgroundDrawable(this, getResources().getDrawable(R.drawable.gecko_actionbar_bg));
             actionBar.setDisplayOptions(this, ActionBar.DISPLAY_SHOW_CUSTOM, ActionBar.DISPLAY_SHOW_CUSTOM |
                                                                              ActionBar.DISPLAY_SHOW_HOME |
                                                                              ActionBar.DISPLAY_SHOW_TITLE |
@@ -1334,8 +1364,6 @@ abstract public class GeckoApp
         if (sGREDir == null)
             sGREDir = new File(this.getApplicationInfo().dataDir);
 
-        mMainHandler = new Handler();
-
         if (!sTryCatchAttached) {
             sTryCatchAttached = true;
             mMainHandler.post(new Runnable() {
@@ -1386,38 +1414,34 @@ abstract public class GeckoApp
         batteryFilter.addAction(Intent.ACTION_BATTERY_CHANGED);
         mBatteryReceiver = new GeckoBatteryManager();
         registerReceiver(mBatteryReceiver, batteryFilter);
-                
-        mSmsFilter = new IntentFilter();
-        mSmsFilter.addAction("android.provider.Telephony.SMS_RECEIVED");
+
+        IntentFilter smsFilter = new IntentFilter();
+        smsFilter.addAction("android.provider.Telephony.SMS_RECEIVED");
         mSmsReceiver = new GeckoSmsManager();
-        registerReceiver(mSmsReceiver, mSmsFilter);
+        registerReceiver(mSmsReceiver, smsFilter);
 
-        final GeckoApp self = this;
- 
-        mMainHandler.postDelayed(new Runnable() {
-            public void run() {
-                
-                Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - pre checkLaunchState");
+        final GeckoApp self = this; 
+    }
 
-                /*
-                  XXXX see bug 635342
-                   We want to disable this code if possible.  It is about 145ms in runtime
-                SharedPreferences settings = getPreferences(Activity.MODE_PRIVATE);
-                String localeCode = settings.getString(getPackageName() + ".locale", "");
-                if (localeCode != null && localeCode.length() > 0)
-                    GeckoAppShell.setSelectedLocale(localeCode);
-                */
+    /**
+     * Enable Android StrictMode checks (for supported OS versions).
+     * http://developer.android.com/reference/android/os/StrictMode.html
+     */
+    private void enableStrictMode()
+    {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.GINGERBREAD) {
+            return;
+        }
 
-                if (!checkLaunchState(LaunchState.Launched)) {
-                    return;
-                }
+        StrictMode.setThreadPolicy(new StrictMode.ThreadPolicy.Builder()
+                                  .detectAll()
+                                  .penaltyLog()
+                                  .build());
 
-                // it would be good only to do this if MOZ_UPDATER was defined 
-                long startTime = new Date().getTime();
-                checkAndLaunchUpdate();
-                Log.w(LOGTAG, "checking for an update took " + (new Date().getTime() - startTime) + "ms");
-            }
-        }, 50);
+        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
+                               .detectAll()
+                               .penaltyLog()
+                               .build());
     }
 
     public void enableCameraView() {
@@ -1483,7 +1507,8 @@ abstract public class GeckoApp
     {
         Log.i(LOGTAG, "pause");
 
-        GeckoAppShell.getHandler().post(mRememberLastScreenRunnable);
+        Runnable r = new SessionSnapshotRunnable(null);
+        GeckoAppShell.getHandler().post(r);
 
         GeckoAppShell.sendEventToGecko(new GeckoEvent(GeckoEvent.ACTIVITY_PAUSING));
         // The user is navigating away from this activity, but nothing
@@ -1496,7 +1521,6 @@ abstract public class GeckoApp
         // onPause will be followed by either onResume or onStop.
         super.onPause();
 
-        unregisterReceiver(mSmsReceiver);
         unregisterReceiver(mConnectivityReceiver);
     }
 
@@ -1514,7 +1538,6 @@ abstract public class GeckoApp
         if (checkLaunchState(LaunchState.Launching))
             onNewIntent(getIntent());
 
-        registerReceiver(mSmsReceiver, mSmsFilter);
         registerReceiver(mConnectivityReceiver, mConnectivityFilter);
         if (mOwnActivityDepth > 0)
             mOwnActivityDepth--;
@@ -1590,6 +1613,7 @@ abstract public class GeckoApp
 
         super.onDestroy();
 
+        unregisterReceiver(mSmsReceiver);
         unregisterReceiver(mBatteryReceiver);
     }
 
@@ -1659,6 +1683,21 @@ abstract public class GeckoApp
 
     public void handleNotification(String action, String alertName, String alertCookie) {
         GeckoAppShell.handleNotification(action, alertName, alertCookie);
+    }
+
+    // it would be good only to do this if MOZ_UPDATER was defined 
+    private class UpdateIdleHandler implements MessageQueue.IdleHandler {
+        public boolean queueIdle() {
+            mMainHandler.post(new Runnable() {
+                    public void run() {
+                        long startTime = new Date().getTime();
+                        checkAndLaunchUpdate();
+                        Log.w(LOGTAG, "checking for an update took " + (new Date().getTime() - startTime) + "ms");
+                    }
+                });
+            // only need to run this once.
+            return false;
+        }
     }
 
     private void checkAndLaunchUpdate() {
@@ -2040,7 +2079,7 @@ abstract public class GeckoApp
                         // we really don't care.
                     }
                 }
-            }).start();
+            }, "DNSPrefetcher Thread").start();
     }
 }
 

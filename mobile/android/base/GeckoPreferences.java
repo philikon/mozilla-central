@@ -38,6 +38,7 @@
 
 package org.mozilla.gecko;
 
+import java.lang.CharSequence;
 import java.util.ArrayList;
 
 import android.os.Build;
@@ -115,7 +116,7 @@ public class GeckoPreferences
             }
         }
     }
-    
+
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
@@ -131,8 +132,14 @@ public class GeckoPreferences
     public boolean onPreferenceChange(Preference preference, Object newValue) {
         String prefName = preference.getKey();
         setPreference(prefName, newValue);
-        if (preference instanceof ListPreference)
-            ((ListPreference)preference).setSummary((String)newValue);
+        if (preference instanceof ListPreference) {
+            // We need to find the entry for the new value
+            int newIndex = ((ListPreference)preference).findIndexOfValue((String) newValue);
+            CharSequence newEntry = ((ListPreference)preference).getEntries()[newIndex];
+            ((ListPreference)preference).setSummary(newEntry);
+        }
+        if (preference instanceof LinkPreference)
+            finish();
         return true;
     }
 
@@ -148,32 +155,12 @@ public class GeckoPreferences
             if (mPreferenceScreen == null)
                 return;
 
-            // set the current page URL for the "Home page" preference
-            final String[] homepageValues = getResources().getStringArray(R.array.pref_homepage_values);
-            final Preference homepagePref = mPreferenceScreen.findPreference("browser.startup.homepage");
-            GeckoAppShell.getMainHandler().post(new Runnable() {
-                public void run() {
-                    Tab tab = Tabs.getInstance().getSelectedTab();
-                    homepageValues[2] = tab.getURL();
-                    ((ListPreference)homepagePref).setEntryValues(homepageValues);
-                }
-            });
-
             final int length = jsonPrefs.length();
             for (int i = 0; i < length; i++) {
                 JSONObject jPref = jsonPrefs.getJSONObject(i);
                 final String prefName = jPref.getString("name");
                 final String prefType = jPref.getString("type");
                 final Preference pref = mPreferenceScreen.findPreference(prefName);
-
-                if (prefName.equals("browser.startup.homepage")) {
-                    final String value = jPref.getString("value");
-                    GeckoAppShell.getMainHandler().post(new Runnable() {
-                        public void run() {
-                            pref.setSummary(value);
-                        }
-                    });
-                }
 
                 if (pref instanceof CheckBoxPreference && "bool".equals(prefType)) {
                     final boolean value = jPref.getBoolean("value");
@@ -195,6 +182,9 @@ public class GeckoPreferences
                     GeckoAppShell.getMainHandler().post(new Runnable() {
                         public void run() {
                             ((ListPreference)pref).setValue(value);
+                            // Set the summary string to the current entry
+                            CharSequence selectedEntry = ((ListPreference)pref).getEntry();
+                            ((ListPreference)pref).setSummary(selectedEntry);
                         }
                     });
                 }

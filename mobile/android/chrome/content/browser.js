@@ -48,8 +48,13 @@ Cu.import("resource://gre/modules/AddonManager.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "URIFixup",
   "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
+
+XPCOMUtils.defineLazyServiceGetter(this, "Haptic",
+  "@mozilla.org/widget/hapticfeedback;1", "nsIHapticFeedback");
+
 XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
   "@mozilla.org/inspector/dom-utils;1", "inIDOMUtils");
+
 const kStateActive = 0x00000001; // :active pseudoclass for elements
 
 // TODO: Take into account ppi in these units?
@@ -430,6 +435,16 @@ var BrowserApp = {
           name: prefName
         };
 
+        // The plugin pref is actually two separate prefs, so
+        // we need to handle it differently
+        if (prefName == "plugin.enable") {
+          // Use a string type for java's ListPreference
+          pref.type = "string";
+          pref.value = PluginHelper.getPluginPreference();
+          prefs.push(pref);
+          continue;
+        }
+
         try {
           switch (Services.prefs.getPrefType(prefName)) {
             case Ci.nsIPrefBranch.PREF_BOOL:
@@ -485,6 +500,13 @@ var BrowserApp = {
   setPreferences: function setPreferences(aPref) {
     let json = JSON.parse(aPref);
 
+    // The plugin pref is actually two separate prefs, so
+    // we need to handle it differently
+    if (json.name == "plugin.enable") {
+      PluginHelper.setPluginPreference(json.value);
+      return;
+    }
+
     // when sending to java, we normalized special preferences that use
     // integers and strings to represent booleans.  here, we convert them back
     // to their actual types so we can store them.
@@ -535,10 +557,17 @@ var BrowserApp = {
     let args = JSON.parse(aData);
     let uri;
     if (args.engine) {
-      let engine = Services.search.getEngineByName(args.engine);
-      uri = engine.getSubmission(args.url).uri;
-    } else
+      let engine;
+      if (args.engine == "__default__")
+        engine = Services.search.currentEngine || Services.search.defaultEngine;
+      else
+        engine = Services.search.getEngineByName(args.engine);
+
+      if (engine)
+        uri = engine.getSubmission(args.url).uri;
+    } else {
       uri = URIFixup.createFixupURI(args.url, Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP);
+    }
     return uri ? uri.spec : args.url;
   },
 
@@ -973,6 +1002,8 @@ function Tab(aURL, aParams) {
                      pageWidth: 1, pageHeight: 1, zoom: 1.0 };
   this.viewportExcess = { x: 0, y: 0 };
   this.userScrollPos = { x: 0, y: 0 };
+  this._pluginsToPlay = [];
+  this._pluginOverlayShowing = false;
 }
 
 Tab.prototype = {
@@ -1017,6 +1048,8 @@ Tab.prototype = {
     this.browser.addEventListener("DOMLinkAdded", this, true);
     this.browser.addEventListener("DOMTitleChanged", this, true);
     this.browser.addEventListener("scroll", this, true);
+    this.browser.addEventListener("PluginClickToPlay", this, true);
+    this.browser.addEventListener("pagehide", this, true);
     Services.obs.addObserver(this, "http-on-modify-request", false);
     this.browser.loadURI(aURL);
   },
@@ -1053,6 +1086,8 @@ Tab.prototype = {
     this.browser.removeEventListener("DOMLinkAdded", this, true);
     this.browser.removeEventListener("DOMTitleChanged", this, true);
     this.browser.removeEventListener("scroll", this, true);
+    this.browser.removeEventListener("PluginClickToPlay", this, true);
+    this.browser.removeEventListener("pagehide", this, true);
     BrowserApp.deck.removeChild(this.vbox);
     Services.obs.removeObserver(this, "http-on-modify-request", false);
     this.browser = null;
@@ -1142,26 +1177,31 @@ Tab.prototype = {
 
   get viewport() {
     // Update the viewport to current dimensions
-    this._viewport.x = this.browser.contentWindow.scrollX +
-                       this.viewportExcess.x;
-    this._viewport.y = this.browser.contentWindow.scrollY +
-                       this.viewportExcess.y;
-
-    let doc = this.browser.contentDocument;
-    let pageWidth = this._viewport.width;
-    let pageHeight = this._viewport.height;
-    if (doc != null) {
-      let body = doc.body || { scrollWidth: pageWidth, scrollHeight: pageHeight };
-      let html = doc.documentElement || { scrollWidth: pageWidth, scrollHeight: pageHeight };
-      pageWidth = Math.max(body.scrollWidth, html.scrollWidth);
-      pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
-    }
+    this._viewport.x = (this.browser.contentWindow.scrollX +
+                        this.viewportExcess.x) || 0;
+    this._viewport.y = (this.browser.contentWindow.scrollY +
+                        this.viewportExcess.y) || 0;
 
     // Transform coordinates based on zoom
     this._viewport.x = Math.round(this._viewport.x * this._viewport.zoom);
     this._viewport.y = Math.round(this._viewport.y * this._viewport.zoom);
-    this._viewport.pageWidth = Math.round(pageWidth * this._viewport.zoom);
-    this._viewport.pageHeight = Math.round(pageHeight * this._viewport.zoom);
+
+    /*
+     * Don't alter the page size until we hit DOMContentLoaded, because this causes the page size
+     * to jump around wildly during page load.
+     */
+    let doc = this.browser.contentDocument;
+    if (doc != null && doc.readyState === 'complete') {
+      let pageWidth = this._viewport.width, pageHeight = this._viewport.height;
+      let body = doc.body || { scrollWidth: pageWidth, scrollHeight: pageHeight };
+      let html = doc.documentElement || { scrollWidth: pageWidth, scrollHeight: pageHeight };
+      pageWidth = Math.max(body.scrollWidth, html.scrollWidth);
+      pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
+
+      /* Transform the page width and height based on the zoom factor. */
+      this._viewport.pageWidth = Math.round(pageWidth * this._viewport.zoom);
+      this._viewport.pageHeight = Math.round(pageHeight * this._viewport.zoom);
+    }
 
     return this._viewport;
   },
@@ -1169,8 +1209,8 @@ Tab.prototype = {
   updateViewport: function(aReset) {
     let win = this.browser.contentWindow;
     let zoom = (aReset ? this.getDefaultZoomLevel() : this._viewport.zoom);
-    let xpos = (aReset ? win.scrollX * zoom : this._viewport.x);
-    let ypos = (aReset ? win.scrollY * zoom : this._viewport.y);
+    let xpos = ((aReset && win) ? win.scrollX * zoom : this._viewport.x);
+    let ypos = ((aReset && win) ? win.scrollY * zoom : this._viewport.y);
 
     this.viewportExcess = { x: 0, y: 0 };
     this.viewport = { x: xpos, y: ypos,
@@ -1182,6 +1222,8 @@ Tab.prototype = {
   },
 
   sendViewportUpdate: function() {
+    if (BrowserApp.selectedTab != this)
+      return;
     sendMessageToJava({
       gecko: {
         type: "Viewport:Update",
@@ -1220,8 +1262,12 @@ Tab.prototype = {
           this.browser.addEventListener("pagehide", function listener() {
             this.browser.removeEventListener("click", ErrorPageEventHandler, false);
             this.browser.removeEventListener("pagehide", listener, true);
-          }, true);
+          }.bind(this), true);
         }
+
+        // Show a plugin doorhanger if there are no clickable overlays showing
+        if (this._pluginsToPlay.length && !this._pluginOverlayShowing)
+          PluginHelper.showDoorHanger(this);
 
         break;
       }
@@ -1232,8 +1278,19 @@ Tab.prototype = {
           return;
 
         // ignore on frames
-        if (target.defaultView != this.browser.contentWindow)
+        if (target.ownerDocument.defaultView != this.browser.contentWindow)
           return;
+
+        // sanitize the rel string
+        let list = [];
+        if (target.rel) {
+          list = target.rel.toLowerCase().split(/\s+/);
+          let hash = {};
+          list.forEach(function(value) { hash[value] = true; });
+          list = [];
+          for (let rel in hash)
+            list.push("[" + rel + "]");
+        }
 
         let json = {
           type: "DOMLinkAdded",
@@ -1241,7 +1298,7 @@ Tab.prototype = {
           href: resolveGeckoURI(target.href),
           charset: target.ownerDocument.characterSet,
           title: target.title,
-          rel: target.rel
+          rel: list.join(" ")
         };
 
         // rel=icon can also have a sizes attribute
@@ -1279,6 +1336,35 @@ Tab.prototype = {
             }
           });
         }
+        break;
+      }
+
+      case "PluginClickToPlay": {
+        let plugin = aEvent.target;
+        // Keep track of all the plugins on the current page
+        this._pluginsToPlay.push(plugin);
+        
+        let overlay = plugin.ownerDocument.getAnonymousElementByAttribute(plugin, "class", "mainBox");        
+        if (!overlay)
+          return;
+
+        // If the overlay is too small, hide the overlay and act like this
+        // is a hidden plugin object
+        if (PluginHelper.isTooSmall(plugin, overlay)) {
+          overlay.style.visibility = "hidden";
+          return;
+        }
+
+        // Play all the plugin objects when the user clicks on one
+        PluginHelper.addPluginClickCallback(plugin, "playAllPlugins", this);
+        this._pluginOverlayShowing = true;
+        break;
+      }
+
+      case "pagehide": {
+        // Reset plugin state when we leave the page
+        this._pluginsToPlay = [];
+        this._pluginOverlayShowing = false;
         break;
       }
     }
@@ -1565,13 +1651,11 @@ var BrowserEventHandler = {
       // override so that Java can handle panning the main document.
       let data = JSON.parse(aData);
       if (this._firstScrollEvent) {
-        while (this._scrollableElement != null &&
-               !this._elementCanScroll(this._scrollableElement, data.x, data.y))
+        while (this._scrollableElement != null && !this._elementCanScroll(this._scrollableElement, data.x, data.y))
           this._scrollableElement = this._findScrollableElement(this._scrollableElement, false);
 
         let doc = BrowserApp.selectedBrowser.contentDocument;
-        if (this._scrollableElement == doc.body ||
-            this._scrollableElement == doc.documentElement) {
+        if (this._scrollableElement == doc.body || this._scrollableElement == doc.documentElement) {
           sendMessageToJava({ gecko: { type: "Panning:CancelOverride" } });
           return;
         }
@@ -1586,11 +1670,9 @@ var BrowserEventHandler = {
       this._cancelTapHighlight();
     } else if (aTopic == "Gesture:ShowPress") {
       let data = JSON.parse(aData);
-      let closest = ElementTouchHelper.elementFromPoint(BrowserApp.selectedBrowser.contentWindow,
-                                                        data.x, data.y);
+      let closest = ElementTouchHelper.elementFromPoint(BrowserApp.selectedBrowser.contentWindow, data.x, data.y);
       if (!closest)
-        closest = ElementTouchHelper.anyElementFromPoint(BrowserApp.selectedBrowser.contentWindow,
-                                                        data.x, data.y);
+        closest = ElementTouchHelper.anyElementFromPoint(BrowserApp.selectedBrowser.contentWindow, data.x, data.y);
       if (closest) {
         this._doTapHighlight(closest);
 
@@ -1602,8 +1684,7 @@ var BrowserEventHandler = {
         if (this._scrollableElement != null) {
           // Discard if it's the top-level scrollable, we let Java handle this
           let doc = BrowserApp.selectedBrowser.contentDocument;
-          if (this._scrollableElement != doc.body &&
-              this._scrollableElement != doc.documentElement)
+          if (this._scrollableElement != doc.body && this._scrollableElement != doc.documentElement)
             sendMessageToJava({ gecko: { type: "Panning:Override" } });
         }
       }
@@ -1616,6 +1697,9 @@ var BrowserEventHandler = {
         this._sendMouseEvent("mousemove", element, data.x, data.y);
         this._sendMouseEvent("mousedown", element, data.x, data.y);
         this._sendMouseEvent("mouseup",   element, data.x, data.y);
+
+        if (ElementTouchHelper.isElementClickable(element))
+          Haptic.performSimpleAction(Haptic.LongPress);
       }
       this._cancelTapHighlight();
     } else if (aTopic == "Gesture:DoubleTap") {
@@ -1738,15 +1822,15 @@ var BrowserEventHandler = {
        * - It has overflow 'auto' or 'scroll'
        * - It's a textarea
        * - It's an HTML/BODY node
+       * - It's a select element showing multiple rows
        */
       if (checkElem) {
         if (((elem.scrollHeight > elem.clientHeight) ||
              (elem.scrollWidth > elem.clientWidth)) &&
             (elem.style.overflow == 'auto' ||
              elem.style.overflow == 'scroll' ||
-             elem.localName == 'textarea' ||
-             elem.localName == 'html' ||
-             elem.localName == 'body')) {
+             elem.mozMatchesSelector("html, body, textarea")) ||
+            (elem instanceof HTMLSelectElement && (elem.size > 1 || elem.multiple))) {
           scrollable = true;
           break;
         }
@@ -1755,8 +1839,7 @@ var BrowserEventHandler = {
       }
 
       // Propagate up iFrames
-      if (!elem.parentNode && elem.documentElement &&
-          elem.documentElement.ownerDocument)
+      if (!elem.parentNode && elem.documentElement && elem.documentElement.ownerDocument)
         elem = elem.documentElement.ownerDocument.defaultView.frameElement;
       else
         elem = elem.parentNode;
@@ -1909,7 +1992,7 @@ const ElementTouchHelper = {
                                                false); /* don't flush layout */
 
     // if this element is clickable we return quickly
-    if (this._isElementClickable(target))
+    if (this.isElementClickable(target))
       return target;
 
     let target = null;
@@ -1921,7 +2004,7 @@ const ElementTouchHelper = {
     let threshold = Number.POSITIVE_INFINITY;
     for (let i = 0; i < nodes.length; i++) {
       let current = nodes[i];
-      if (!current.mozMatchesSelector || !this._isElementClickable(current))
+      if (!current.mozMatchesSelector || !this.isElementClickable(current))
         continue;
 
       let rect = current.getBoundingClientRect();
@@ -1940,7 +2023,7 @@ const ElementTouchHelper = {
     return target;
   },
 
-  _isElementClickable: function _isElementClickable(aElement) {
+  isElementClickable: function isElementClickable(aElement) {
     const selector = "a,:link,:visited,[role=button],button,input,select,textarea,label";
     for (let elem = aElement; elem; elem = elem.parentNode) {
       if (this._hasMouseListener(elem))
@@ -2081,27 +2164,12 @@ var ErrorPageEventHandler = {
             }
             errorDoc.location.reload();
           } else if (target == errorDoc.getElementById("getMeOutOfHereButton")) {
-            errorDoc.location = this.getFallbackSafeURL();
+            errorDoc.location = "about:home";
           }
         }
         break;
       }
     }
-  },
-
-  getFallbackSafeURL: function getFallbackSafeURL() {
-    // Get the start page from the *default* pref branch, not the user's
-    let prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefService).getDefaultBranch(null);
-    let url = "about:home";
-    try {
-      url = prefs.getComplexValue("browser.startup.homepage", Ci.nsIPrefLocalizedString).data;
-      // If url is a pipe-delimited set of pages, just take the first one.
-      if (url.indexOf("|") != -1)
-        url = url.split("|")[0];
-    } catch(e) {
-      Cu.reportError("Couldn't get homepage pref: " + e);
-    }
-    return url;
   }
 };
 
@@ -2844,5 +2912,99 @@ var ConsoleAPI = {
       aSourceURL = aSourceURL.substring(slashIndex + 1);
 
     return aSourceURL;
+  }
+};
+
+var PluginHelper = {
+  showDoorHanger: function(aTab) {
+    let message = Strings.browser.GetStringFromName("clickToPlayFlash.message");
+    let buttons = [
+      {
+        label: Strings.browser.GetStringFromName("clickToPlayFlash.yes"),
+        callback: function() {
+          PluginHelper.playAllPlugins(aTab);
+        }
+      },
+      {
+        label: Strings.browser.GetStringFromName("clickToPlayFlash.no"),
+        callback: function() {
+          // Do nothing
+        }
+      }
+    ]
+    NativeWindow.doorhanger.show(message, "ask-to-play-plugins", buttons, aTab.id);
+  },
+
+  playAllPlugins: function(aTab) {
+    let plugins = aTab._pluginsToPlay;
+    for (let i = 0; i < plugins.length; i++) {
+      let objLoadingContent = plugins[i].QueryInterface(Ci.nsIObjectLoadingContent);
+      objLoadingContent.playPlugin();
+    }
+  },
+
+  getPluginPreference: function getPluginPreference() {
+    let pluginDisable = Services.prefs.getBoolPref("plugin.disable");
+    if (pluginDisable)
+      return "0";
+
+    let clickToPlay = Services.prefs.getBoolPref("plugins.click_to_play");
+    return clickToPlay ? "2" : "1";
+  },
+
+  setPluginPreference: function setPluginPreference(aValue) {
+    switch (aValue) {
+      case "0": // Enable Plugins = No
+        Services.prefs.setBoolPref("plugin.disable", true);
+        Services.prefs.clearUserPref("plugins.click_to_play");
+        break;
+      case "1": // Enable Plugins = Yes
+        Services.prefs.clearUserPref("plugin.disable");
+        Services.prefs.setBoolPref("plugins.click_to_play", false);
+        break;
+      case "2": // Enable Plugins = Tap to Play (default)
+        Services.prefs.clearUserPref("plugin.disable");
+        Services.prefs.clearUserPref("plugins.click_to_play");
+        break;
+    }
+  },
+
+  // Mostly copied from /browser/base/content/browser.js
+  addPluginClickCallback: function (plugin, callbackName /*callbackArgs...*/) {
+    // XXX just doing (callback)(arg) was giving a same-origin error. bug?
+    let self = this;
+    let callbackArgs = Array.prototype.slice.call(arguments).slice(2);
+      plugin.addEventListener("click", function(evt) {
+      if (!evt.isTrusted)
+        return;
+      evt.preventDefault();
+      if (callbackArgs.length == 0)
+        callbackArgs = [ evt ];
+      (self[callbackName]).apply(self, callbackArgs);
+    }, true);
+
+    plugin.addEventListener("keydown", function(evt) {
+      if (!evt.isTrusted)
+        return;
+      if (evt.keyCode == evt.DOM_VK_RETURN) {
+        evt.preventDefault();
+        if (callbackArgs.length == 0)
+          callbackArgs = [ evt ];
+        evt.preventDefault();
+        (self[callbackName]).apply(self, callbackArgs);
+      }
+    }, true);
+  },
+
+  // Copied from /browser/base/content/browser.js
+  isTooSmall : function (plugin, overlay) {
+    // Is the <object>'s size too small to hold what we want to show?
+    let pluginRect = plugin.getBoundingClientRect();
+    // XXX bug 446693. The text-shadow on the submitted-report text at
+    //     the bottom causes scrollHeight to be larger than it should be.
+    let overflows = (overlay.scrollWidth > pluginRect.width) ||
+                    (overlay.scrollHeight - 5 > pluginRect.height);
+
+    return overflows;
   }
 };
