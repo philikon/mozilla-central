@@ -1,5 +1,3 @@
-/* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -227,6 +225,15 @@ MarionetteDriverActor.prototype = {
   },
 
   executeAsync: function MDA_executeAsync(aRequest) {
+    this.executeWithCallback(aRequest);
+  },
+
+  executeJSScript: function MDA_executeJSScript(aRequest) {
+    //all pure JS scripts will need to call Marionette.finish() to complete the test.
+    this.executeWithCallback(aRequest, true, aRequest.timeout);
+  },
+
+  executeWithCallback: function MDA_executeWithCallback(aRequest, directInject, timeout) {
     if (this.context == "chrome") {
       try {
         var curWindow = this.getCurrentWindow();
@@ -242,13 +249,24 @@ MarionetteDriverActor.prototype = {
            { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
         _chromeSandbox.Marionette = Marionette;
-        var script = '__marionetteParams.push(Marionette.returnFunc);'
-                    +'var marionetteScriptFinished = Marionette.returnFunc;'
-                    +'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
-                    +'var __marionetteFunc = function() {' + aRequest.value + '};'
-                    +'__marionetteFunc.apply(null, __marionetteParams);'
-                    +'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
-       Cu.evalInSandbox(script, _chromeSandbox);
+        var script;
+        var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
+                           + 'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
+        if (directInject) {
+          //don't wrap sent JS in function
+          script = aRequest.value;
+          if (timeout) {
+            script += timeoutScript;
+          }
+        }
+        else {
+          script = '__marionetteParams.push(Marionette.returnFunc);'
+                  + 'var marionetteScriptFinished = Marionette.returnFunc;'
+                  + 'var __marionetteFunc = function() {' + aRequest.value + '};'
+                  + '__marionetteFunc.apply(null, __marionetteParams);'
+                  + timeoutScript;
+        }
+        Cu.evalInSandbox(script, _chromeSandbox);
       } catch (e) {
         sendError(e.name + ": " + e.message, 17, null);
       }
@@ -317,6 +335,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeAsync,
+  "executeJSScript": MarionetteDriverActor.prototype.executeJSScript,
   "setSearchTimeout": MarionetteDriverActor.prototype.setSearchTimeout,
   "findElement": MarionetteDriverActor.prototype.findElement,
   "clickElement": MarionetteDriverActor.prototype.clickElement,

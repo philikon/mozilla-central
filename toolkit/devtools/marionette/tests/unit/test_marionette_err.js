@@ -12,12 +12,12 @@ function run_test()
 }
 function test_error()
 {
-  //DebuggerServer.openListener(2929, true);
+  //DebuggerServer.openListener(2828, true);
   do_test_pending();
   received = false;
   id = "";
 
-  let transport = debuggerSocketConnect("127.0.0.1", 2929);
+  let transport = debuggerSocketConnect("127.0.0.1", 2828);
   transport.hooks = {
     onPacket: function(aPacket) {
       this.onPacket = function(aPacket) {

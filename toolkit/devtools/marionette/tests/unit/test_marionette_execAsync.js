@@ -16,7 +16,7 @@ function test_executeAsync()
   received = false;
   id = "";
 
-  let transport = debuggerSocketConnect("127.0.0.1", 2929);
+  let transport = debuggerSocketConnect("127.0.0.1", 2828);
   transport.hooks = {
     onPacket: function(aPacket) {
       this.onPacket = function(aPacket) {
@@ -78,7 +78,7 @@ function test_executeAsyncTimeout()
   received = false;
   id = "";
 
-  let transport = debuggerSocketConnect("127.0.0.1", 2929);
+  let transport = debuggerSocketConnect("127.0.0.1", 2828);
   transport.hooks = {
     onPacket: function(aPacket) {
       this.onPacket = function(aPacket) {
@@ -139,7 +139,7 @@ function test_executeAsyncUnload()
   received = false;
   id = "";
 
-  let transport = debuggerSocketConnect("127.0.0.1", 2929);
+  let transport = debuggerSocketConnect("127.0.0.1", 2828);
   transport.hooks = {
     onPacket: function(aPacket) {
       this.onPacket = function(aPacket) {
