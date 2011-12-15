@@ -39,11 +39,12 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "GonkGlue.h"
+#include "hardware_legacy/uevent.h"
 #include "Hal.h"
 #include "mozilla/dom/battery/Constants.h"
 #include "mozilla/FileUtils.h"
 #include "nsAlgorithm.h"
+#include "nsThreadUtils.h"
 #include <stdio.h>
 #include <math.h>
 #include <fcntl.h>
@@ -62,16 +63,83 @@ void
 CancelVibrate(const WindowIdentifier &)
 {}
 
+namespace {
+
+class BatteryUpdater : public nsRunnable {
+public:
+  NS_IMETHOD Run()
+  {
+    hal::BatteryInformation info;
+    hal_impl::GetCurrentBatteryInformation(&info);
+    hal::NotifyBatteryChange(info);
+    return NS_OK;
+  }
+};
+
+class UEventWatcher : public nsRunnable {
+public:
+  UEventWatcher()
+    : mUpdater(new BatteryUpdater())
+    , mRunning(false)
+  {
+  }
+
+  NS_IMETHOD Run()
+  {
+    while (mRunning) {
+      char buf[1024];
+      int count = uevent_next_event(buf, sizeof(buf) - 1);
+      if (!count) {
+        NS_WARNING("uevent_next_event() returned 0!");
+        continue;
+      }
+
+      buf[sizeof(buf) - 1] = 0;
+      if (strstr(buf, "battery"))
+        NS_DispatchToMainThread(mUpdater);
+    }
+    return NS_OK;
+  }
+
+  bool mRunning;
+
+private:
+  nsRefPtr<BatteryUpdater> mUpdater;
+};
+
+} // anonymous namespace
+
+static bool sUEventInitialized = false;
+static UEventWatcher *sWatcher = NULL;
+static nsIThread *sWatcherThread = NULL;
+
 void
 EnableBatteryNotifications()
 {
-    mozilla::CheckBattery(true);
+  if (!sUEventInitialized)
+    sUEventInitialized = uevent_init();
+  if (!sUEventInitialized) {
+    NS_WARNING("uevent_init() failed!");
+    return;
+  }
+
+  if (!sWatcher)
+    sWatcher = new UEventWatcher();
+  NS_ADDREF(sWatcher);
+
+  sWatcher->mRunning = true;
+  nsresult rv = NS_NewThread(&sWatcherThread, sWatcher);
+  if (NS_FAILED(rv))
+    NS_WARNING("Failed to get new thread for uevent watching");
 }
 
 void
 DisableBatteryNotifications()
 {
-    mozilla::CheckBattery(false);
+  sWatcher->mRunning = false;
+  sWatcherThread->Shutdown();
+  NS_IF_RELEASE(sWatcherThread);
+  delete sWatcher;
 }
 
 void
