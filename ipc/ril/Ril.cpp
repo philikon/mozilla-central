@@ -120,7 +120,7 @@ class RilReconnectTask : public Task {
 };
 
 void RilReconnectTask::Run() {
-    if(sClient->OpenSocket()) {
+    if (sClient->OpenSocket()) {
         return;
     }
     sClient->mIOLoop->PostDelayedTask(FROM_HERE, new RilReconnectTask(), 1000);
@@ -236,8 +236,8 @@ RilClient::OnFileCanReadWithoutBlocking(int fd)
             int ret = read(fd, mIncoming->mData, 1024);
             if (ret <= 0) {
                 LOG("Cannot read from network, error %d\n", ret);
-                //At this point, assume that we can't actually access
-                //the socket anymore, and start a reconnect loop.
+                // At this point, assume that we can't actually access
+                // the socket anymore, and start a reconnect loop.
                 mIncoming.forget();
                 mReadWatcher.StopWatchingFileDescriptor();
                 mWriteWatcher.StopWatchingFileDescriptor();

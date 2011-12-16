@@ -201,13 +201,17 @@ var BrowserApp = {
 
     NativeWindow.init();
     Downloads.init();
+    FormAssistant.init();
     OfflineApps.init();
     IndexedDB.init();
     XPInstallObserver.init();
     ConsoleAPI.init();
+    ClipboardHelper.init();
 
     // Init LoginManager
     Cc["@mozilla.org/login-manager;1"].getService(Ci.nsILoginManager);
+    // Init FormHistory
+    Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
 
     let uri = "about:home";
     if ("arguments" in window && window.arguments[0])
@@ -261,6 +265,7 @@ var BrowserApp = {
 
   shutdown: function shutdown() {
     NativeWindow.uninit();
+    FormAssistant.uninit();
     OfflineApps.uninit();
     IndexedDB.uninit();
     ViewportHandler.uninit();
@@ -475,13 +480,13 @@ var BrowserApp = {
             pref.type = "bool";
             pref.value = pref.value == 0;
             break;
-          case "permissions.default.image":
-            pref.type = "bool";
-            pref.value = pref.value == 1;
-            break;
           case "browser.menu.showCharacterEncoding":
             pref.type = "bool";
             pref.value = pref.value == "true";
+            break;
+          case "font.size.inflation.minTwips":
+            pref.type = "string";
+            pref.value = pref.value.toString();
             break;
         }
 
@@ -515,13 +520,13 @@ var BrowserApp = {
         json.type = "int";
         json.value = (json.value ? 0 : 2);
         break;
-      case "permissions.default.image":
-        json.type = "int";
-        json.value = (json.value ? 1 : 2);
-        break;
       case "browser.menu.showCharacterEncoding":
         json.type = "string";
         json.value = (json.value ? "true" : "false");
+        break;
+      case "font.size.inflation.minTwips":
+        json.type = "int";
+        json.value = parseInt(json.value);
         break;
     }
 
@@ -768,12 +773,6 @@ var NativeWindow = {
                function(aTarget) {
                  let url = NativeWindow.contextmenus._getLinkURL(aTarget);
                  BrowserApp.addTab(url, { selected: false });
-               });
-
-      this.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"),
-               this.textContext,
-               function(aTarget) {
-                 Cc["@mozilla.org/imepicker;1"].getService(Ci.nsIIMEPicker).show();
                });
 
       this.add(Strings.browser.GetStringFromName("contextmenu.fullScreen"),
@@ -1398,12 +1397,20 @@ Tab.prototype = {
 
     let browser = BrowserApp.getBrowserForWindow(contentWin);
     let uri = browser.currentURI.spec;
+    let documentURI = "";
+    let contentType = "";
+    if (browser.contentDocument) {
+      documentURI = browser.contentDocument.documentURIObject.spec;
+      contentType = browser.contentDocument.contentType;
+    }
 
     let message = {
       gecko: {
         type: "Content:LocationChange",
         tabID: this.id,
-        uri: uri
+        uri: uri,
+        documentURI: documentURI,
+        contentType: contentType
       }
     };
 
@@ -2173,8 +2180,99 @@ var ErrorPageEventHandler = {
   }
 };
 
-
 var FormAssistant = {
+  // Used to keep track of the element that corresponds to the current
+  // autocomplete suggestions
+  _currentInputElement: null,
+
+  init: function() {
+    Services.obs.addObserver(this, "FormAssist:AutoComplete", false);
+    Services.obs.addObserver(this, "FormAssist:Closed", false);
+
+    BrowserApp.deck.addEventListener("compositionstart", this, false);
+    BrowserApp.deck.addEventListener("compositionupdate", this, false);
+  },
+
+  uninit: function() {
+    Services.obs.removeObserver(this, "FormAssist:AutoComplete");
+    Services.obs.removeObserver(this, "FormAssist:Closed");
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "FormAssist:AutoComplete":
+        if (!this._currentInputElement)
+          break;
+
+        // Remove focus from the textbox to avoid some bad IME interactions
+        this._currentInputElement.blur();
+        this._currentInputElement.value = aData;
+        break;
+
+      case "FormAssist:Closed":
+        this._currentInputElement = null;
+        break;
+    }
+  },
+
+  handleEvent: function(aEvent) {
+   switch (aEvent.type) {
+      case "compositionstart":
+      case "compositionupdate":
+        let currentElement = aEvent.target;
+        if (!this._isAutocomplete(currentElement))
+          break;
+
+        // Keep track of input element so we can fill it in if the user
+        // selects an autocomplete suggestion
+        this._currentInputElement = currentElement;
+        let suggestions = this._getAutocompleteSuggestions(aEvent.data, currentElement);
+
+        let rect = currentElement.getBoundingClientRect();
+        let zoom = BrowserApp.selectedTab.viewport.zoom;
+
+        sendMessageToJava({
+          gecko: {
+            type:  "FormAssist:AutoComplete",
+            suggestions: suggestions,
+            rect: [rect.left, rect.top, rect.width, rect.height], 
+            zoom: zoom
+          }
+        });
+    }
+  },
+
+  _isAutocomplete: function (aElement) {
+    if (!(aElement instanceof HTMLInputElement) ||
+        (aElement.getAttribute("type") == "password") ||
+        (aElement.hasAttribute("autocomplete") &&
+         aElement.getAttribute("autocomplete").toLowerCase() == "off"))
+      return false;
+
+    return true;
+  },
+
+  /** Retrieve the autocomplete list from the autocomplete service for an element */
+  _getAutocompleteSuggestions: function(aSearchString, aElement) {
+    let results = Cc["@mozilla.org/satchel/form-autocomplete;1"].
+                  getService(Ci.nsIFormAutoComplete).
+                  autoCompleteSearch(aElement.name || aElement.id, aSearchString, aElement, null);
+
+    let suggestions = [];
+    if (results.matchCount > 0) {
+      for (let i = 0; i < results.matchCount; i++) {
+        let value = results.getValueAt(i);
+        // Do not show the value if it is the current one in the input field
+        if (value == aSearchString)
+          continue;
+
+        suggestions.push(value);
+      }
+    }
+
+    return suggestions;
+  },
+
   show: function(aList, aElement) {
     let data = JSON.parse(sendMessageToJava({ gecko: aList }));
     let selected = data.button;
@@ -2914,6 +3012,83 @@ var ConsoleAPI = {
     return aSourceURL;
   }
 };
+
+var ClipboardHelper = {
+  init: function() {
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copy"), ClipboardHelper.getCopyContext(false), ClipboardHelper.copy.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyAll"), ClipboardHelper.getCopyContext(true), ClipboardHelper.copy.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), NativeWindow.contextmenus.textContext, ClipboardHelper.select.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.paste"), ClipboardHelper.pasteContext, ClipboardHelper.paste.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"), NativeWindow.contextmenus.textContext, ClipboardHelper.inputMethod.bind(ClipboardHelper));
+  },
+
+  get clipboardHelper() {
+    delete this.clipboardHelper;
+    return this.clipboardHelper = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
+  },
+
+  get clipboard() {
+    delete this.clipboard;
+    return this.clipboard = Cc["@mozilla.org/widget/clipboard;1"].getService(Ci.nsIClipboard);
+  },
+
+  copy: function(aElement) {
+    let selectionStart = aElement.selectionStart;
+    let selectionEnd = aElement.selectionEnd;
+    if (selectionStart != selectionEnd) {
+      string = aElement.value.slice(selectionStart, selectionEnd);
+      this.clipboardHelper.copyString(string);
+    } else {
+      this.clipboardHelper.copyString(aElement.value);
+    }
+  },
+
+  select: function(aElement) {
+    if (!aElement || !(aElement instanceof Ci.nsIDOMNSEditableElement))
+      return;
+    let target = aElement.QueryInterface(Ci.nsIDOMNSEditableElement);
+    target.editor.selectAll();
+    target.focus();
+  },
+
+  paste: function(aElement) {
+    if (!aElement || !(aElement instanceof Ci.nsIDOMNSEditableElement))
+      return;
+    let target = aElement.QueryInterface(Ci.nsIDOMNSEditableElement);
+    target.editor.paste(Ci.nsIClipboard.kGlobalClipboard);
+    target.focus();  
+  },
+
+  inputMethod: function(aElement) {
+    Cc["@mozilla.org/imepicker;1"].getService(Ci.nsIIMEPicker).show();
+  },
+
+  getCopyContext: function(isCopyAll) {
+    return {
+      matches: function(aElement) {
+        if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+          let selectionStart = aElement.selectionStart;
+          let selectionEnd = aElement.selectionEnd;
+          if (selectionStart != selectionEnd)
+            return true;
+          else if (isCopyAll)
+            return true;
+        }
+        return false;
+      }
+    }
+  },
+
+  pasteContext: {
+    matches: function(aElement) {
+      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+        let flavors = ["text/unicode"];
+        return ClipboardHelper.clipboard.hasDataMatchingFlavors(flavors, flavors.length, Ci.nsIClipboard.kGlobalClipboard);
+      }
+      return false;
+    }
+  }
+}
 
 var PluginHelper = {
   showDoorHanger: function(aTab) {

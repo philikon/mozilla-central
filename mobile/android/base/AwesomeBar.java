@@ -52,6 +52,7 @@ import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageButton;
@@ -234,7 +235,7 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         // If a space is found before any dot or colon, we assume this is a search query
         boolean spacedOut = space > -1 && (space < colon || space < dot);
 
-        return spacedOut || (dot == -1);
+        return spacedOut || (dot == -1 && colon == -1);
     }
 
     private void updateGoButton(String text) {
@@ -246,10 +247,18 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         mGoButton.setVisibility(View.VISIBLE);
 
         int imageResource = R.drawable.ic_awesomebar_go;
-        if (isSearchUrl(text))
+        int imeAction = EditorInfo.IME_ACTION_GO;
+        if (isSearchUrl(text)) {
             imageResource = R.drawable.ic_awesomebar_search;
-
+            imeAction = EditorInfo.IME_ACTION_SEARCH;
+        }
         mGoButton.setImageResource(imageResource);
+
+        if ((mText.getImeOptions() & EditorInfo.IME_MASK_ACTION) != imeAction) {
+            InputMethodManager imm = (InputMethodManager) mText.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+            mText.setImeOptions(imeAction);
+            imm.restartInput(mText);
+        }
     }
 
     private void submitAndFinish(String url) {
