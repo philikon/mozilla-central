@@ -60,8 +60,6 @@ struct InputContext;
 struct InputContextAction;
 }
 
-extern nsIntRect gScreenBounds;
-
 class nsWindow : public nsBaseWidget
 {
 public:
