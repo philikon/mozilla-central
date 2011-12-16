@@ -45,6 +45,15 @@
 #include "mozilla/FileUtils.h"
 #include "nsAlgorithm.h"
 #include "nsThreadUtils.h"
+#include "mozilla/Mutex.h"
+#include "mozilla/CondVar.h"
+#include "mozilla/Services.h"
+#include "mozilla/FileUtils.h"
+#include "nsThreadUtils.h"
+#include "nsIRunnable.h"
+#include "nsIThread.h"
+#include "nsIObserver.h"
+#include "nsIObserverService.h"
 #include <stdio.h>
 #include <math.h>
 #include <fcntl.h>
@@ -55,13 +64,158 @@ using mozilla::hal::WindowIdentifier;
 namespace mozilla {
 namespace hal_impl {
 
-void
-Vibrate(const nsTArray<uint32>& pattern, const WindowIdentifier &)
-{}
+namespace {
+
+class VibratorRunnable
+  : public nsIRunnable
+  , public nsIObserver
+{
+public:
+  VibratorRunnable()
+    : mMutex("VibratorRunnable")
+    , mCondVar(mMutex, "VibratorRunnable")
+    , mIndex(0)
+    , mShuttingDown(false)
+  {
+    nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+    if (!os) {
+      NS_WARNING("Could not get observer service!");
+      return;
+    }
+
+    os->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, /* weak ref */ true);
+  }
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIRUNNABLE
+  NS_DECL_NSIOBSERVER
+
+  // Run on the main thread, not the vibrator thread.
+  void Vibrate(const nsTArray<uint32> &pattern);
+  void CancelVibrate();
+
+private:
+  // Poke the vibrator file and cause it to vibrate for the given number of ms.
+  // A duration of 0 shuts off the vibrator.  Run on the vibrator thread.
+  void FrobVibrator(uint32 duration);
+
+  Mutex mMutex;
+  CondVar mCondVar;
+  nsTArray<uint32> mPattern;
+  uint32 mIndex;
+  bool mShuttingDown;
+};
+
+NS_IMPL_ISUPPORTS2(VibratorRunnable, nsIRunnable, nsIObserver);
+
+NS_IMETHODIMP
+VibratorRunnable::Run()
+{
+  MutexAutoLock lock(mMutex);
+
+  // The timing here could be more accurate.  We currently assume that
+  // mCondVar.Wait(X) waits for X milliseconds.  But in reality, we might wait
+  // for longer than that.
+  //
+  // But I'm not convinced that this is necessary.  Note that we don't even
+  // start vibrating immediately when VibratorRunnable::Vibrate is called -- we
+  // go through a condvar onto another thread.  Better just to be chill about
+  // small errors in the amount of time we vibrate.
+
+  while (!mShuttingDown) {
+    if (mIndex < mPattern.Length()) {
+      uint32 duration = mPattern[mIndex];
+      if (mIndex % 2 == 0) {
+        FrobVibrator(duration);
+      }
+      mIndex++;
+      mCondVar.Wait(PR_MillisecondsToInterval(duration));
+    }
+    else {
+      mCondVar.Wait();
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+VibratorRunnable::Observe(nsISupports *subject, const char *topic,
+                          const PRUnichar *data)
+{
+  MOZ_ASSERT(strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0);
+  MutexAutoLock lock(mMutex);
+  mShuttingDown = true;
+  return NS_OK;
+}
 
 void
-CancelVibrate(const WindowIdentifier &)
-{}
+VibratorRunnable::FrobVibrator(uint32 duration)
+{
+  int fd = open("/sys/class/timed_output/vibrator/enable", O_WRONLY);
+  if (fd < 0) {
+    NS_WARNING("Couldn't open vibrator file.");
+    return;
+  }
+
+  ScopedClose autoClose(fd);
+
+  // Largest uint32 is 10 binary digits.  With the null-terminator, that's 11.
+  char str[11];
+  DebugOnly<int> bytesWritten = snprintf(str, sizeof(str), "%d", duration);
+  MOZ_ASSERT(bytesWritten < sizeof(str));
+
+  if (write(fd, str, strlen(str)) < 0) {
+    NS_WARNING("Write to vibrator file failed.");
+  }
+}
+
+void
+VibratorRunnable::Vibrate(const nsTArray<uint32> &pattern)
+{
+  MutexAutoLock lock(mMutex);
+  mPattern = pattern;
+  mIndex = 0;
+  mCondVar.Notify();
+}
+
+void
+VibratorRunnable::CancelVibrate()
+{
+  mPattern.Clear();
+  mPattern.AppendElement(0);
+  mIndex = 0;
+  mCondVar.Notify();
+}
+
+VibratorRunnable *sVibratorRunnable = NULL;
+
+EnsureVibratorThreadInitialized()
+{
+  if (sVibratorRunnable) {
+    return;
+  }
+
+  sVibratorRunnable = new VibratorRunnable();
+  nsCOMPtr<nsIThread> thread;
+  NS_NewThread(getter_AddRefs(thread), sVibratorRunnable);
+}
+
+} // anonymous namespace
+
+void
+Vibrate(const nsTArray<uint32> &pattern, const hal::WindowIdentifier &)
+{
+  EnsureVibratorThreadInitialized();
+  sVibratorRunnable->Vibrate(pattern);
+}
+
+void
+CancelVibrate(const hal::WindowIdentifier &)
+{
+  EnsureVibratorThreadInitialized();
+  sVibratorRunnable->CancelVibrate();
+}
 
 namespace {
 
@@ -143,7 +297,7 @@ DisableBatteryNotifications()
 }
 
 void
-GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo)
+GetCurrentBatteryInformation(hal::BatteryInformation *aBatteryInfo)
 {
   FILE *capacityFile = fopen("/sys/class/power_supply/battery/capacity", "r");
   double capacity = dom::battery::kDefaultLevel * 100;
