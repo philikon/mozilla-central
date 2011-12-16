@@ -310,7 +310,7 @@ CPPSRCS += \
 	$(NULL)
 endif
 
-ifeq (android,$(MOZ_WIDGET_TOOLKIT))
+ifneq (,$(filter android gonk,$(MOZ_WIDGET_TOOLKIT)))
 CPPSRCS += \
 	SkBitmapProcState_opts_arm.cpp \
 	SkBlitRow_opts_arm.cpp \
