@@ -45,8 +45,7 @@
 #include "mozilla/FileUtils.h"
 #include "nsAlgorithm.h"
 #include "nsThreadUtils.h"
-#include "mozilla/Mutex.h"
-#include "mozilla/CondVar.h"
+#include "mozilla/Monitor.h"
 #include "mozilla/Services.h"
 #include "mozilla/FileUtils.h"
 #include "nsThreadUtils.h"
@@ -54,6 +53,7 @@
 #include "nsIThread.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
+#include "hardware_legacy/vibrator.h"
 #include <stdio.h>
 #include <math.h>
 #include <fcntl.h>
@@ -66,14 +66,17 @@ namespace hal_impl {
 
 namespace {
 
+/**
+ * This runnable runs for the lifetime of the program, once started.  It's
+ * responsible for "playing" vibration patterns.
+ */
 class VibratorRunnable
   : public nsIRunnable
   , public nsIObserver
 {
 public:
   VibratorRunnable()
-    : mMutex("VibratorRunnable")
-    , mCondVar(mMutex, "VibratorRunnable")
+    : mMonitor("VibratorRunnable")
     , mIndex(0)
     , mShuttingDown(false)
   {
@@ -84,8 +87,7 @@ public:
     }
 
     os->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, /* weak ref */ true);
-  }
-
+  } 
   NS_DECL_ISUPPORTS
   NS_DECL_NSIRUNNABLE
   NS_DECL_NSIOBSERVER
@@ -95,14 +97,17 @@ public:
   void CancelVibrate();
 
 private:
-  // Poke the vibrator file and cause it to vibrate for the given number of ms.
-  // A duration of 0 shuts off the vibrator.  Run on the vibrator thread.
-  void FrobVibrator(uint32 duration);
+  Monitor mMonitor;
 
-  Mutex mMutex;
-  CondVar mCondVar;
+  // The currently-playing pattern.
   nsTArray<uint32> mPattern;
+
+  // The index we're at in the currently-playing pattern.  If mIndex >=
+  // mPattern.Length(), then we're not currently playing anything.
   uint32 mIndex;
+
+  // Set to true in our shutdown observer.  When this is true, we kill the
+  // vibrator thread.
   bool mShuttingDown;
 };
 
@@ -111,28 +116,28 @@ NS_IMPL_ISUPPORTS2(VibratorRunnable, nsIRunnable, nsIObserver);
 NS_IMETHODIMP
 VibratorRunnable::Run()
 {
-  MutexAutoLock lock(mMutex);
+  MonitorAutoLock lock(mMonitor);
 
-  // The timing here could be more accurate.  We currently assume that
-  // mCondVar.Wait(X) waits for X milliseconds.  But in reality, we might wait
-  // for longer than that.
+  // We currently assume that mMonitor.Wait(X) waits for X milliseconds.  But in
+  // reality, the kernel might not switch to this thread for some time after the
+  // wait expires.  So there's potential for some inaccuracy here.
   //
-  // But I'm not convinced that this is necessary.  Note that we don't even
-  // start vibrating immediately when VibratorRunnable::Vibrate is called -- we
-  // go through a condvar onto another thread.  Better just to be chill about
-  // small errors in the amount of time we vibrate.
+  // This doesn't worry me too much.  Note that we don't even start vibrating
+  // immediately when VibratorRunnable::Vibrate is called -- we go through a
+  // condvar onto another thread.  Better just to be chill about small errors in
+  // the timing here.
 
   while (!mShuttingDown) {
     if (mIndex < mPattern.Length()) {
       uint32 duration = mPattern[mIndex];
       if (mIndex % 2 == 0) {
-        FrobVibrator(duration);
+        vibrator_on(duration);
       }
       mIndex++;
-      mCondVar.Wait(PR_MillisecondsToInterval(duration));
+      mMonitor.Wait(PR_MillisecondsToInterval(duration));
     }
     else {
-      mCondVar.Wait();
+      mMonitor.Wait();
     }
   }
 
@@ -144,59 +149,42 @@ VibratorRunnable::Observe(nsISupports *subject, const char *topic,
                           const PRUnichar *data)
 {
   MOZ_ASSERT(strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0);
-  MutexAutoLock lock(mMutex);
+  MonitorAutoLock lock(mMonitor);
   mShuttingDown = true;
+  mMonitor.Notify();
   return NS_OK;
-}
-
-void
-VibratorRunnable::FrobVibrator(uint32 duration)
-{
-  int fd = open("/sys/class/timed_output/vibrator/enable", O_WRONLY);
-  if (fd < 0) {
-    NS_WARNING("Couldn't open vibrator file.");
-    return;
-  }
-
-  ScopedClose autoClose(fd);
-
-  // Largest uint32 is 10 binary digits.  With the null-terminator, that's 11.
-  char str[11];
-  DebugOnly<int> bytesWritten = snprintf(str, sizeof(str), "%d", duration);
-  MOZ_ASSERT(bytesWritten < sizeof(str));
-
-  if (write(fd, str, strlen(str)) < 0) {
-    NS_WARNING("Write to vibrator file failed.");
-  }
 }
 
 void
 VibratorRunnable::Vibrate(const nsTArray<uint32> &pattern)
 {
-  MutexAutoLock lock(mMutex);
+  MonitorAutoLock lock(mMonitor);
   mPattern = pattern;
   mIndex = 0;
-  mCondVar.Notify();
+  mMonitor.Notify();
 }
 
 void
 VibratorRunnable::CancelVibrate()
 {
+  MonitorAutoLock lock(mMonitor);
   mPattern.Clear();
   mPattern.AppendElement(0);
   mIndex = 0;
-  mCondVar.Notify();
+  mMonitor.Notify();
 }
 
 VibratorRunnable *sVibratorRunnable = NULL;
 
+void
 EnsureVibratorThreadInitialized()
 {
   if (sVibratorRunnable) {
     return;
   }
 
-  sVibratorRunnable = new VibratorRunnable();
+  nsRefPtr<VibratorRunnable> runnable = new VibratorRunnable();
+  sVibratorRunnable = runnable;
   nsCOMPtr<nsIThread> thread;
   NS_NewThread(getter_AddRefs(thread), sVibratorRunnable);
 }
