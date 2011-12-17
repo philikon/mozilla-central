@@ -6,6 +6,11 @@ var Marionette = {
   is_async: false,
   tests: [],
 
+  reset: function Marionette__reset() {
+    Marionette.is_async = false;
+    Marionette.tests = [];
+  },
+
   ok: function Marionette__ok(condition, name, diag) {
     var test = {'result': !!condition, 'name': name, 'diag': diag};
     Marionette.logResult(test, "TEST-PASS", "TEST-UNEXPECTED-FAIL");
@@ -37,7 +42,7 @@ var Marionette = {
         failed++;
       }
     }
-    Marionette.tests = [];
+    Marionette.reset();
     return {"passed": passed, "failed": failed, "marionette_object": true};
   },
 
@@ -56,7 +61,13 @@ var Marionette = {
   },
 
   returnFunc: function Marionette__returnFunc(value, status) {
-    Marionette.__conn.send({from: Marionette.__actorID, value: value, status: status});
+    if (status == 0 || status == undefined) {
+      Marionette.__conn.send({from: Marionette.__actorID, value: value, status: status});
+    }
+    else {
+      var error_msg = {message: value, status: status, stacktrace: null};
+      Marionette.__conn.send({from: Marionette.__actorID, error: error_msg});
+    }
     Marionette.__timer.cancel();
     Marionette.__timer = null;
   },
