@@ -113,7 +113,7 @@
 OPDEF(JSOP_NOP,       0,  "nop",        NULL,         1,  0,  0,  0,  JOF_BYTE)
 
 /* Long-standing JavaScript bytecodes. */
-OPDEF(JSOP_PUSH,      1,  "push",       NULL,         1,  0,  1,  0,  JOF_BYTE)
+OPDEF(JSOP_UNDEFINED, 1,  js_undefined_str, "",       1,  0,  1,  0,  JOF_BYTE)
 OPDEF(JSOP_POPV,      2,  "popv",       NULL,         1,  1,  0,  2,  JOF_BYTE)
 OPDEF(JSOP_ENTERWITH, 3,  "enterwith",  NULL,         1,  1,  1,  0,  JOF_BYTE|JOF_PARENHEAD)
 OPDEF(JSOP_LEAVEWITH, 4,  "leavewith",  NULL,         1,  1,  0,  0,  JOF_BYTE)
@@ -206,7 +206,7 @@ OPDEF(JSOP_SETCALL,   74, "setcall",    NULL,         1,  1,  2, 18,  JOF_BYTE)
 
 /*
  * JSOP_ITER sets up a for-in or for-each-in loop using the JSITER_* flag bits
- * in this op's uint8 immediate operand. It replaces the top of stack value
+ * in this op's uint8_t immediate operand. It replaces the top of stack value
  * with an iterator for that value.
  *
  * JSOP_MOREITER stores the next iterated value into cx->iterValue and pushes
@@ -232,8 +232,7 @@ OPDEF(JSOP_POP,       81, "pop",        NULL,         1,  1,  0,  2,  JOF_BYTE)
 /* Call a function as a constructor; operand is argc. */
 OPDEF(JSOP_NEW,       82, js_new_str,   NULL,         3, -1,  1, 17,  JOF_UINT16|JOF_INVOKE|JOF_TYPESET)
 
-/* Trap into debugger for breakpoint, etc. */
-OPDEF(JSOP_TRAP,      83, "trap",       NULL,         1,  0,  0,  0,  JOF_BYTE)
+OPDEF(JSOP_UNUSED1,   83, "unused1",    NULL,         1,  0,  0,  0,  JOF_BYTE)
 
 /* Fast get/set ops for function arguments and local variables. */
 OPDEF(JSOP_GETARG,    84, "getarg",     NULL,         3,  0,  1, 19,  JOF_QARG |JOF_NAME)

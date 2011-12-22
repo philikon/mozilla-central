@@ -48,8 +48,12 @@ const Cc = Components.classes;
 const CC = Components.Constructor;
 const Cu = Components.utils;
 
+Cu.import("resource:///modules/marionette-logger.jsm");
+
+MarionetteLogger.write('MDAS: dgb-server loaded');
 function dumpn(str) {
-  dump("DBG-SERVER: " + str + "\n");
+  //dump("DBG-SERVER: " + str + "\n");
+  MarionetteLogger.write("DBG-SERVER: " + str + "\n");
 }
 
 function dbg_assert(cond, e) {
@@ -92,6 +96,7 @@ var DebuggerServer = {
    * in place of init() for cases where the jsdebugger isn't needed.
    */
   initTransport: function DH_initTransport() {
+    dumpn("MDAS: in init transport!");
     if (this._transportInitialized) {
         return;
     }
@@ -138,8 +143,11 @@ var DebuggerServer = {
     }
 
     try {
+      dumpn("MDAS: going to create server socket");
       let socket = new ServerSocket(aPort, aLocalOnly, 4);
+      dumpn("MDAS: created, now going to listen to socket");
       socket.asyncListen(this);
+      dumpn("MDAS: listening!!!");
       this._listener = socket;
     } catch (e) {
       dumpn("Could not start debugging listener on port " + aPort + ": " + e);

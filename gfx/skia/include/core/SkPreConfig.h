@@ -34,9 +34,11 @@
         #define SK_BUILD_FOR_UNIX
     #elif TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
         #define SK_BUILD_FOR_IOS
-    #elif defined(ANDROID_NDK)
+    #elif defined(ANDROID_NDK) || defined(MOZ_WIDGET_GONK)
+        /* Gonk defines ANDROID but should be
+           treated like ANDROID_NDK by Skia. */
         #define SK_BUILD_FOR_ANDROID_NDK
-    #elif defined(ANROID)
+    #elif defined(ANDROID)
         #define SK_BUILD_FOR_ANDROID
     #else
         #define SK_BUILD_FOR_MAC

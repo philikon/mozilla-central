@@ -119,8 +119,8 @@ PropertyCache::fill(JSContext *cx, JSObject *obj, uintN scopeIndex, JSObject *po
      * opcode format flags.
      */
     jsbytecode *pc;
-    JSScript *script = cx->stack.currentScript(&pc);
-    op = js_GetOpcode(cx, script, pc);
+    (void) cx->stack.currentScript(&pc);
+    op = JSOp(*pc);
     cs = &js_CodeSpec[op];
 
     if ((cs->format & JOF_SET) && obj->watched())
@@ -185,16 +185,18 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
                         PropertyCacheEntry *entry)
 {
     JSObject *obj, *pobj, *tmp;
+#ifdef DEBUG
     JSScript *script = cx->stack.currentScript();
+#endif
 
     JS_ASSERT(this == &JS_PROPERTY_CACHE(cx));
-    JS_ASSERT(uint32(pc - script->code) < script->length);
+    JS_ASSERT(uint32_t(pc - script->code) < script->length);
 
-    JSOp op = js_GetOpcode(cx, script, pc);
+    JSOp op = JSOp(*pc);
     const JSCodeSpec &cs = js_CodeSpec[op];
 
     obj = *objp;
-    uint32 vindex = entry->vindex;
+    uint32_t vindex = entry->vindex;
 
     if (entry->kpc != pc) {
         PCMETER(kpcmisses++);

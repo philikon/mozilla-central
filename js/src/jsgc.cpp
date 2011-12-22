@@ -130,7 +130,7 @@ AllocKind slotsToThingKind[] = {
 
 JS_STATIC_ASSERT(JS_ARRAY_LENGTH(slotsToThingKind) == SLOTS_TO_THING_KIND_LIMIT);
 
-const uint32 Arena::ThingSizes[] = {
+const uint32_t Arena::ThingSizes[] = {
     sizeof(JSObject),           /* FINALIZE_OBJECT0             */
     sizeof(JSObject),           /* FINALIZE_OBJECT0_BACKGROUND  */
     sizeof(JSObject_Slots2),    /* FINALIZE_OBJECT2             */
@@ -155,9 +155,9 @@ const uint32 Arena::ThingSizes[] = {
     sizeof(JSExternalString),   /* FINALIZE_EXTERNAL_STRING     */
 };
 
-#define OFFSET(type) uint32(sizeof(ArenaHeader) + (ArenaSize - sizeof(ArenaHeader)) % sizeof(type))
+#define OFFSET(type) uint32_t(sizeof(ArenaHeader) + (ArenaSize - sizeof(ArenaHeader)) % sizeof(type))
 
-const uint32 Arena::FirstThingOffsets[] = {
+const uint32_t Arena::FirstThingOffsets[] = {
     OFFSET(JSObject),           /* FINALIZE_OBJECT0             */
     OFFSET(JSObject),           /* FINALIZE_OBJECT0_BACKGROUND  */
     OFFSET(JSObject_Slots2),    /* FINALIZE_OBJECT2             */
@@ -535,15 +535,15 @@ ChunkPool::expire(JSRuntime *rt, bool releaseAll)
     JS_ASSERT_IF(releaseAll, !emptyCount);
 }
 
-JS_FRIEND_API(int64)
+JS_FRIEND_API(int64_t)
 ChunkPool::countDecommittedArenas(JSRuntime *rt)
 {
     JS_ASSERT(this == &rt->gcChunkPool);
 
-    int64 numDecommitted = 0;
+    int64_t numDecommitted = 0;
     Chunk *chunk = emptyChunkListHead;
     while (chunk) {
-        for (uint32 i = 0; i < ArenasPerChunk; ++i)
+        for (uint32_t i = 0; i < ArenasPerChunk; ++i)
             if (chunk->decommittedArenas.get(i))
                 ++numDecommitted;
         chunk = chunk->info.next;
@@ -737,8 +737,8 @@ Chunk::releaseArena(ArenaHeader *aheader)
         comp->reduceGCTriggerBytes(GC_HEAP_GROWTH_FACTOR * ArenaSize);
     }
 #endif
-    JS_ATOMIC_ADD(&rt->gcBytes, -int32(ArenaSize));
-    JS_ATOMIC_ADD(&comp->gcBytes, -int32(ArenaSize));
+    JS_ATOMIC_ADD(&rt->gcBytes, -int32_t(ArenaSize));
+    JS_ATOMIC_ADD(&comp->gcBytes, -int32_t(ArenaSize));
 
     aheader->setAsNotAllocated();
     aheader->next = info.freeArenasHead;
@@ -827,10 +827,10 @@ js_GCThingIsMarked(void *thing, uintN color = BLACK)
 }
 
 /* Lifetime for type sets attached to scripts containing observed types. */
-static const int64 JIT_SCRIPT_RELEASE_TYPES_INTERVAL = 60 * 1000 * 1000;
+static const int64_t JIT_SCRIPT_RELEASE_TYPES_INTERVAL = 60 * 1000 * 1000;
 
 JSBool
-js_InitGC(JSRuntime *rt, uint32 maxbytes)
+js_InitGC(JSRuntime *rt, uint32_t maxbytes)
 {
     if (!rt->gcChunkSet.init(INITIAL_CHUNK_CAPACITY))
         return false;
@@ -1010,7 +1010,7 @@ MarkWordConservatively(JSTracer *trc, jsuword w)
      * original word. See bug 572678.
      */
 #ifdef JS_VALGRIND
-    VALGRIND_MAKE_MEM_DEFINED(&w, sizeof(w));
+    JS_SILENCE_UNUSED_VALUE_IN_EXPR(VALGRIND_MAKE_MEM_DEFINED(&w, sizeof(w)));
 #endif
 
     MarkIfGCThingWord(trc, w);
@@ -1249,7 +1249,7 @@ typedef RootedValueMap::Enum RootEnum;
 static void
 CheckLeakedRoots(JSRuntime *rt)
 {
-    uint32 leakedroots = 0;
+    uint32_t leakedroots = 0;
 
     /* Warn (but don't assert) debug builds of any remaining roots. */
     for (RootRange r = rt->gcRootsHash.all(); !r.empty(); r.popFront()) {
@@ -1291,7 +1291,7 @@ js_DumpNamedRoots(JSRuntime *rt,
 
 #endif /* DEBUG */
 
-uint32
+uint32_t
 js_MapGCRoots(JSRuntime *rt, JSGCRootMapFun map, void *data)
 {
     AutoLockGC lock(rt);
@@ -1322,7 +1322,7 @@ JSRuntime::setGCLastBytes(size_t lastBytes, JSGCInvocationKind gckind)
 }
 
 void
-JSRuntime::reduceGCTriggerBytes(uint32 amount) {
+JSRuntime::reduceGCTriggerBytes(uint32_t amount) {
     JS_ASSERT(amount > 0);
     JS_ASSERT(gcTriggerBytes - amount >= 0);
     if (gcTriggerBytes - amount < GC_ALLOCATION_THRESHOLD * GC_HEAP_GROWTH_FACTOR)
@@ -1341,7 +1341,7 @@ JSCompartment::setGCLastBytes(size_t lastBytes, JSGCInvocationKind gckind)
 }
 
 void
-JSCompartment::reduceGCTriggerBytes(uint32 amount) {
+JSCompartment::reduceGCTriggerBytes(uint32_t amount) {
     JS_ASSERT(amount > 0);
     JS_ASSERT(gcTriggerBytes - amount >= 0);
     if (gcTriggerBytes - amount < GC_ALLOCATION_THRESHOLD * GC_HEAP_GROWTH_FACTOR)
@@ -1607,11 +1607,10 @@ static void
 RunLastDitchGC(JSContext *cx)
 {
     JSRuntime *rt = cx->runtime;
-#ifdef JS_THREADSAFE
-    Maybe<AutoUnlockAtomsCompartment> maybeUnlockAtomsCompartment;
-    if (cx->compartment == rt->atomsCompartment && rt->atomsCompartmentIsLocked)
-        maybeUnlockAtomsCompartment.construct(cx);
-#endif
+
+    /* The atoms are locked when we create a string in AtomizeInline. */
+    AutoUnlockAtomsCompartmentWhenLocked unlockAtomsCompartment(cx);
+
     /* The last ditch GC preserves all atoms. */
     AutoKeepAtoms keep(rt);
     js_GC(cx, rt->gcTriggerCompartment, GC_NORMAL, gcstats::LASTDITCH);
@@ -1736,11 +1735,7 @@ namespace js {
 GCMarker::GCMarker(JSContext *cx)
   : color(BLACK),
     unmarkedArenaStackTop(NULL),
-    objStack(cx->runtime->gcMarkStackObjs, sizeof(cx->runtime->gcMarkStackObjs)),
-    ropeStack(cx->runtime->gcMarkStackRopes, sizeof(cx->runtime->gcMarkStackRopes)),
-    typeStack(cx->runtime->gcMarkStackTypes, sizeof(cx->runtime->gcMarkStackTypes)),
-    xmlStack(cx->runtime->gcMarkStackXMLs, sizeof(cx->runtime->gcMarkStackXMLs)),
-    largeStack(cx->runtime->gcMarkStackLarges, sizeof(cx->runtime->gcMarkStackLarges))
+    stack(cx->runtime->gcMarkStackArray)
 {
     JS_TRACER_INIT(this, cx, NULL);
     markLaterArenas = 0;
@@ -1794,7 +1789,8 @@ MarkDelayedChildren(GCMarker *trc, Arena *a)
 void
 GCMarker::markDelayedChildren()
 {
-    while (unmarkedArenaStackTop) {
+    JS_ASSERT(unmarkedArenaStackTop);
+    do {
         /*
          * If marking gets delayed at the same arena again, we must repeat
          * marking of its things. For that we pop arena from the stack and
@@ -1807,7 +1803,7 @@ GCMarker::markDelayedChildren()
         a->aheader.hasDelayedMarking = 0;
         markLaterArenas--;
         MarkDelayedChildren(this, a);
-    }
+    } while (unmarkedArenaStackTop);
     JS_ASSERT(!markLaterArenas);
 }
 
@@ -2164,7 +2160,7 @@ MaybeGC(JSContext *cx)
      * On 32 bit setting gcNextFullGCTime below is not atomic and a race condition
      * could trigger an GC. We tolerate this.
      */
-    int64 now = PRMJ_Now();
+    int64_t now = PRMJ_Now();
     if (rt->gcNextFullGCTime && rt->gcNextFullGCTime <= now) {
         if (rt->gcChunkAllocationSinceLastGC || rt->gcNumFreeArenas > MaxFreeCommittedArenas)
             js_GC(cx, NULL, GC_SHRINK, gcstats::MAYBEGC);
@@ -2393,7 +2389,7 @@ ReleaseObservedTypes(JSContext *cx)
     JSRuntime *rt = cx->runtime;
 
     bool releaseTypes = false;
-    int64 now = PRMJ_Now();
+    int64_t now = PRMJ_Now();
     if (now >= rt->gcJitReleaseTime) {
         releaseTypes = true;
         rt->gcJitReleaseTime = now + JIT_SCRIPT_RELEASE_TYPES_INTERVAL;
@@ -3249,7 +3245,7 @@ struct VerifyNode
 {
     void *thing;
     JSGCTraceKind kind;
-    uint32 count;
+    uint32_t count;
     EdgeValue edges[1];
 };
 
@@ -3270,10 +3266,10 @@ typedef HashMap<void *, VerifyNode *> NodeMap;
  */
 struct VerifyTracer : JSTracer {
     /* The gcNumber when the verification began. */
-    uint32 number;
+    uint32_t number;
 
     /* This counts up to JS_VERIFIER_FREQ to decide whether to verify. */
-    uint32 count;
+    uint32_t count;
 
     /* This graph represents the initial GC "snapshot". */
     VerifyNode *curnode;
@@ -3304,7 +3300,7 @@ AccumulateEdge(JSTracer *jstrc, void *thing, JSGCTraceKind kind)
     }
 
     VerifyNode *node = trc->curnode;
-    uint32 i = node->count;
+    uint32_t i = node->count;
 
     node->edges[i].thing = thing;
     node->edges[i].kind = kind;
@@ -3417,7 +3413,7 @@ StartVerifyBarriers(JSContext *cx)
 
     /* For each edge, make a node for it if one doesn't already exist. */
     while ((char *)node < trc->edgeptr) {
-        for (uint32 i = 0; i < node->count; i++) {
+        for (uint32_t i = 0; i < node->count; i++) {
             EdgeValue &e = node->edges[i];
             VerifyNode *child = MakeNode(trc, e.thing, e.kind);
             if (child) {
@@ -3465,7 +3461,7 @@ CheckEdge(JSTracer *jstrc, void *thing, JSGCTraceKind kind)
     VerifyTracer *trc = (VerifyTracer *)jstrc;
     VerifyNode *node = trc->curnode;
 
-    for (uint32 i = 0; i < node->count; i++) {
+    for (uint32_t i = 0; i < node->count; i++) {
         if (node->edges[i].thing == thing) {
             JS_ASSERT(node->edges[i].kind == kind);
             node->edges[i].thing = NULL;
@@ -3498,7 +3494,8 @@ EndVerifyBarriers(JSContext *cx)
 
     JS_ASSERT(trc->number == rt->gcNumber);
 
-    rt->gcIncrementalTracer->markDelayedChildren();
+    if (rt->gcIncrementalTracer->hasDelayedChildren())
+        rt->gcIncrementalTracer->markDelayedChildren();
 
     rt->gcVerifyData = NULL;
     rt->gcIncrementalTracer = NULL;
@@ -3525,7 +3522,7 @@ EndVerifyBarriers(JSContext *cx)
         trc->curnode = node;
         JS_TraceChildren(trc, node->thing, node->kind);
 
-        for (uint32 i = 0; i < node->count; i++) {
+        for (uint32_t i = 0; i < node->count; i++) {
             void *thing = node->edges[i].thing;
             JS_ASSERT_IF(thing, static_cast<Cell *>(thing)->isMarked());
         }
@@ -3545,7 +3542,7 @@ VerifyBarriers(JSContext *cx, bool always)
     if (cx->runtime->gcZeal() < ZealVerifierThreshold)
         return;
 
-    uint32 freq = cx->runtime->gcZealFrequency;
+    uint32_t freq = cx->runtime->gcZealFrequency;
 
     JSRuntime *rt = cx->runtime;
     if (VerifyTracer *trc = (VerifyTracer *)rt->gcVerifyData) {

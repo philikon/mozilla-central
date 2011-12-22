@@ -1199,13 +1199,11 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
 
   if (!newAcc) {
     // Create generic accessibles for SVG and MathML nodes.
-    if (content->GetNameSpaceID() == kNameSpaceID_SVG &&
-        content->Tag() == nsGkAtoms::svg) {
+    if (content->IsSVG(nsGkAtoms::svg)) {
       newAcc = new nsEnumRoleAccessible(content, aWeakShell,
                                         nsIAccessibleRole::ROLE_DIAGRAM);
     }
-    else if (content->GetNameSpaceID() == kNameSpaceID_MathML &&
-             content->Tag() == nsGkAtoms::math) {
+    else if (content->IsMathML(nsGkAtoms::math)) {
       newAcc = new nsEnumRoleAccessible(content, aWeakShell,
                                         nsIAccessibleRole::ROLE_EQUATION);
     }
@@ -1605,7 +1603,20 @@ nsAccessibilityService::CreateHTMLAccessibleByMarkup(nsIFrame* aFrame,
                                                      nsIWeakReference* aWeakShell)
 {
   // This method assumes we're in an HTML namespace.
-  nsIAtom *tag = aContent->Tag();
+  nsIAtom* tag = aContent->Tag();
+  if (tag == nsGkAtoms::figcaption) {
+    nsAccessible* accessible =
+      new nsHTMLFigcaptionAccessible(aContent, aWeakShell);
+    NS_IF_ADDREF(accessible);
+    return accessible;
+  }
+
+  if (tag == nsGkAtoms::figure) {
+    nsAccessible* accessible = new nsHTMLFigureAccessible(aContent, aWeakShell);
+    NS_IF_ADDREF(accessible);
+    return accessible;
+  }
+
   if (tag == nsGkAtoms::legend) {
     nsAccessible* accessible = new nsHTMLLegendAccessible(aContent, aWeakShell);
     NS_IF_ADDREF(accessible);

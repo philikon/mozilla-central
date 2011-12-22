@@ -60,6 +60,7 @@
 #include "nsPresContext.h"
 #include "nsEventStateManager.h"
 #include "mozilla/StartupTimeline.h"
+#include "sampler.h"
 
 /**
    XXX TODO XXX
@@ -280,6 +281,9 @@ NS_IMETHODIMP nsViewManager::SetWindowDimensions(nscoord aWidth, nscoord aHeight
       DoSetWindowDimensions(aWidth, aHeight);
     } else {
       mDelayedResize.SizeTo(aWidth, aHeight);
+      if (mPresShell && mPresShell->GetDocument()) {
+        mPresShell->GetDocument()->SetNeedStyleFlush();
+      }
     }
   }
 
@@ -706,6 +710,8 @@ NS_IMETHODIMP nsViewManager::DispatchEvent(nsGUIEvent *aEvent,
 {
   NS_ASSERTION(!aView || static_cast<nsView*>(aView)->GetViewManager() == this,
                "wrong view manager");
+
+  SAMPLE_LABEL("event", "DispatchEvent");
 
   *aStatus = nsEventStatus_eIgnore;
 

@@ -152,6 +152,7 @@
 #include "nsContentErrors.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/Preferences.h"
 
 #if defined(XP_WIN)
 #include "nsIWindowMediator.h"
@@ -233,7 +234,9 @@ PRLogModuleInfo* nsPluginLogging::gPluginLog = nsnull;
 
 // #defines for plugin cache and prefs
 #define NS_PREF_MAX_NUM_CACHED_INSTANCES "browser.plugins.max_num_cached_plugins"
-#define DEFAULT_NUMBER_OF_STOPPED_INSTANCES 10
+// Raise this from '10' to '50' to work around a bug in Apple's current Java
+// plugins on OS X Lion and SnowLeopard.  See bug 705931.
+#define DEFAULT_NUMBER_OF_STOPPED_INSTANCES 50
 
 #ifdef CALL_SAFETY_ON
 // By default we run OOPP, so we don't want to cover up crashes.
@@ -1330,9 +1333,17 @@ nsPluginHost::TrySetUpPluginInstance(const char *aMimeType,
 nsresult
 nsPluginHost::IsPluginEnabledForType(const char* aMimeType)
 {
+  // If plugins.click_to_play is false, plugins should always play
+  return IsPluginEnabledForType(aMimeType,
+                                !Preferences::GetBool("plugins.click_to_play", false));
+}
+
+nsresult
+nsPluginHost::IsPluginEnabledForType(const char* aMimeType, bool aShouldPlay)
+{
   nsPluginTag *plugin = FindPluginForType(aMimeType, true);
   if (plugin)
-    return NS_OK;
+    return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
 
   // Pass false as the second arg so we can return NS_ERROR_PLUGIN_DISABLED
   // for disabled plug-ins.
@@ -1347,7 +1358,7 @@ nsPluginHost::IsPluginEnabledForType(const char* aMimeType)
       return NS_ERROR_PLUGIN_DISABLED;
   }
 
-  return NS_OK;
+  return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
 }
 
 // check comma delimitered extensions
@@ -1376,11 +1387,23 @@ static int CompareExtensions(const char *aExtensionList, const char *aExtension)
 }
 
 nsresult
+nsPluginHost::IsPluginEnabledForExtension(const char* aExtension, const char* &aMimeType)
+{
+  // If plugins.click_to_play is false, plugins should always play
+  return IsPluginEnabledForExtension(aExtension, aMimeType,
+                                     !Preferences::GetBool("plugins.click_to_play", false));
+}
+
+nsresult
 nsPluginHost::IsPluginEnabledForExtension(const char* aExtension,
-                                          const char* &aMimeType)
+                                          const char* &aMimeType,
+                                          bool aShouldPlay)
 {
   nsPluginTag *plugin = FindPluginEnabledForExtension(aExtension, aMimeType);
-  return plugin ? NS_OK : NS_ERROR_FAILURE;
+  if (plugin)
+    return aShouldPlay ? NS_OK : NS_ERROR_PLUGIN_CLICKTOPLAY;
+
+  return NS_ERROR_FAILURE;
 }
 
 class DOMMimeTypeImpl : public nsIDOMMimeType {
@@ -2252,11 +2275,6 @@ nsresult nsPluginHost::ScanPluginsDirectoryList(nsISimpleEnumerator *dirEnum,
 
 nsresult nsPluginHost::LoadPlugins()
 {
-#ifdef ANDROID
-  if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    return NS_OK;
-  }
-#endif
   // do not do anything if it is already done
   // use ReloadPlugins() to enforce loading
   if (mPluginsLoaded)

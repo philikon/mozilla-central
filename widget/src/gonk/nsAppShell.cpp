@@ -42,12 +42,10 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <linux/input.h>
-#include <linux/netlink.h>
 #include <signal.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
-#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -84,7 +82,6 @@
 using namespace mozilla;
 
 bool gDrawRequest = false;
-static bool gCheckBattery = false;
 static nsAppShell *gAppShell = NULL;
 static int epollfd = 0;
 static int signalfds[2] = {0};
@@ -99,17 +96,6 @@ bool ProcessNextEvent()
 void NotifyEvent()
 {
     gAppShell->NotifyNativeEvent();
-}
-
-void CheckBattery(bool enable)
-{
-    gCheckBattery = enable;
-    if (!enable)
-        return;
-
-    hal::BatteryInformation info;
-    hal_impl::GetCurrentBatteryInformation(&info);
-    hal::NotifyBatteryChange(info);
 }
 
 }
@@ -331,24 +317,6 @@ keyHandler(int fd, FdHandler *data)
     }
 }
 
-static void
-ueventHandler(int fd, FdHandler *data)
-{
-    char buf[4096];
-    ssize_t received;
-    received = recv(fd, buf, sizeof(buf) - 1, MSG_DONTWAIT);
-    if (!gCheckBattery || received < 1)
-        return;
-
-    buf[4095] = 0;
-    char *payload = buf;
-    if (strstr(payload, "battery")) {
-        hal::BatteryInformation info;
-        hal_impl::GetCurrentBatteryInformation(&info);
-        hal::NotifyBatteryChange(info);
-    }
-}
-
 nsAppShell::nsAppShell()
     : mNativeCallbackRequest(false)
     , mHandlers()
@@ -375,22 +343,6 @@ nsAppShell::Init()
 
     rv = AddFdHandler(signalfds[0], pipeHandler);
     NS_ENSURE_SUCCESS(rv, rv);
-
-    int netlinkfd = socket(AF_NETLINK, SOCK_DGRAM, NETLINK_KOBJECT_UEVENT);
-    NS_ENSURE_TRUE(netlinkfd >= 0, NS_ERROR_UNEXPECTED);
-
-    sockaddr_nl sa = { 0 };
-    sa.nl_family = AF_NETLINK;
-    sa.nl_pid = getpid();
-    sa.nl_groups = 0xffffffff;
-
-    int buflen = 64*1024;
-    setsockopt(netlinkfd, SOL_SOCKET, SO_RCVBUFFORCE, &buflen, sizeof(buflen));
-
-    ret = bind(netlinkfd, (sockaddr *)&sa, sizeof(sa));
-    NS_ENSURE_FALSE(ret, NS_ERROR_UNEXPECTED);
-
-    AddFdHandler(netlinkfd, ueventHandler);
 
     DIR *dir = opendir("/dev/input");
     NS_ENSURE_TRUE(dir, NS_ERROR_UNEXPECTED);

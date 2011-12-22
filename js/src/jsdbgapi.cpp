@@ -108,7 +108,7 @@ JS_SetRuntimeDebugMode(JSRuntime *rt, JSBool debug)
 
 namespace js {
 
-void
+JSTrapStatus
 ScriptDebugPrologue(JSContext *cx, StackFrame *fp)
 {
     JS_ASSERT(fp == cx->fp());
@@ -120,7 +120,25 @@ ScriptDebugPrologue(JSContext *cx, StackFrame *fp)
         if (JSInterpreterHook hook = cx->debugHooks->callHook)
             fp->setHookData(hook(cx, Jsvalify(fp), true, 0, cx->debugHooks->callHookData));
     }
-    Debugger::onEnterFrame(cx);
+
+    Value rval;
+    JSTrapStatus status = Debugger::onEnterFrame(cx, &rval);
+    switch (status) {
+      case JSTRAP_CONTINUE:
+        break;
+      case JSTRAP_THROW:
+        cx->setPendingException(rval);
+        break;
+      case JSTRAP_ERROR:
+        cx->clearPendingException();
+        break;
+      case JSTRAP_RETURN:
+        fp->setReturnValue(rval);
+        break;
+      default:
+        JS_NOT_REACHED("bad Debugger::onEnterFrame JSTrapStatus value");
+    }
+    return status;
 }
 
 bool
@@ -180,29 +198,24 @@ JS_SetSingleStepMode(JSContext *cx, JSScript *script, JSBool singleStep)
 JS_PUBLIC_API(JSBool)
 JS_SetTrap(JSContext *cx, JSScript *script, jsbytecode *pc, JSTrapHandler handler, jsval closure)
 {
+    assertSameCompartment(cx, script, closure);
+
     if (!CheckDebugMode(cx))
         return false;
 
-    BreakpointSite *site = script->compartment()->getOrCreateBreakpointSite(cx, script, pc, NULL);
+    BreakpointSite *site = script->getOrCreateBreakpointSite(cx, pc, NULL);
     if (!site)
         return false;
     site->setTrap(cx, handler, closure);
     return true;
 }
 
-JS_PUBLIC_API(JSOp)
-JS_GetTrapOpcode(JSContext *cx, JSScript *script, jsbytecode *pc)
-{
-    BreakpointSite *site = script->compartment()->getBreakpointSite(pc);
-    return site ? site->realOpcode : JSOp(*pc);
-}
-
 JS_PUBLIC_API(void)
 JS_ClearTrap(JSContext *cx, JSScript *script, jsbytecode *pc,
              JSTrapHandler *handlerp, jsval *closurep)
 {
-    if (BreakpointSite *site = script->compartment()->getBreakpointSite(pc)) {
-        site->clearTrap(cx, NULL, handlerp, closurep);
+    if (BreakpointSite *site = script->getBreakpointSite(pc)) {
+        site->clearTrap(cx, handlerp, closurep);
     } else {
         if (handlerp)
             *handlerp = NULL;
@@ -214,13 +227,13 @@ JS_ClearTrap(JSContext *cx, JSScript *script, jsbytecode *pc,
 JS_PUBLIC_API(void)
 JS_ClearScriptTraps(JSContext *cx, JSScript *script)
 {
-    script->compartment()->clearTraps(cx, script);
+    script->clearTraps(cx);
 }
 
 JS_PUBLIC_API(void)
 JS_ClearAllTrapsForCompartment(JSContext *cx)
 {
-    cx->compartment->clearTraps(cx, NULL);
+    cx->compartment->clearTraps(cx);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -475,6 +488,12 @@ JS_GetScriptPrincipals(JSContext *cx, JSScript *script)
     return script->principals;
 }
 
+JS_PUBLIC_API(JSPrincipals *)
+JS_GetScriptOriginPrincipals(JSContext *cx, JSScript *script)
+{
+    return script->originPrincipals;
+}
+
 /************************************************************************/
 
 /*
@@ -605,7 +624,7 @@ JS_GetFrameThis(JSContext *cx, JSStackFrame *fpArg, jsval *thisv)
 JS_PUBLIC_API(JSFunction *)
 JS_GetFrameFunction(JSContext *cx, JSStackFrame *fp)
 {
-    return Valueify(fp)->maybeFun();
+    return Valueify(fp)->maybeScriptFunction();
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -617,6 +636,12 @@ JS_GetFrameFunctionObject(JSContext *cx, JSStackFrame *fpArg)
 
     JS_ASSERT(fp->callee().isFunction());
     return &fp->callee();
+}
+
+JS_PUBLIC_API(JSFunction *)
+JS_GetScriptFunction(JSContext *cx, JSScript *script)
+{
+    return script->function();
 }
 
 JS_PUBLIC_API(JSObject *)
@@ -645,7 +670,6 @@ JS_GetValidFrameCalleeObject(JSContext *cx, JSStackFrame *fp, jsval *vp)
     if (!Valueify(fp)->getValidCalleeObject(cx, &v))
         return false;
     *vp = v.isObject() ? v : JSVAL_VOID;
-    *vp = v;
     return true;
 }
 
@@ -738,16 +762,16 @@ JS_EvaluateUCInStackFrame(JSContext *cx, JSStackFrame *fpArg,
     if (!CheckDebugMode(cx))
         return false;
 
-    JSObject *scobj = JS_GetFrameScopeChain(cx, fpArg);
-    if (!scobj)
+    Env *env = JS_GetFrameScopeChain(cx, fpArg);
+    if (!env)
         return false;
 
-    js::AutoCompartment ac(cx, scobj);
+    js::AutoCompartment ac(cx, env);
     if (!ac.enter())
         return false;
 
     StackFrame *fp = Valueify(fpArg);
-    return EvaluateInScope(cx, scobj, fp, chars, length, filename, lineno, rval);
+    return EvaluateInEnv(cx, env, fp, chars, length, filename, lineno, rval);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -874,11 +898,11 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj, JSPropertyDescArray *pda)
         return JS_TRUE;
     }
 
-    uint32 n = obj->propertyCount();
+    uint32_t n = obj->propertyCount();
     JSPropertyDesc *pd = (JSPropertyDesc *) cx->malloc_(size_t(n) * sizeof(JSPropertyDesc));
     if (!pd)
         return JS_FALSE;
-    uint32 i = 0;
+    uint32_t i = 0;
     for (Shape::Range r = obj->lastProperty()->all(); !r.empty(); r.popFront()) {
         if (!js_AddRoot(cx, &pd[i].id, NULL))
             goto bad;
@@ -907,7 +931,7 @@ JS_PUBLIC_API(void)
 JS_PutPropertyDescArray(JSContext *cx, JSPropertyDescArray *pda)
 {
     JSPropertyDesc *pd;
-    uint32 i;
+    uint32_t i;
 
     pd = pda->array;
     for (i = 0; i < pda->length; i++) {
@@ -1474,15 +1498,15 @@ JS_DefineProfilingFunctions(JSContext *cx, JSObject *obj)
 JS_FRIEND_API(JSBool)
 js_StartCallgrind()
 {
-    CALLGRIND_START_INSTRUMENTATION;
-    CALLGRIND_ZERO_STATS;
+    JS_SILENCE_UNUSED_VALUE_IN_EXPR(CALLGRIND_START_INSTRUMENTATION);
+    JS_SILENCE_UNUSED_VALUE_IN_EXPR(CALLGRIND_ZERO_STATS);
     return true;
 }
 
 JS_FRIEND_API(JSBool)
 js_StopCallgrind()
 {
-    CALLGRIND_STOP_INSTRUMENTATION;
+    JS_SILENCE_UNUSED_VALUE_IN_EXPR(CALLGRIND_STOP_INSTRUMENTATION);
     return true;
 }
 
@@ -1490,9 +1514,9 @@ JS_FRIEND_API(JSBool)
 js_DumpCallgrind(const char *outfile)
 {
     if (outfile) {
-        CALLGRIND_DUMP_STATS_AT(outfile);
+        JS_SILENCE_UNUSED_VALUE_IN_EXPR(CALLGRIND_DUMP_STATS_AT(outfile));
     } else {
-        CALLGRIND_DUMP_STATS;
+        JS_SILENCE_UNUSED_VALUE_IN_EXPR(CALLGRIND_DUMP_STATS);
     }
 
     return true;

@@ -66,6 +66,7 @@ addMessageListener("Marionette:newSession", newSession);
 addMessageListener("Marionette:executeScript", executeScript);
 addMessageListener("Marionette:setScriptTimeout", setScriptTimeout);
 addMessageListener("Marionette:executeAsyncScript", executeAsyncScript);
+addMessageListener("Marionette:executeJSScript", executeJSScript);
 addMessageListener("Marionette:setSearchTimeout", setSearchTimeout);
 addMessageListener("Marionette:findElement", findElement);
 addMessageListener("Marionette:clickElement", clickElement);
@@ -81,6 +82,7 @@ function deleteSession(msg) {
   removeMessageListener("Marionette:newSession", newSession);
   removeMessageListener("Marionette:executeScript", executeScript);
   removeMessageListener("Marionette:setScriptTimeout", setScriptTimeout);
+  removeMessageListener("Marionette:executeJSScript", executeJSScript);
   removeMessageListener("Marionette:executeAsyncScript", executeAsyncScript);
   removeMessageListener("Marionette:deleteSession", deleteSession);
 }
@@ -190,6 +192,7 @@ function asyncResponse() {
   else {
     sendError(res.value, res.status, null);
   }
+  Marionette.reset();
 }
 
 /*
@@ -197,7 +200,7 @@ function asyncResponse() {
  */
 
 /* execute given script */
-function executeScript(msg) {
+function executeScript(msg, directInject) {
   var script = msg.json.value;
   var args = msg.json.args; //TODO: handle WebElement JSON Objects
   for (var i in args) {
@@ -219,15 +222,28 @@ function executeScript(msg) {
   sandbox.__marionetteParams = args;
   sandbox.__proto__ = sandbox.window;
   sandbox.Marionette = Marionette;
-  var scriptSrc = "with (window) { var __marionetteFunc = function(){" + script +
-                  "};  __marionetteFunc.apply(null, __marionetteParams); }";
   try {
-    var res = Cu.evalInSandbox(scriptSrc, sandbox);
-    sendResponse({value: sendValue(res)});
-  } catch (e) {
+    if (directInject) {
+      var res = Cu.evalInSandbox(script, sandbox);
+      if (res == undefined || res.passed == undefined) {
+        sendError("Marionette.finish() not called", 17, null);
+      }
+      else {
+        sendResponse({value: sendValue(res)});
+      }
+    }
+    else {
+      var scriptSrc = "var __marionetteFunc = function(){" + script +
+                    "};  __marionetteFunc.apply(null, __marionetteParams);";
+      var res = Cu.evalInSandbox(scriptSrc, sandbox);
+      sendResponse({value: sendValue(res)});
+    }
+  }
+  catch (e) {
     // 17 = JavascriptException
     sendError(e.name + ': ' + e.message, 17, null);
   }
+  Marionette.reset();
 }
 
 /* function to set the timeout of asynchronous scripts */
@@ -235,13 +251,26 @@ function setScriptTimeout(msg) {
   marionetteTimeout = msg.json.value;
 }
 
-/* execute given asynchronous script */
 function executeAsyncScript(msg) {
-  content.addEventListener("unload", errUnload, false);
-  content.document.addEventListener("marionette-async-response", asyncResponse, false);
+  executeWithCallback(msg);
+}
 
+function executeJSScript(msg) {
+  if (msg.json.timeout) {
+    executeWithCallback(msg, msg.json.timeout);
+  }
+  else {
+    executeScript(msg, true);
+  }
+}
+
+/* execute given asynchronous script */
+function executeWithCallback(msg, timeout) {
+  content.addEventListener("unload", errUnload, false);
   var script = msg.json.value;
-  var args = msg.json.args ? msg.json.args : []; //TODO: handle WebElement JSON Objects
+  var scriptSrc;
+  var args = msg.json.args ? msg.json.args : [];
+  //convert webelements
   for (var i in args) {
     if (args[i]["ELEMENT"] != undefined && args[i]["ELEMENT"] != null) {
       args[i] = getKnownElement(args[i]["ELEMENT"]);
@@ -250,6 +279,19 @@ function executeAsyncScript(msg) {
       }
     }
   }
+  var timeoutSrc = "var timeoutId = window.setTimeout(Marionette.asyncComplete," + marionetteTimeout + ", 'timed out', 28);" + 
+                   "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);";
+  if (timeout) {
+    scriptSrc = script + timeoutSrc;
+  }
+  else {
+    scriptSrc = "var marionetteScriptFinished = function(value) { return Marionette.asyncComplete(value,0);};" +
+                  "__marionetteParams.push(marionetteScriptFinished);" +
+                  "var __marionetteFunc = function() { " + script +
+                  "};  __marionetteFunc.apply(null, __marionetteParams); " + 
+                  timeoutSrc;
+  }
+  content.document.addEventListener("marionette-async-response", asyncResponse, false);
 
   Marionette.is_async = true;
   Marionette.context = "content";
@@ -265,14 +307,6 @@ function executeAsyncScript(msg) {
   sandbox.Marionette = Marionette;
   //TODO: odd. error code 28 is scriptTimeout, but spec says executeAsync should return code 21: Timeout...
   //and selenium code returns 28 (http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js)
-  var scriptSrc = "with(window) {" +
-                  "var marionetteScriptFinished = function(value) { return Marionette.asyncComplete(value,0);};" +
-                  "__marionetteParams.push(marionetteScriptFinished);" +
-                  "var __marionetteFunc = function() { " + script +
-                  "};  __marionetteFunc.apply(null, __marionetteParams); " +
-                  "var timeoutId = window.setTimeout(Marionette.asyncComplete," +
-                   marionetteTimeout +  ", 'timed out', 28);" +
-                  "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);}";
   try {
    Cu.evalInSandbox(scriptSrc, sandbox);
   } catch (e) {

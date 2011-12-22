@@ -352,7 +352,7 @@ class StackFrame
     };
 
   private:
-    mutable uint32      flags_;         /* bits described by Flags */
+    mutable uint32_t    flags_;         /* bits described by Flags */
     union {                             /* describes what code is executing in a */
         JSScript        *script;        /*   global frame */
         JSFunction      *fun;           /*   function frame, pre GetScopeChain */
@@ -394,14 +394,14 @@ class StackFrame
 
     /* Used for Invoke, Interpret, trace-jit LeaveTree, and method-jit stubs. */
     void initCallFrame(JSContext *cx, JSFunction &callee,
-                       JSScript *script, uint32 nactual, StackFrame::Flags flags);
+                       JSScript *script, uint32_t nactual, StackFrame::Flags flags);
 
     /* Used for SessionInvoke. */
     void resetCallFrame(JSScript *script);
 
     /* Called by jit stubs and serve as a specification for jit-code. */
     void initJitFrameCallerHalf(StackFrame *prev, StackFrame::Flags flags, void *ncode);
-    void initJitFrameEarlyPrologue(JSFunction *fun, uint32 nactual);
+    void initJitFrameEarlyPrologue(JSFunction *fun, uint32_t nactual);
     bool initJitFrameLatePrologue(JSContext *cx, Value **limit);
 
     /* Used for eval. */
@@ -609,7 +609,10 @@ class StackFrame
     /*
      * Function
      *
-     * All function frames have an associated interpreted JSFunction.
+     * All function frames have an associated interpreted JSFunction. The
+     * function returned by fun() and maybeFun() is not necessarily the
+     * original canonical function which the frame's script was compiled
+     * against. To get this function, use maybeScriptFunction().
      */
 
     JSFunction* fun() const {
@@ -619,6 +622,15 @@ class StackFrame
 
     JSFunction* maybeFun() const {
         return isFunctionFrame() ? fun() : NULL;
+    }
+
+    JSFunction* maybeScriptFunction() const {
+        if (!isFunctionFrame())
+            return NULL;
+        const StackFrame *fp = this;
+        while (fp->isEvalFrame())
+            fp = fp->prev();
+        return fp->script()->function();
     }
 
     /*
@@ -1012,7 +1024,7 @@ class StackFrame
         JS_STATIC_ASSERT((int)INITIAL_NONE == 0);
         JS_STATIC_ASSERT((int)INITIAL_CONSTRUCT == (int)CONSTRUCTING);
         JS_STATIC_ASSERT((int)INITIAL_LOWERED == (int)LOWERED_CALL_APPLY);
-        uint32 mask = CONSTRUCTING | LOWERED_CALL_APPLY;
+        uint32_t mask = CONSTRUCTING | LOWERED_CALL_APPLY;
         JS_ASSERT((flags_ & mask) != mask);
         return InitialFrameFlags(flags_ & mask);
     }

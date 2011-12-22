@@ -649,7 +649,7 @@ ThreadClient.prototype = {
       return this._pauseGrips[aGrip.actor];
     }
 
-    let client = new GripClient(aGrip);
+    let client = new GripClient(this._client, aGrip);
     this._pauseGrips[aGrip.actor] = client;
     return client;
   },
@@ -675,10 +675,13 @@ ThreadClient.prototype = {
 
 eventSource(ThreadClient.prototype);
 
-function GripClient(aGrip, aThreadClient)
+/**
+ * Grip clients are used to retrieve information about the relevant object.
+ */
+function GripClient(aClient, aGrip)
 {
   this._grip = aGrip;
-  this._threadClient = aThreadClient;
+  this._client = aClient;
 }
 
 GripClient.prototype = {
@@ -687,6 +690,82 @@ GripClient.prototype = {
   _valid: true,
   get valid() { return this._valid; },
   set valid(aValid) { this._valid = !!aValid; },
+
+  /**
+   * Request the name of the function and its formal parameters.
+   *
+   * @param aOnResponse function Called with the request's response.
+   */
+  nameAndParameters: function GC_nameAndParameters(aOnResponse) {
+    if (this._grip["class"] !== "Function") {
+      throw "nameAndParameters is only valid for function grips.";
+    }
+
+    this._client.request({ to: this.actor, type: "nameAndParameters" },
+                         function (aResponse) {
+                           if (aOnResponse) {
+                             aOnResponse(aResponse);
+                           }
+                         });
+  },
+
+  /**
+   * Request the names of the properties defined on the object and not its
+   * prototype.
+   *
+   * @param aOnResponse function Called with the request's response.
+   */
+  ownPropertyNames: function GC_ownPropertyNames(aOnResponse) {
+    this._client.request({ to: this.actor, type: "ownPropertyNames" },
+                         function (aResponse) {
+                           if (aOnResponse) {
+                             aOnResponse(aResponse);
+                           }
+                         });
+  },
+
+  /**
+   * Request the prototype and own properties of the object.
+   *
+   * @param aOnResponse function Called with the request's response.
+   */
+  prototypeAndProperties: function GC_prototypeAndProperties(aOnResponse) {
+    this._client.request({ to: this.actor, type: "prototypeAndProperties" },
+                         function (aResponse) {
+                           if (aOnResponse) {
+                             aOnResponse(aResponse);
+                           }
+                         });
+  },
+
+  /**
+   * Request the property descriptor of the object's specified property.
+   *
+   * @param aName string The name of the requested property.
+   * @param aOnResponse function Called with the request's response.
+   */
+  property: function GC_property(aName, aOnResponse) {
+    this._client.request({ to: this.actor, type: "property", name: aName },
+                         function (aResponse) {
+                           if (aOnResponse) {
+                             aOnResponse(aResponse);
+                           }
+                         });
+  },
+
+  /**
+   * Request the prototype of the object.
+   *
+   * @param aOnResponse function Called with the request's response.
+   */
+  prototype: function GC_prototype(aOnResponse) {
+    this._client.request({ to: this.actor, type: "prototype" },
+                         function (aResponse) {
+                           if (aOnResponse) {
+                             aOnResponse(aResponse);
+                           }
+                         });
+  }
 };
 
 /**
@@ -706,7 +785,6 @@ BreakpointClient.prototype = {
    * Remove the breakpoint from the server.
    */
   remove: function BC_remove(aOnResponse) {
-    // XXX: Assert state.
     this._client.request({ to: this._actor, type: "delete" }, function(aResponse) {
       if (aOnResponse) {
         aOnResponse(aResponse);

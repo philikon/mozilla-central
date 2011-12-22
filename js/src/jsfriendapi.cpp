@@ -143,6 +143,12 @@ JS_WrapPropertyDescriptor(JSContext *cx, js::PropertyDescriptor *desc)
     return cx->compartment->wrap(cx, desc);
 }
 
+JS_FRIEND_API(void *)
+JS_TraceShapeChildrenAcyclic(JSTracer *trc, void *shape)
+{
+    return (void *)MarkShapeChildrenAcyclic(trc, (const Shape *)shape);
+}
+
 AutoPreserveCompartment::AutoPreserveCompartment(JSContext *cx
                                                  JS_GUARD_OBJECT_NOTIFIER_PARAM_NO_INIT)
   : cx(cx), oldCompartment(cx->compartment)
@@ -211,7 +217,7 @@ js::GetGlobalForObjectCrossCompartment(JSObject *obj)
     return obj->getGlobal();
 }
 
-JS_FRIEND_API(uint32)
+JS_FRIEND_API(uint32_t)
 js::GetObjectSlotSpan(const JSObject *obj)
 {
     return obj->slotSpan();
@@ -297,6 +303,12 @@ js::SetFunctionNativeReserved(JSObject *fun, size_t which, const Value &val)
 {
     JS_ASSERT(fun->toFunction()->isNative());
     fun->toFunction()->setExtendedSlot(which, val);
+}
+
+void
+js::SetPreserveWrapperCallback(JSRuntime *rt, PreserveWrapperCallback callback)
+{
+    rt->preserveWrapperCallback = callback;
 }
 
 /*

@@ -60,7 +60,7 @@ const kBookTagSQLFragment =
 + "( "
 +   "SELECT GROUP_CONCAT(t.title, ',') "
 +   "FROM moz_bookmarks b "
-+   "JOIN moz_bookmarks t ON t.id = b.parent AND t.parent = :parent "
++   "JOIN moz_bookmarks t ON t.id = +b.parent AND t.parent = :parent "
 +   "WHERE b.fk = h.id "
 + ") AS tags";
 
@@ -264,6 +264,7 @@ function nsPlacesAutoComplete()
       }
       stmt.bindParameters(params);
       stmt.executeAsync();
+      stmt.finalize();
       delete this._openPagesCache;
     }
 

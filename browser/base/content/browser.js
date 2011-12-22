@@ -200,7 +200,7 @@ XPCOMUtils.defineLazyGetter(this, "Win7Features", function () {
   if (WINTASKBAR_CONTRACTID in Cc &&
       Cc[WINTASKBAR_CONTRACTID].getService(Ci.nsIWinTaskbar).available) {
     let temp = {};
-    Cu.import("resource://gre/modules/WindowsPreviewPerTab.jsm", temp);
+    Cu.import("resource:///modules/WindowsPreviewPerTab.jsm", temp);
     let AeroPeek = temp.AeroPeek;
     return {
       onOpenWindow: function () {
@@ -2601,28 +2601,6 @@ function UpdateUrlbarSearchSplitterState()
     splitter.parentNode.removeChild(splitter);
 }
 
-var LocationBarHelpers = {
-  _timeoutID: null,
-
-  _searchBegin: function LocBar_searchBegin() {
-    function delayedBegin(self) {
-      self._timeoutID = null;
-      document.getElementById("urlbar-throbber").setAttribute("busy", "true");
-    }
-
-    this._timeoutID = setTimeout(delayedBegin, 500, this);
-  },
-
-  _searchComplete: function LocBar_searchComplete() {
-    // Did we finish the search before delayedBegin was invoked?
-    if (this._timeoutID) {
-      clearTimeout(this._timeoutID);
-      this._timeoutID = null;
-    }
-    document.getElementById("urlbar-throbber").removeAttribute("busy");
-  }
-};
-
 function UpdatePageProxyState()
 {
   if (gURLBar && gURLBar.value != gLastValidURLStr)
@@ -3968,6 +3946,10 @@ var FullScreen = {
       document.mozCancelFullScreen();
       return;
     }
+
+    // Ensure the sidebar is hidden.
+    if (!document.getElementById("sidebar-box").hidden)
+      toggleSidebar();
 
     if (gFindBarInitialized)
       gFindBar.close();
@@ -5761,7 +5743,7 @@ function hrefAndLinkNodeForClickEvent(event)
  */
 function contentAreaClick(event, isPanelClick)
 {
-  if (!event.isTrusted || event.getPreventDefault() || event.button == 2)
+  if (!event.isTrusted || event.defaultPrevented || event.button == 2)
     return true;
 
   let [href, linkNode] = hrefAndLinkNodeForClickEvent(event);

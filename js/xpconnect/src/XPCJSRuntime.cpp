@@ -58,6 +58,8 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
 
+#include "nsContentUtils.h"
+
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
 #endif
@@ -102,7 +104,7 @@ struct JSDyingJSObjectData
 
 static JSDHashOperator
 WrappedJSDyingJSObjectFinder(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                             uint32 number, void *arg)
+                             uint32_t number, void *arg)
 {
     JSDyingJSObjectData* data = (JSDyingJSObjectData*) arg;
     nsXPCWrappedJS* wrapper = ((JSObject2WrappedJSMap::Entry*)hdr)->value;
@@ -130,7 +132,7 @@ struct CX_AND_XPCRT_Data
 
 static JSDHashOperator
 NativeInterfaceSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                       uint32 number, void *arg)
+                       uint32_t number, void *arg)
 {
     XPCNativeInterface* iface = ((IID2NativeInterfaceMap::Entry*)hdr)->value;
     if (iface->IsMarked()) {
@@ -155,7 +157,7 @@ NativeInterfaceSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 NativeUnMarkedSetRemover(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                         uint32 number, void *arg)
+                         uint32_t number, void *arg)
 {
     XPCNativeSet* set = ((ClassInfo2NativeSetMap::Entry*)hdr)->value;
     if (set->IsMarked())
@@ -165,7 +167,7 @@ NativeUnMarkedSetRemover(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 NativeSetSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                 uint32 number, void *arg)
+                 uint32_t number, void *arg)
 {
     XPCNativeSet* set = ((NativeSetMap::Entry*)hdr)->key_value;
     if (set->IsMarked()) {
@@ -190,7 +192,7 @@ NativeSetSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 JSClassSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
-               uint32 number, void *arg)
+               uint32_t number, void *arg)
 {
     XPCNativeScriptableShared* shared =
         ((XPCNativeScriptableSharedMap::Entry*) hdr)->key;
@@ -216,7 +218,7 @@ JSClassSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 DyingProtoKiller(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                 uint32 number, void *arg)
+                 uint32_t number, void *arg)
 {
     XPCWrappedNativeProto* proto =
         (XPCWrappedNativeProto*)((JSDHashEntryStub*)hdr)->key;
@@ -226,7 +228,7 @@ DyingProtoKiller(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 DetachedWrappedNativeProtoMarker(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                                 uint32 number, void *arg)
+                                 uint32_t number, void *arg)
 {
     XPCWrappedNativeProto* proto =
         (XPCWrappedNativeProto*)((JSDHashEntryStub*)hdr)->key;
@@ -386,7 +388,7 @@ TraceJSObject(PRUint32 aLangID, void *aScriptThing, const char *name,
 }
 
 static JSDHashOperator
-TraceJSHolder(JSDHashTable *table, JSDHashEntryHdr *hdr, uint32 number,
+TraceJSHolder(JSDHashTable *table, JSDHashEntryHdr *hdr, uint32_t number,
               void *arg)
 {
     ObjectHolder* entry = reinterpret_cast<ObjectHolder*>(hdr);
@@ -478,7 +480,7 @@ CheckParticipatesInCycleCollection(PRUint32 aLangID, void *aThing,
 }
 
 static JSDHashOperator
-NoteJSHolder(JSDHashTable *table, JSDHashEntryHdr *hdr, uint32 number,
+NoteJSHolder(JSDHashTable *table, JSDHashEntryHdr *hdr, uint32_t number,
              void *arg)
 {
     ObjectHolder* entry = reinterpret_cast<ObjectHolder*>(hdr);
@@ -618,7 +620,7 @@ DoDeferredRelease(nsTArray<T> &array)
 
 static JSDHashOperator
 SweepWaiverWrappers(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                    uint32 number, void *arg)
+                    uint32_t number, void *arg)
 {
     JSContext *cx = (JSContext *)arg;
     JSObject *key = ((JSObject2JSObjectMap::Entry *)hdr)->key;
@@ -991,13 +993,33 @@ XPCJSRuntime::ActivityCallback(void *arg, JSBool active)
     }
 }
 
+size_t
+XPCJSRuntime::SizeOfIncludingThis(nsMallocSizeOfFun mallocSizeOf)
+{
+    size_t n = 0;
+    n += mallocSizeOf(this, sizeof(XPCJSRuntime));
+    n += mWrappedJSMap->SizeOfIncludingThis(mallocSizeOf);
+    n += mIID2NativeInterfaceMap->SizeOfIncludingThis(mallocSizeOf);
+    n += mClassInfo2NativeSetMap->ShallowSizeOfIncludingThis(mallocSizeOf);
+    n += mNativeSetMap->SizeOfIncludingThis(mallocSizeOf);
+
+    // NULL for the second arg;  we're not measuring anything hanging off the
+    // entries in mJSHolders.
+    n += JS_DHashTableSizeOfExcludingThis(&mJSHolders, NULL, mallocSizeOf);
+
+    // There are other XPCJSRuntime members that could be measured; the above
+    // ones have been seen by DMD to be worth measuring.  More stuff may be
+    // added later.
+
+    return n;
+}
 
 /***************************************************************************/
 
 #ifdef XPC_CHECK_WRAPPERS_AT_SHUTDOWN
 static JSDHashOperator
 DEBUG_WrapperChecker(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                     uint32 number, void *arg)
+                     uint32_t number, void *arg)
 {
     XPCWrappedNative* wrapper = (XPCWrappedNative*)((JSDHashEntryStub*)hdr)->key;
     NS_ASSERTION(!wrapper->IsValid(), "found a 'valid' wrapper!");
@@ -1008,7 +1030,7 @@ DEBUG_WrapperChecker(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 WrappedJSShutdownMarker(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                        uint32 number, void *arg)
+                        uint32_t number, void *arg)
 {
     JSRuntime* rt = (JSRuntime*) arg;
     nsXPCWrappedJS* wrapper = ((JSObject2WrappedJSMap::Entry*)hdr)->value;
@@ -1020,7 +1042,7 @@ WrappedJSShutdownMarker(JSDHashTable *table, JSDHashEntryHdr *hdr,
 
 static JSDHashOperator
 DetachedWrappedNativeProtoShutdownMarker(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                                         uint32 number, void *arg)
+                                         uint32_t number, void *arg)
 {
     XPCWrappedNativeProto* proto =
         (XPCWrappedNativeProto*)((JSDHashEntryStub*)hdr)->key;
@@ -1215,6 +1237,8 @@ XPCJSRuntime::~XPCJSRuntime()
 
 namespace {
 
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsMallocSizeOf, "js")
+
 void
 CompartmentCallback(JSContext *cx, void *vdata, JSCompartment *compartment)
 {
@@ -1233,9 +1257,9 @@ CompartmentCallback(JSContext *cx, void *vdata, JSCompartment *compartment)
     curr->mjitCode = method + unused;
 #endif
     JS_GetTypeInferenceMemoryStats(cx, compartment, &curr->typeInferenceMemory,
-                                   MemoryReporterMallocSizeOf);
+                                   JsMallocSizeOf);
     curr->shapesCompartmentTables =
-        js::GetCompartmentShapeTableSize(compartment, MemoryReporterMallocSizeOf);
+        js::GetCompartmentShapeTableSize(compartment, JsMallocSizeOf);
 }
 
 void
@@ -1280,14 +1304,14 @@ CellCallback(JSContext *cx, void *vdata, void *thing, JSGCTraceKind traceKind,
             } else {
                 curr->gcHeapObjectsNonFunction += thingSize;
             }
-            curr->objectSlots += js::GetObjectDynamicSlotSize(obj, MemoryReporterMallocSizeOf);
+            curr->objectSlots += js::GetObjectDynamicSlotSize(obj, JsMallocSizeOf);
             break;
         }
         case JSTRACE_STRING:
         {
             JSString *str = static_cast<JSString *>(thing);
             curr->gcHeapStrings += thingSize;
-            curr->stringChars += str->charsHeapSize(MemoryReporterMallocSizeOf);
+            curr->stringChars += str->charsHeapSize(JsMallocSizeOf);
             break;
         }
         case JSTRACE_SHAPE:
@@ -1296,13 +1320,13 @@ CellCallback(JSContext *cx, void *vdata, void *thing, JSGCTraceKind traceKind,
             if (shape->inDictionary()) {
                 curr->gcHeapShapesDict += thingSize;
                 curr->shapesExtraDictTables +=
-                    shape->sizeOfPropertyTable(MemoryReporterMallocSizeOf);
+                    shape->sizeOfPropertyTable(JsMallocSizeOf);
             } else {
                 curr->gcHeapShapesTree += thingSize;
                 curr->shapesExtraTreeTables +=
-                    shape->sizeOfPropertyTable(MemoryReporterMallocSizeOf);
+                    shape->sizeOfPropertyTable(JsMallocSizeOf);
                 curr->shapesExtraTreeShapeKids +=
-                    shape->sizeOfKids(MemoryReporterMallocSizeOf);
+                    shape->sizeOfKids(JsMallocSizeOf);
             }
             break;
         }
@@ -1315,9 +1339,9 @@ CellCallback(JSContext *cx, void *vdata, void *thing, JSGCTraceKind traceKind,
         {
             JSScript *script = static_cast<JSScript *>(thing);
             curr->gcHeapScripts += thingSize;
-            curr->scriptData += script->dataSize(MemoryReporterMallocSizeOf);
+            curr->scriptData += script->dataSize(JsMallocSizeOf);
 #ifdef JS_METHODJIT
-            curr->mjitData += script->jitDataSize(MemoryReporterMallocSizeOf);
+            curr->mjitData += script->jitDataSize(JsMallocSizeOf);
 #endif
             break;
         }
@@ -1326,7 +1350,7 @@ CellCallback(JSContext *cx, void *vdata, void *thing, JSGCTraceKind traceKind,
             js::types::TypeObject *obj = static_cast<js::types::TypeObject *>(thing);
             curr->gcHeapTypeObjects += thingSize;
             JS_GetTypeInferenceObjectStats(obj, &curr->typeInferenceMemory,
-                                           MemoryReporterMallocSizeOf);
+                                           JsMallocSizeOf);
             break;
         }
         case JSTRACE_XML:
@@ -1538,12 +1562,12 @@ CollectCompartmentStatsForRuntime(JSRuntime *rt, IterateData *data)
                                            ArenaCallback, CellCallback);
         js::IterateChunks(cx, data, ChunkCallback);
 
-        data->runtimeObject = MemoryReporterMallocSizeOf(rt, sizeof(JSRuntime));
+        data->runtimeObject = JsMallocSizeOf(rt, sizeof(JSRuntime));
 
         // Nb: we use sizeOfExcludingThis() because atomState.atoms is within
         // JSRuntime, and so counted when JSRuntime is counted.
         data->runtimeAtomsTable =
-            rt->atomState.atoms.sizeOfExcludingThis(MemoryReporterMallocSizeOf);
+            rt->atomState.atoms.sizeOfExcludingThis(JsMallocSizeOf);
 
         {
             #ifndef JS_THREADSAFE
@@ -1557,13 +1581,13 @@ CollectCompartmentStatsForRuntime(JSRuntime *rt, IterateData *data)
             JSContext *acx, *iter = NULL;
             while ((acx = JS_ContextIteratorUnlocked(rt, &iter)) != NULL) {
                 data->runtimeContexts +=
-                    acx->sizeOfIncludingThis(MemoryReporterMallocSizeOf);
+                    acx->sizeOfIncludingThis(JsMallocSizeOf);
             }
 
             for (JSThread::Map::Range r = rt->threads.all(); !r.empty(); r.popFront()) {
                 JSThread *thread = r.front().value;
                 size_t normal, temporary, regexpCode, stackCommitted;
-                thread->sizeOfIncludingThis(MemoryReporterMallocSizeOf,
+                thread->sizeOfIncludingThis(JsMallocSizeOf,
                                             &normal,
                                             &temporary,
                                             &regexpCode,
@@ -1575,6 +1599,12 @@ CollectCompartmentStatsForRuntime(JSRuntime *rt, IterateData *data)
                 data->runtimeThreadsStackCommitted += stackCommitted;
             }
         }
+
+        XPCJSRuntime *xpcrt = nsXPConnect::GetRuntimeInstance();
+        data->xpconnect +=
+            xpcrt->SizeOfIncludingThis(JsMallocSizeOf);
+        data->xpconnect +=
+            XPCWrappedNativeScope::SizeOfAllScopesIncludingThis(JsMallocSizeOf);
     }
 
     JS_DestroyContextNoGC(cx);
@@ -1904,6 +1934,11 @@ ReportJSRuntimeStats(const IterateData &data, const nsACString &pathPrefix,
                       "hardly cost anything.",
                       callback, closure);
 
+    ReportMemoryBytes(pathPrefix + NS_LITERAL_CSTRING("xpconnect"),
+                      nsIMemoryReporter::KIND_HEAP, data.xpconnect,
+                      "Memory used by XPConnect." SLOP_BYTES_STRING,
+                      callback, closure);
+
     ReportMemoryBytes(pathPrefix +
                       NS_LITERAL_CSTRING("gc-heap-chunk-dirty-unused"),
                       JS_GC_HEAP_KIND, data.gcHeapChunkDirtyUnused,
@@ -2069,7 +2104,7 @@ DiagnosticMemoryCallback(void *ptr, size_t size)
 #endif
 
 static void
-AccumulateTelemetryCallback(int id, JSUint32 sample)
+AccumulateTelemetryCallback(int id, uint32_t sample)
 {
     switch (id) {
       case JS_TELEMETRY_GC_REASON:
@@ -2094,6 +2129,20 @@ AccumulateTelemetryCallback(int id, JSUint32 sample)
 }
 
 bool XPCJSRuntime::gNewDOMBindingsEnabled;
+
+bool PreserveWrapper(JSContext *cx, JSObject *obj)
+{
+    JS_ASSERT(obj->getClass()->ext.isWrappedNative);
+    nsISupports *native = nsXPConnect::GetXPConnect()->GetNativeOfWrapper(cx, obj);
+    if (!native)
+        return false;
+    nsWrapperCache *wc;
+    nsresult rv = CallQueryInterface(native, &wc);
+    if (NS_FAILED(rv))
+        return false;
+    nsContentUtils::PreserveWrapper(native, wc);
+    return true;
+}
 
 XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
  : mXPConnect(aXPConnect),
@@ -2144,7 +2193,7 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     {
         // Unconstrain the runtime's threshold on nominal heap size, to avoid
         // triggering GC too often if operating continuously near an arbitrary
-        // finite threshold (0xffffffff is infinity for uint32 parameters).
+        // finite threshold (0xffffffff is infinity for uint32_t parameters).
         // This leaves the maximum-JS_malloc-bytes threshold still in effect
         // to cause period, and we hope hygienic, last-ditch GCs from within
         // the GC's allocator.
@@ -2157,6 +2206,8 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
         JS_SetWrapObjectCallbacks(mJSRuntime,
                                   xpc::WrapperFactory::Rewrap,
                                   xpc::WrapperFactory::PrepareForWrapping);
+        js::SetPreserveWrapperCallback(mJSRuntime, PreserveWrapper);
+
 #ifdef MOZ_CRASHREPORTER
         JS_EnumerateDiagnosticMemoryRegions(DiagnosticMemoryCallback);
 #endif
@@ -2291,21 +2342,21 @@ XPCJSRuntime::DeferredRelease(nsISupports* obj)
 #ifdef DEBUG
 static JSDHashOperator
 WrappedJSClassMapDumpEnumerator(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                                uint32 number, void *arg)
+                                uint32_t number, void *arg)
 {
     ((IID2WrappedJSClassMap::Entry*)hdr)->value->DebugDump(*(PRInt16*)arg);
     return JS_DHASH_NEXT;
 }
 static JSDHashOperator
 WrappedJSMapDumpEnumerator(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                           uint32 number, void *arg)
+                           uint32_t number, void *arg)
 {
     ((JSObject2WrappedJSMap::Entry*)hdr)->value->DebugDump(*(PRInt16*)arg);
     return JS_DHASH_NEXT;
 }
 static JSDHashOperator
 NativeSetDumpEnumerator(JSDHashTable *table, JSDHashEntryHdr *hdr,
-                        uint32 number, void *arg)
+                        uint32_t number, void *arg)
 {
     ((NativeSetMap::Entry*)hdr)->key_value->DebugDump(*(PRInt16*)arg);
     return JS_DHASH_NEXT;

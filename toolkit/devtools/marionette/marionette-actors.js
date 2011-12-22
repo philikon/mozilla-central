@@ -1,5 +1,3 @@
-/* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ft=javascript ts=2 et sw=2 tw=80: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -187,7 +185,7 @@ MarionetteDriverActor.prototype = {
     }
   },
 
-  execute: function MDA_execute(aRequest) {
+  execute: function MDA_execute(aRequest, directInject) {
     if (this.context == "chrome") {
       var curWindow = this.getCurrentWindow();
       try {
@@ -198,16 +196,29 @@ MarionetteDriverActor.prototype = {
         var _chromeSandbox = new Cu.Sandbox(curWindow,
            { sandboxPrototype: curWindow, wantXrays: false, 
              sandboxName: ''});
-        _chromeSandbox.__marionetteParams = params;
         _chromeSandbox.Marionette = Marionette;
-        var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
-        var res = Cu.evalInSandbox(script, _chromeSandbox);
-        this.sendResponse(res);
+        if (directInject) {
+          //run the given script directly
+          var res = Cu.evalInSandbox(aRequest.value, _chromeSandbox);
+          if (res == undefined || res.passed == undefined) {
+            this.sendError("Marionette.finish() not called", 17, null);
+          }
+          else {
+            this.sendResponse(res);
+          }
+        }
+        else {
+          _chromeSandbox.__marionetteParams = params;
+          var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
+          var res = Cu.evalInSandbox(script, _chromeSandbox);
+          this.sendResponse(res);
+        }
       }
       catch (e) {
         // 17 = JavascriptException
         this.sendError(e.name + ': ' + e.message, 17, null);
       }
+      Marionette.reset();
     }
     else {
       this.messageManager.sendAsyncMessage("Marionette:executeScript", {value: aRequest.value, args: aRequest.args});
@@ -227,6 +238,25 @@ MarionetteDriverActor.prototype = {
   },
 
   executeAsync: function MDA_executeAsync(aRequest) {
+    this.executeWithCallback(aRequest);
+  },
+
+  executeJSScript: function MDA_executeJSScript(aRequest) {
+    //all pure JS scripts will need to call Marionette.finish() to complete the test.
+    if (this.context == "chrome") {
+      if (aRequest.timeout) {
+        this.executeWithCallback(aRequest, aRequest.timeout);
+      }
+      else {
+        this.execute(aRequest, true);
+      }
+    }
+    else {
+      this.messageManager.sendAsyncMessage("Marionette:executeJSScript", {value:aRequest.value, args:aRequest.args, timeout:aRequest.timeout});
+   }
+  },
+
+  executeWithCallback: function MDA_executeWithCallback(aRequest, timeout) {
     if (this.context == "chrome") {
       try {
         var curWindow = this.getCurrentWindow();
@@ -242,15 +272,23 @@ MarionetteDriverActor.prototype = {
            { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
         _chromeSandbox.Marionette = Marionette;
-        var script = '__marionetteParams.push(Marionette.returnFunc);'
-                    +'var marionetteScriptFinished = Marionette.returnFunc;'
-                    +'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
-                    +'var __marionetteFunc = function() {' + aRequest.value + '};'
-                    +'__marionetteFunc.apply(null, __marionetteParams);'
-                    +'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
-       Cu.evalInSandbox(script, _chromeSandbox);
+        var script;
+        var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
+                           + 'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
+        if (timeout) {
+          //don't wrap sent JS in function
+          script = aRequest.value + timeoutScript;
+        }
+        else {
+          script = '__marionetteParams.push(Marionette.returnFunc);'
+                  + 'var marionetteScriptFinished = Marionette.returnFunc;'
+                  + 'var __marionetteFunc = function() {' + aRequest.value + '};'
+                  + '__marionetteFunc.apply(null, __marionetteParams);'
+                  + timeoutScript;
+        }
+        Cu.evalInSandbox(script, _chromeSandbox);
       } catch (e) {
-        sendError(e.name + ": " + e.message, 17, null);
+        this.sendError(e.name + ": " + e.message, 17, null);
       }
     }
     else {
@@ -317,6 +355,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,
   "executeAsyncScript": MarionetteDriverActor.prototype.executeAsync,
+  "executeJSScript": MarionetteDriverActor.prototype.executeJSScript,
   "setSearchTimeout": MarionetteDriverActor.prototype.setSearchTimeout,
   "findElement": MarionetteDriverActor.prototype.findElement,
   "clickElement": MarionetteDriverActor.prototype.clickElement,

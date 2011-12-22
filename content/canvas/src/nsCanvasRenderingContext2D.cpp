@@ -906,14 +906,11 @@ nsCanvasRenderingContext2D::SetStyleFromStringOrInterface(const nsAString& aStr,
     }
 
     nsContentUtils::ReportToConsole(
-        nsContentUtils::eDOM_PROPERTIES,
-        "UnexpectedCanvasVariantStyle",
-        nsnull, 0,
-        nsnull,
-        EmptyString(), 0, 0,
         nsIScriptError::warningFlag,
         "Canvas",
-        mCanvasElement ? HTMLCanvasElement()->OwnerDoc() : nsnull);
+        mCanvasElement ? HTMLCanvasElement()->OwnerDoc() : nsnull,
+        nsContentUtils::eDOM_PROPERTIES,
+        "UnexpectedCanvasVariantStyle");
 
     return NS_OK;
 }
@@ -2771,7 +2768,7 @@ struct NS_STACK_CLASS nsCanvasBidiProcessor : public nsBidiPresUtils::BidiProces
     virtual void DrawText(nscoord xOffset, nscoord width)
     {
         gfxPoint point = mPt;
-        point.x += xOffset * mAppUnitsPerDevPixel;
+        point.x += xOffset;
 
         // offset is given in terms of left side of string
         if (mTextRun->IsRightToLeft()) {

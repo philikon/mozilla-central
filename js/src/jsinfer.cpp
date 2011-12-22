@@ -461,7 +461,7 @@ TypeSet::print(JSContext *cx)
     if (flags & TYPE_FLAG_LAZYARGS)
         printf(" lazyargs");
 
-    uint32 objectCount = baseObjectCount();
+    uint32_t objectCount = baseObjectCount();
     if (objectCount) {
         printf(" object[%u]", objectCount);
 
@@ -606,7 +606,6 @@ TypeSet::addCallProperty(JSContext *cx, JSScript *script, jsbytecode *pc, jsid i
      * outright ignored.
      */
     jsbytecode *callpc = script->analysis()->getCallPC(pc);
-    UntrapOpcode untrap(cx, script, callpc);
     if (JSOp(*callpc) == JSOP_NEW)
         return;
 
@@ -740,7 +739,6 @@ TypeSet::addPropagateThis(JSContext *cx, JSScript *script, jsbytecode *pc, Type 
 {
     /* Don't add constraints when the call will be 'new' (see addCallProperty). */
     jsbytecode *callpc = script->analysis()->getCallPC(pc);
-    UntrapOpcode untrap(cx, script, callpc);
     if (JSOp(*callpc) == JSOP_NEW)
         return;
 
@@ -801,7 +799,7 @@ GetSingletonShape(JSContext *cx, JSObject *obj, jsid id)
 }
 
 void
-ScriptAnalysis::pruneTypeBarriers(JSContext *cx, uint32 offset)
+ScriptAnalysis::pruneTypeBarriers(JSContext *cx, uint32_t offset)
 {
     TypeBarrier **pbarrier = &getCode(offset).typeBarriers;
     while (*pbarrier) {
@@ -837,9 +835,9 @@ ScriptAnalysis::pruneTypeBarriers(JSContext *cx, uint32 offset)
  * set before refusing to add new type barriers for objects.
  * :FIXME: this heuristic sucks, and doesn't handle calls.
  */
-static const uint32 BARRIER_OBJECT_LIMIT = 10;
+static const uint32_t BARRIER_OBJECT_LIMIT = 10;
 
-void ScriptAnalysis::breakTypeBarriers(JSContext *cx, uint32 offset, bool all)
+void ScriptAnalysis::breakTypeBarriers(JSContext *cx, uint32_t offset, bool all)
 {
     pruneTypeBarriers(cx, offset);
 
@@ -884,7 +882,7 @@ void ScriptAnalysis::breakTypeBarriersSSA(JSContext *cx, const SSAValue &v)
     if (v.kind() != SSAValue::PUSHED)
         return;
 
-    uint32 offset = v.pushedOffset();
+    uint32_t offset = v.pushedOffset();
     if (JSOp(script->code[offset]) == JSOP_GETPROP)
         breakTypeBarriersSSA(cx, poppedValue(offset, 0));
 
@@ -999,7 +997,7 @@ UsePropertyTypeBarrier(jsbytecode *pc)
      * At call opcodes, type barriers can only be added for the call bindings,
      * which TypeConstraintCall will add barrier constraints for directly.
      */
-    uint32 format = js_CodeSpec[*pc].format;
+    uint32_t format = js_CodeSpec[*pc].format;
     return (format & JOF_TYPESET) && !(format & JOF_INVOKE);
 }
 
@@ -1067,8 +1065,6 @@ UnknownPropertyAccess(JSScript *script, Type type)
 void
 TypeConstraintProp::newType(JSContext *cx, TypeSet *source, Type type)
 {
-    UntrapOpcode untrap(cx, script, pc);
-
     if (UnknownPropertyAccess(script, type)) {
         /*
          * Access on an unknown object. Reads produce an unknown result, writes
@@ -1101,8 +1097,6 @@ TypeConstraintProp::newType(JSContext *cx, TypeSet *source, Type type)
 void
 TypeConstraintCallProp::newType(JSContext *cx, TypeSet *source, Type type)
 {
-    UntrapOpcode untrap(cx, script, callpc);
-
     /*
      * For CALLPROP, we need to update not just the pushed types but also the
      * 'this' types of possible callees. If we can't figure out that set of
@@ -2014,7 +2008,6 @@ TypeCompartment::newAllocationSiteTypeObject(JSContext *cx, const AllocationSite
     }
 
     jsbytecode *pc = key.script->code + key.offset;
-    UntrapOpcode untrap(cx, key.script, pc);
 
     if (JSOp(*pc) == JSOP_NEWOBJECT) {
         /*
@@ -2061,8 +2054,6 @@ bool
 types::UseNewType(JSContext *cx, JSScript *script, jsbytecode *pc)
 {
     JS_ASSERT(cx->typeInferenceEnabled());
-
-    UntrapOpcode untrap(cx, script, pc);
 
     /*
      * Make a heuristic guess at a use of JSOP_NEW that the constructed object
@@ -2239,14 +2230,13 @@ TypeCompartment::addPendingRecompile(JSContext *cx, JSScript *script)
 }
 
 void
-TypeCompartment::monitorBytecode(JSContext *cx, JSScript *script, uint32 offset,
+TypeCompartment::monitorBytecode(JSContext *cx, JSScript *script, uint32_t offset,
                                  bool returnOnly)
 {
     ScriptAnalysis *analysis = script->analysis();
     JS_ASSERT(analysis->ranInference());
 
     jsbytecode *pc = script->code + offset;
-    UntrapOpcode untrap(cx, script, pc);
 
     JS_ASSERT_IF(returnOnly, js_CodeSpec[*pc].format & JOF_INVOKE);
 
@@ -2325,7 +2315,6 @@ TypeCompartment::markSetsUnknown(JSContext *cx, TypeObject *target)
                 if (!script->analysis()->maybeCode(i))
                     continue;
                 jsbytecode *pc = script->code + i;
-                UntrapOpcode untrap(cx, script, pc);
                 if (js_CodeSpec[*pc].format & JOF_DECOMPOSE)
                     continue;
                 unsigned defCount = GetDefCount(script, i);
@@ -2492,8 +2481,8 @@ struct types::ArrayTableKey
 
     typedef ArrayTableKey Lookup;
 
-    static inline uint32 hash(const ArrayTableKey &v) {
-        return (uint32) (v.type.raw() ^ ((uint32)(size_t)v.proto >> 2));
+    static inline uint32_t hash(const ArrayTableKey &v) {
+        return (uint32_t) (v.type.raw() ^ ((uint32_t)(size_t)v.proto >> 2));
     }
 
     static inline bool match(const ArrayTableKey &v1, const ArrayTableKey &v2) {
@@ -2574,16 +2563,16 @@ TypeCompartment::fixArrayType(JSContext *cx, JSObject *obj)
 struct types::ObjectTableKey
 {
     jsid *ids;
-    uint32 nslots;
-    uint32 nfixed;
+    uint32_t nslots;
+    uint32_t nfixed;
     JSObject *proto;
 
     typedef JSObject * Lookup;
 
-    static inline uint32 hash(JSObject *obj) {
-        return (uint32) (JSID_BITS(obj->lastProperty()->propid()) ^
+    static inline uint32_t hash(JSObject *obj) {
+        return (uint32_t) (JSID_BITS(obj->lastProperty()->propid()) ^
                          obj->slotSpan() ^ obj->numFixedSlots() ^
-                         ((uint32)(size_t)obj->getProto() >> 2));
+                         ((uint32_t)(size_t)obj->getProto() >> 2));
     }
 
     static inline bool match(const ObjectTableKey &v, JSObject *obj) {
@@ -2749,7 +2738,12 @@ TypeObject::getFromPrototypes(JSContext *cx, jsid id, TypeSet *types, bool force
 static inline void
 UpdatePropertyType(JSContext *cx, TypeSet *types, JSObject *obj, const Shape *shape, bool force)
 {
+    types->setOwnProperty(cx, false);
+    if (!shape->writable())
+        types->setOwnProperty(cx, true);
+
     if (shape->hasGetterValue() || shape->hasSetterValue()) {
+        types->setOwnProperty(cx, true);
         types->addType(cx, Type::UnknownType());
     } else if (shape->hasDefaultGetterOrIsMethod() && shape->hasSlot()) {
         const Value &value = obj->nativeGetSlot(shape->slot());
@@ -2758,11 +2752,10 @@ UpdatePropertyType(JSContext *cx, TypeSet *types, JSObject *obj, const Shape *sh
          * Don't add initial undefined types for singleton properties that are
          * not collated into the JSID_VOID property (see propertySet comment).
          */
-        if (!force && value.isUndefined())
-            return;
-
-        Type type = GetValueType(cx, value);
-        types->addType(cx, type);
+        if (force || !value.isUndefined()) {
+            Type type = GetValueType(cx, value);
+            types->addType(cx, type);
+        }
     }
 }
 
@@ -3068,7 +3061,7 @@ TypeObject::clearNewScript(JSContext *cx)
             bool finished = false;
 
             /* If not finished, number of properties that have been added. */
-            uint32 numProperties = 0;
+            uint32_t numProperties = 0;
 
             /*
              * If non-zero, we are scanning initializers in a call which has
@@ -3077,7 +3070,7 @@ TypeObject::clearNewScript(JSContext *cx)
             size_t depth = 0;
 
             for (TypeNewScript::Initializer *init = newScript->initializerList;; init++) {
-                uint32 offset = uint32(pc - fp->script()->code);
+                uint32_t offset = uint32_t(pc - fp->script()->code);
                 if (init->kind == TypeNewScript::Initializer::SETPROP) {
                     if (!depth && init->offset > offset) {
                         /* Advanced past all properties which have been initialized. */
@@ -3206,8 +3199,6 @@ GetInitializerType(JSContext *cx, JSScript *script, jsbytecode *pc)
     if (!script->hasGlobal())
         return NULL;
 
-    UntrapOpcode untrap(cx, script, pc);
-
     JSOp op = JSOp(*pc);
     JS_ASSERT(op == JSOP_NEWARRAY || op == JSOP_NEWOBJECT || op == JSOP_NEWINIT);
 
@@ -3268,7 +3259,7 @@ ScriptAnalysis::resolveNameAccess(JSContext *cx, jsid id, bool addDependency)
          * active frame counts for such scripts.
          */
         if (script->analysis()->addsScopeObjects() ||
-            js_GetOpcode(cx, script, script->code) == JSOP_GENERATOR) {
+            JSOp(*script->code) == JSOP_GENERATOR) {
             return access;
         }
 
@@ -3430,7 +3421,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
 
         /* Bytecodes pushing values of known type. */
       case JSOP_VOID:
-      case JSOP_PUSH:
+      case JSOP_UNDEFINED:
         pushed[0].addType(cx, Type::UndefinedType());
         break;
       case JSOP_ZERO:
@@ -3642,7 +3633,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
       case JSOP_CALLARG:
       case JSOP_GETLOCAL:
       case JSOP_CALLLOCAL: {
-        uint32 slot = GetBytecodeSlot(script, pc);
+        uint32_t slot = GetBytecodeSlot(script, pc);
         if (trackSlot(slot)) {
             /*
              * Normally these opcodes don't pop anything, but they are given
@@ -3667,7 +3658,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
       case JSOP_SETARG:
       case JSOP_SETLOCAL:
       case JSOP_SETLOCALPOP: {
-        uint32 slot = GetBytecodeSlot(script, pc);
+        uint32_t slot = GetBytecodeSlot(script, pc);
         if (!trackSlot(slot) && slot < TotalSlots(script)) {
             TypeSet *types = TypeScript::SlotTypes(script, slot);
             poppedTypes(pc, 0)->addSubset(cx, types);
@@ -3690,7 +3681,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
       case JSOP_DECLOCAL:
       case JSOP_LOCALINC:
       case JSOP_LOCALDEC: {
-        uint32 slot = GetBytecodeSlot(script, pc);
+        uint32_t slot = GetBytecodeSlot(script, pc);
         if (trackSlot(slot)) {
             poppedTypes(pc, 0)->addArith(cx, &pushed[0]);
         } else if (slot < TotalSlots(script)) {
@@ -3819,7 +3810,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
         if (op == JSOP_LAMBDA || op == JSOP_LAMBDA_FC) {
             res = &pushed[0];
         } else if (op == JSOP_DEFLOCALFUN || op == JSOP_DEFLOCALFUN_FC) {
-            uint32 slot = GetBytecodeSlot(script, pc);
+            uint32_t slot = GetBytecodeSlot(script, pc);
             if (trackSlot(slot)) {
                 res = &pushed[0];
             } else {
@@ -4189,7 +4180,7 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
          */
         if (!detached &&
             (nesting->parent->analysis()->addsScopeObjects() ||
-             js_GetOpcode(cx, nesting->parent, nesting->parent->code) == JSOP_GENERATOR)) {
+             JSOp(*nesting->parent->code) == JSOP_GENERATOR)) {
             DetachNestingParent(script);
             detached = true;
         }
@@ -4202,7 +4193,6 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
         Bytecode *code = maybeCode(offset);
 
         jsbytecode *pc = script->code + offset;
-        UntrapOpcode untrap(cx, script, pc);
 
         if (code && !analyzeTypesBytecode(cx, offset, state)) {
             cx->compartment->types.setPendingNukeTypes(cx);
@@ -4227,7 +4217,7 @@ ScriptAnalysis::analyzeTypes(JSContext *cx)
      */
     TypeResult *result = script->types->dynamicList;
     while (result) {
-        if (result->offset != uint32(-1)) {
+        if (result->offset != UINT32_MAX) {
             pushedTypes(result->offset)->addType(cx, result->type);
         } else {
             /* Custom for-in loop iteration has happened in this script. */
@@ -4317,10 +4307,9 @@ ScriptAnalysis::followEscapingArguments(JSContext *cx, SSAUseChain *use, Vector<
         return followEscapingArguments(cx, SSAValue::PhiValue(use->offset, use->u.phi), seen);
 
     jsbytecode *pc = script->code + use->offset;
-    uint32 which = use->u.which;
+    uint32_t which = use->u.which;
 
     JSOp op = JSOp(*pc);
-    JS_ASSERT(op != JSOP_TRAP);
 
     if (op == JSOP_POP || op == JSOP_POPN)
         return true;
@@ -4340,7 +4329,7 @@ ScriptAnalysis::followEscapingArguments(JSContext *cx, SSAUseChain *use, Vector<
     /* Allow assignments to non-closed locals (but not arguments). */
 
     if (op == JSOP_SETLOCAL) {
-        uint32 slot = GetBytecodeSlot(script, pc);
+        uint32_t slot = GetBytecodeSlot(script, pc);
         if (!trackSlot(slot))
             return false;
         if (!followEscapingArguments(cx, SSAValue::PushedValue(use->offset, 0), seen))
@@ -4357,7 +4346,7 @@ ScriptAnalysis::followEscapingArguments(JSContext *cx, SSAUseChain *use, Vector<
 bool
 ScriptAnalysis::integerOperation(JSContext *cx, jsbytecode *pc)
 {
-    JS_ASSERT(uint32(pc - script->code) < script->length);
+    JS_ASSERT(uint32_t(pc - script->code) < script->length);
 
     switch (JSOp(*pc)) {
 
@@ -4371,7 +4360,7 @@ ScriptAnalysis::integerOperation(JSContext *cx, jsbytecode *pc)
       case JSOP_LOCALDEC: {
         if (pushedTypes(pc, 0)->getKnownTypeTag(cx) != JSVAL_TYPE_INT32)
             return false;
-        uint32 slot = GetBytecodeSlot(script, pc);
+        uint32_t slot = GetBytecodeSlot(script, pc);
         if (trackSlot(slot)) {
             if (poppedTypes(pc, 0)->getKnownTypeTag(cx) != JSVAL_TYPE_INT32)
                 return false;
@@ -4409,17 +4398,21 @@ public:
         : TypeConstraint("clearDefiniteSetter"), object(object)
     {}
 
-    void newType(JSContext *cx, TypeSet *source, Type type) {
+    void newPropertyState(JSContext *cx, TypeSet *source)
+    {
         if (!object->newScript)
             return;
         /*
          * Clear out the newScript shape and definite property information from
-         * an object if the source type set could be a setter (its type set
-         * becomes unknown).
+         * an object if the source type set could be a setter or could be
+         * non-writable, both of which are indicated by the source type set
+         * being marked as configured.
          */
-        if (!(object->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED) && type.isUnknown())
+        if (!(object->flags & OBJECT_FLAG_NEW_SCRIPT_CLEARED) && source->isOwnProperty(true))
             object->clearNewScript(cx);
     }
+
+    void newType(JSContext *cx, TypeSet *source, Type type) {}
 };
 
 /*
@@ -4488,13 +4481,12 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun, JSO
      * something like 'this.f  = (this.g = ...)', so we watch and bail out if
      * a 'this' is pushed before the previous 'this' value was popped.
      */
-    uint32 lastThisPopped = 0;
+    uint32_t lastThisPopped = 0;
 
     unsigned nextOffset = 0;
     while (nextOffset < script->length) {
         unsigned offset = nextOffset;
         jsbytecode *pc = script->code + offset;
-        UntrapOpcode untrap(cx, script, pc);
 
         JSOp op = JSOp(*pc);
 
@@ -4552,8 +4544,6 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun, JSO
             return false;
 
         pc = script->code + uses->offset;
-        UntrapOpcode untrapUse(cx, script, pc);
-
         op = JSOp(*pc);
 
         JSObject *obj = *pbaseobj;
@@ -4570,6 +4560,23 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun, JSO
                 return false;
             if (id == id_prototype(cx) || id == id___proto__(cx) || id == id_constructor(cx))
                 return false;
+
+            /*
+             * Ensure that if the properties named here could have a setter or
+             * a permanent property in any transitive prototype, the definite
+             * properties get cleared from the shape.
+             */
+            JSObject *parent = type->proto;
+            while (parent) {
+                TypeObject *parentObject = parent->getType(cx);
+                if (parentObject->unknownProperties())
+                    return false;
+                TypeSet *parentTypes = parentObject->getProperty(cx, id, false);
+                if (!parentTypes || parentTypes->isOwnProperty(true))
+                    return false;
+                parentTypes->add(cx, cx->typeLifoAlloc().new_<TypeConstraintClearDefiniteSetter>(type));
+                parent = parent->getProto();
+            }
 
             unsigned slotSpan = obj->slotSpan();
             if (!DefineNativeProperty(cx, obj, id, UndefinedValue(), NULL, NULL,
@@ -4600,20 +4607,6 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun, JSO
                 /* Maximum number of definite properties added. */
                 return false;
             }
-
-            /*
-             * Ensure that if the properties named here could have a setter in
-             * the direct prototype (and thus its transitive prototypes), the
-             * definite properties get cleared from the shape.
-             */
-            TypeObject *parentObject = type->proto->getType(cx);
-            if (parentObject->unknownProperties())
-                return false;
-            TypeSet *parentTypes = parentObject->getProperty(cx, id, false);
-            if (!parentTypes || parentTypes->unknown())
-                return false;
-            parentObject->getFromPrototypes(cx, id, parentTypes);
-            parentTypes->add(cx, cx->typeLifoAlloc().new_<TypeConstraintClearDefiniteSetter>(type));
         } else if (op == JSOP_FUNCALL && uses->u.which == GET_ARGC(pc) - 1) {
             /*
              * Passed as the first parameter to Function.call. Follow control
@@ -4632,7 +4625,6 @@ AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun, JSO
             if (calleev.kind() != SSAValue::PUSHED)
                 return false;
             jsbytecode *calleepc = script->code + calleev.pushedOffset();
-            UntrapOpcode untrapCallee(cx, script, calleepc);
             if (JSOp(*calleepc) != JSOP_CALLPROP || calleev.pushedIndex() != 0)
                 return false;
 
@@ -4794,7 +4786,6 @@ ScriptAnalysis::printTypes(JSContext *cx)
             continue;
 
         jsbytecode *pc = script->code + offset;
-        UntrapOpcode untrap(cx, script, pc);
 
         if (js_CodeSpec[*pc].format & JOF_DECOMPOSE)
             continue;
@@ -4873,7 +4864,6 @@ ScriptAnalysis::printTypes(JSContext *cx)
             continue;
 
         jsbytecode *pc = script->code + offset;
-        UntrapOpcode untrap(cx, script, pc);
 
         PrintBytecode(cx, script, pc);
 
@@ -4931,8 +4921,6 @@ MarkIteratorUnknownSlow(JSContext *cx)
     if (!script || !pc)
         return;
 
-    UntrapOpcode untrap(cx, script, pc);
-
     if (JSOp(*pc) != JSOP_ITER)
         return;
 
@@ -4949,7 +4937,7 @@ MarkIteratorUnknownSlow(JSContext *cx)
 
     TypeResult *result = script->types->dynamicList;
     while (result) {
-        if (result->offset == uint32(-1)) {
+        if (result->offset == UINT32_MAX) {
             /* Already know about custom iterators used in this script. */
             JS_ASSERT(result->type.isUnknown());
             return;
@@ -4959,7 +4947,7 @@ MarkIteratorUnknownSlow(JSContext *cx)
 
     InferSpew(ISpewOps, "externalType: customIterator #%u", script->id());
 
-    result = cx->new_<TypeResult>(uint32(-1), Type::UnknownType());
+    result = cx->new_<TypeResult>(UINT32_MAX, Type::UnknownType());
     if (!result) {
         cx->compartment->types.setPendingNukeTypes(cx);
         return;
@@ -4976,7 +4964,7 @@ MarkIteratorUnknownSlow(JSContext *cx)
         jsbytecode *pc = script->code + i;
         if (!analysis->maybeCode(pc))
             continue;
-        if (js_GetOpcode(cx, script, pc) == JSOP_ITERNEXT)
+        if (JSOp(*pc) == JSOP_ITERNEXT)
             analysis->pushedTypes(pc, 0)->addType(cx, Type::UnknownType());
     }
 
@@ -5022,8 +5010,6 @@ TypeDynamicResult(JSContext *cx, JSScript *script, jsbytecode *pc, Type type)
     JS_ASSERT(cx->typeInferenceEnabled());
     AutoEnterTypeInference enter(cx);
 
-    UntrapOpcode untrap(cx, script, pc);
-
     /* Directly update associated type sets for applicable bytecodes. */
     if (js_CodeSpec[*pc].format & JOF_TYPESET) {
         if (!script->ensureRanAnalysis(cx, NULL)) {
@@ -5063,7 +5049,7 @@ TypeDynamicResult(JSContext *cx, JSScript *script, jsbytecode *pc, Type type)
              * doesn't escape we will update the pushed types below to capture
              * the slot's value after this write.
              */
-            uint32 slot = GetBytecodeSlot(script, pc);
+            uint32_t slot = GetBytecodeSlot(script, pc);
             if (slot < TotalSlots(script)) {
                 TypeSet *types = TypeScript::SlotTypes(script, slot);
                 types->addType(cx, type);
@@ -5126,8 +5112,6 @@ TypeDynamicResult(JSContext *cx, JSScript *script, jsbytecode *pc, Type type)
 void
 TypeMonitorResult(JSContext *cx, JSScript *script, jsbytecode *pc, const js::Value &rval)
 {
-    UntrapOpcode untrap(cx, script, pc);
-
     /* Allow the non-TYPESET scenario to simplify stubs used in compound opcodes. */
     if (!(js_CodeSpec[*pc].format & JOF_TYPESET))
         return;
@@ -5404,8 +5388,6 @@ NestingEpilogue(StackFrame *fp)
 static inline bool
 IgnorePushed(const jsbytecode *pc, unsigned index)
 {
-    JS_ASSERT(JSOp(*pc) != JSOP_TRAP);
-
     switch (JSOp(*pc)) {
       /* We keep track of the scopes pushed by BINDNAME separately. */
       case JSOP_BINDNAME:
@@ -5582,7 +5564,6 @@ JSScript::typeSetFunction(JSContext *cx, JSFunction *fun, bool singleton)
 TypeScript::CheckBytecode(JSContext *cx, JSScript *script, jsbytecode *pc, const js::Value *sp)
 {
     AutoEnterTypeInference enter(cx);
-    UntrapOpcode untrap(cx, script, pc);
 
     if (js_CodeSpec[*pc].format & JOF_DECOMPOSE)
         return;
@@ -6241,7 +6222,7 @@ TypeSet::dynamicSize()
      * elsewhere) so we can't use a JSMallocSizeOfFun to measure it.  We must
      * do it analytically.
      */
-    uint32 count = baseObjectCount();
+    uint32_t count = baseObjectCount();
     if (count >= 2)
         return HashSetCapacity(count) * sizeof(TypeObject *);
     return 0;
@@ -6257,7 +6238,7 @@ TypeObject::dynamicSize()
      */
     size_t bytes = 0;
 
-    uint32 count = basePropertyCount();
+    uint32_t count = basePropertyCount();
     if (count >= 2)
         bytes += HashSetCapacity(count) * sizeof(TypeObject *);
 

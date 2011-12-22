@@ -3067,14 +3067,6 @@ nsGenericElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
   return NS_OK;
 }
 
-static bool
-IsFullScreenAncestor(Element* aElement)
-{
-  nsEventStates state = aElement->State();
-  return state.HasAtLeastOneOfStates(NS_EVENT_STATE_FULL_SCREEN_ANCESTOR |
-                                     NS_EVENT_STATE_FULL_SCREEN);
-}
-
 void
 nsGenericElement::UnbindFromTree(bool aDeep, bool aNullParent)
 {
@@ -3086,16 +3078,15 @@ nsGenericElement::UnbindFromTree(bool aDeep, bool aNullParent)
     HasFlag(NODE_FORCE_XBL_BINDINGS) ? OwnerDoc() : GetCurrentDoc();
 
   if (aNullParent) {
-    if (IsFullScreenAncestor(this)) {
+    if (IsFullScreenAncestor()) {
       // The element being removed is an ancestor of the full-screen element,
       // exit full-screen state.
-      nsContentUtils::ReportToConsole(nsContentUtils::eDOM_PROPERTIES,
-                                      "RemovedFullScreenElement",
-                                      nsnull, 0, nsnull,
-                                      EmptyString(), 0, 0,
-                                      nsIScriptError::warningFlag,
-                                      "DOM", OwnerDoc());      
-      OwnerDoc()->CancelFullScreen();
+      nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
+                                      "DOM", OwnerDoc(),
+                                      nsContentUtils::eDOM_PROPERTIES,
+                                      "RemovedFullScreenElement");
+      // Fully exit full-screen.
+      nsIDocument::ExitFullScreen(false);
     }
     if (GetParent()) {
       NS_RELEASE(mParent);

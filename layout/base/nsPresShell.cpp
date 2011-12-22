@@ -203,6 +203,7 @@
 #include "mozilla/FunctionTimer.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
+#include "sampler.h"
 
 #include "Layers.h"
 #include "nsPLDOMEvent.h"
@@ -621,6 +622,8 @@ struct MemoryReporterData
 
 } // anonymous namespace
 
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(LayoutMallocSizeOf, "layout")
+
 /* static */ PLDHashOperator
 PresShell::MemoryReporter::SizeEnumerator(PresShellPtrKey *aEntry,
                                           void *userArg)
@@ -658,14 +661,14 @@ PresShell::MemoryReporter::SizeEnumerator(PresShellPtrKey *aEntry,
   nsCAutoString stylePath = str + NS_LITERAL_CSTRING("/styledata");
   nsCAutoString textRunsPath = str + NS_LITERAL_CSTRING("/textruns");
 
-  PRUint32 arenasSize;
-  arenasSize = aShell->EstimateMemoryUsed();
-  arenasSize += aShell->mPresContext->EstimateMemoryUsed();
+  PRInt64 arenasSize =
+    aShell->SizeOfIncludingThis(LayoutMallocSizeOf) +
+    aShell->mPresContext->SizeOfIncludingThis(LayoutMallocSizeOf);
 
-  PRUint32 styleSize;
-  styleSize = aShell->StyleSet()->SizeOf();
+  PRInt64 styleSize =
+    aShell->StyleSet()->SizeOfIncludingThis(LayoutMallocSizeOf);
 
-  PRInt64 textRunsSize = aShell->SizeOfTextRuns(MemoryReporterMallocSizeOf);
+  PRInt64 textRunsSize = aShell->SizeOfTextRuns(LayoutMallocSizeOf);
 
   data->callback->
     Callback(EmptyCString(), arenaPath, nsIMemoryReporter::KIND_HEAP,
@@ -686,6 +689,8 @@ PresShell::MemoryReporter::SizeEnumerator(PresShellPtrKey *aEntry,
 
   return PL_DHASH_NEXT;
 }
+
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(GfxTextrunWordCacheMallocSizeOf, "gfx/textrun-word-cache")
 
 NS_IMETHODIMP
 PresShell::MemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* aCb,
@@ -708,7 +713,7 @@ PresShell::MemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* aCb,
 
   // now total up cached runs that aren't otherwise accounted for
   PRInt64 textRunWordCacheSize =
-    gfxTextRunWordCache::MaybeSizeOfExcludingThis(MemoryReporterMallocSizeOf);
+    gfxTextRunWordCache::MaybeSizeOfExcludingThis(GfxTextrunWordCacheMallocSizeOf);
 
   aCb->Callback(EmptyCString(), kTextRunWordCachePath,
                 nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES,
@@ -2178,6 +2183,7 @@ PresShell::ResizeReflowIgnoreOverride(nscoord aWidth, nscoord aHeight)
         NS_NewRunnableMethod(this, &PresShell::FireResizeEvent);
       if (NS_SUCCEEDED(NS_DispatchToCurrentThread(resizeEvent))) {
         mResizeEvent = resizeEvent;
+        mDocument->SetNeedStyleFlush();
       }
     }
   }
@@ -2859,6 +2865,7 @@ PresShell::FrameNeedsReflow(nsIFrame *aFrame, IntrinsicDirty aIntrinsicDirty,
         // we've hit a reflow root or the root frame
         if (!wasDirty) {
           mDirtyRoots.AppendElement(f);
+          mDocument->SetNeedLayoutFlush();
         }
 #ifdef DEBUG
         else {
@@ -3439,6 +3446,7 @@ PresShell::ScrollContentIntoView(nsIContent* aContent,
   mContentToScrollToFlags = aFlags;
 
   // Flush layout and attempt to scroll in the process.
+  currentDoc->SetNeedLayoutFlush();
   currentDoc->FlushPendingNotifications(Flush_InterruptibleLayout);
 
   // If mContentToScrollTo is non-null, that means we interrupted the reflow
@@ -3830,7 +3838,7 @@ PresShell::UnsuppressPainting()
   // the reflows and get all the frames where we want them
   // before actually unlocking the painting.  Otherwise
   // go ahead and unlock now.
-  if (mDirtyRoots.Length() > 0)
+  if (!mDirtyRoots.IsEmpty())
     mShouldUnsuppressPainting = true;
   else
     UnsuppressAndInvalidate();
@@ -3961,6 +3969,12 @@ PresShell::IsSafeToFlush() const
 void
 PresShell::FlushPendingNotifications(mozFlushType aType)
 {
+  /**
+   * VERY IMPORTANT: If you add some sort of new flushing to this
+   * method, make sure to add the relevant SetNeedLayoutFlush or
+   * SetNeedStyleFlush calls on the document.
+   */
+
 #ifdef NS_FUNCTION_TIMER
   NS_TIME_FUNCTION_DECLARE_DOCURL;
   static const char *flushTypeNames[] = {
@@ -3974,6 +3988,7 @@ PresShell::FlushPendingNotifications(mozFlushType aType)
   NS_TIME_FUNCTION_MIN_FMT(1.0, "%s (line %d) (document: %s, type: %s)", MOZ_FUNCTION_NAME,
                            __LINE__, docURL__.get(), flushTypeNames[aType - 1]);
 #endif
+  SAMPLE_LABEL("layout", "FlushPendingNotifications");
 
 #ifdef ACCESSIBILITY
 #ifdef DEBUG
@@ -4094,6 +4109,11 @@ PresShell::FlushPendingNotifications(mozFlushType aType)
                                 mContentToScrollToFlags);
         mContentToScrollTo = nsnull;
       }
+    } else if (!mIsDestroying && mSuppressInterruptibleReflows &&
+               aType == Flush_InterruptibleLayout) {
+      // We suppressed this flush, but the document thinks it doesn't
+      // need to flush anymore.  Let it know what's really going on.
+      mDocument->SetNeedLayoutFlush();
     }
 
     if (aType >= Flush_Layout) {
@@ -5421,6 +5441,7 @@ PresShell::Paint(nsIView*           aViewToPaint,
                            NSCoordToFloat(bounds__.YMost()));
 #endif
 
+  SAMPLE_LABEL("Paint", "PresShell::Paint");
   NS_ASSERTION(!mIsDestroying, "painting a destroyed PresShell");
   NS_ASSERTION(aViewToPaint, "null view");
   NS_ASSERTION(aWidgetToPaint, "Can't paint without a widget");
@@ -6337,9 +6358,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
           if (aEvent->message == NS_KEY_UP) {
            // ESC key released while in DOM full-screen mode.
            // Exit full-screen mode.
-           NS_DispatchToCurrentThread(
-             NS_NewRunnableMethod(root,
-                                  &nsIDocument::CancelFullScreen));
+            nsIDocument::ExitFullScreen(true);
           }
         } else if (IsFullScreenAndRestrictedKeyEvent(mCurrentEventContent, aEvent)) {
           // Restricted key press while in DOM full-screen mode. Dispatch
@@ -7205,6 +7224,7 @@ bool
 PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
 {
   NS_TIME_FUNCTION_WITH_DOCURL;
+  SAMPLE_LABEL("layout", "DoReflow");
 
   if (mReflowContinueTimer) {
     mReflowContinueTimer->Cancel();
@@ -7290,34 +7310,36 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   // root frame, then its desired size had better not change!  If it's
   // initiated at the root, then the size better not change unless its
   // height was unconstrained to start with.
+  nsRect boundsRelativeToTarget = nsRect(0, 0, desiredSize.width, desiredSize.height);
   NS_ASSERTION((target == rootFrame && size.height == NS_UNCONSTRAINEDSIZE) ||
                (desiredSize.width == size.width &&
                 desiredSize.height == size.height),
                "non-root frame's desired size changed during an "
                "incremental reflow");
-  NS_ASSERTION(desiredSize.VisualOverflow().IsEqualInterior(
-                 nsRect(nsPoint(0, 0),
-                        nsSize(desiredSize.width, desiredSize.height))),
-               "reflow roots must not have visible overflow");
-  NS_ASSERTION(desiredSize.ScrollableOverflow().IsEqualEdges(
-                 nsRect(nsPoint(0, 0),
-                        nsSize(desiredSize.width, desiredSize.height))),
-               "reflow roots must not have scrollable overflow");
+  NS_ASSERTION(target == rootFrame ||
+               desiredSize.VisualOverflow().IsEqualInterior(boundsRelativeToTarget),
+               "non-root reflow roots must not have visible overflow");
+  NS_ASSERTION(target == rootFrame ||
+               desiredSize.ScrollableOverflow().IsEqualEdges(boundsRelativeToTarget),
+               "non-root reflow roots must not have scrollable overflow");
   NS_ASSERTION(status == NS_FRAME_COMPLETE,
                "reflow roots should never split");
 
-  target->SetSize(nsSize(desiredSize.width, desiredSize.height));
+  target->SetSize(boundsRelativeToTarget.Size());
 
+  // Always use boundsRelativeToTarget here, not desiredSize.GetVisualOverflowArea(),
+  // because for root frames (where they could be different, since root frames
+  // are allowed to have overflow) the root view bounds need to match the
+  // viewport bounds; the view manager "window dimensions" code depends on it.
   nsContainerFrame::SyncFrameViewAfterReflow(mPresContext, target,
                                              target->GetView(),
-                                             desiredSize.VisualOverflow());
+                                             boundsRelativeToTarget);
   nsContainerFrame::SyncWindowProperties(mPresContext, target,
                                          target->GetView());
 
   target->DidReflow(mPresContext, nsnull, NS_FRAME_REFLOW_FINISHED);
   if (target == rootFrame && size.height == NS_UNCONSTRAINEDSIZE) {
-    mPresContext->SetVisibleArea(nsRect(0, 0, desiredSize.width,
-                                        desiredSize.height));
+    mPresContext->SetVisibleArea(boundsRelativeToTarget);
   }
 
 #ifdef DEBUG
@@ -7335,6 +7357,7 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
     mFramesToDirty.EnumerateEntries(&MarkFramesDirtyToRoot, target);
     NS_ASSERTION(NS_SUBTREE_DIRTY(target), "Why is the target not dirty?");
     mDirtyRoots.AppendElement(target);
+    mDocument->SetNeedLayoutFlush();
 
     // Clear mFramesToDirty after we've done the NS_SUBTREE_DIRTY(target)
     // assertion so that if it fails it's easier to see what's going on.
@@ -7377,7 +7400,7 @@ PresShell::DoVerifyReflow()
              ok ? "ok" : "failed");
     }
 
-    if (0 != mDirtyRoots.Length()) {
+    if (!mDirtyRoots.IsEmpty()) {
       printf("XXX yikes! reflow commands queued during verify-reflow\n");
     }
   }
@@ -7387,10 +7410,15 @@ PresShell::DoVerifyReflow()
 bool
 PresShell::ProcessReflowCommands(bool aInterruptible)
 {
+  if (mDirtyRoots.IsEmpty() && !mShouldUnsuppressPainting) {
+    // Nothing to do; bail out
+    return true;
+  }
+
   NS_TIME_FUNCTION_WITH_DOCURL;
   mozilla::TimeStamp timerStart = mozilla::TimeStamp::Now();
   bool interrupted = false;
-  if (0 != mDirtyRoots.Length()) {
+  if (!mDirtyRoots.IsEmpty()) {
 
 #ifdef DEBUG
     if (VERIFY_REFLOW_DUMP_COMMANDS & gVerifyReflowFlags) {
@@ -7426,10 +7454,10 @@ PresShell::ProcessReflowCommands(bool aInterruptible)
 
         // Keep going until we're out of reflow commands, or we've run
         // past our deadline, or we're interrupted.
-      } while (!interrupted && mDirtyRoots.Length() &&
+      } while (!interrupted && !mDirtyRoots.IsEmpty() &&
                (!aInterruptible || PR_IntervalNow() < deadline));
 
-      interrupted = mDirtyRoots.Length() != 0;
+      interrupted = !mDirtyRoots.IsEmpty();
     }
 
     // Exiting the scriptblocker might have killed us
@@ -7452,13 +7480,16 @@ PresShell::ProcessReflowCommands(bool aInterruptible)
       // after DidDoReflow(), since that method can change whether there are
       // dirty roots around by flushing, and there's no point in posting a
       // reflow event just to have the flush revoke it.
-      if (mDirtyRoots.Length())
+      if (!mDirtyRoots.IsEmpty()) {
         MaybeScheduleReflow();
+        // And tell our document that we might need flushing
+        mDocument->SetNeedLayoutFlush();
+      }
     }
   }
 
   if (!mIsDestroying && mShouldUnsuppressPainting &&
-      mDirtyRoots.Length() == 0) {
+      mDirtyRoots.IsEmpty()) {
     // We only unlock if we're out of reflows.  It's pointless
     // to unlock if reflows are still pending, since reflows
     // are just going to thrash the frames around some more.  By

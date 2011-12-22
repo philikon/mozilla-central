@@ -100,6 +100,7 @@ static const char *sExtensionNames[] = {
     "GL_ANGLE_framebuffer_multisample",
     "GL_OES_rgb8_rgba8",
     "GL_ARB_robustness",
+    "GL_EXT_robustness",
     NULL
 };
 
@@ -409,18 +410,32 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                      (mSymbols.fMapBuffer && mSymbols.fUnmapBuffer),
                      "ARB_pixel_buffer_object supported without glMapBuffer/UnmapBuffer being available!");
 
-        if (SupportsRobustness() && IsExtensionSupported(ARB_robustness)) {
-            SymLoadStruct robustnessSymbols[] = {
-                { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusARB", NULL } },
-                { NULL, { NULL } },
-            };
+        if (SupportsRobustness()) {
+            if (IsExtensionSupported(ARB_robustness)) {
+                SymLoadStruct robustnessSymbols[] = {
+                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusARB", NULL } },
+                    { NULL, { NULL } },
+                };
 
-            if (!LoadSymbols(&robustnessSymbols[0], trygl, prefix)) {
-                NS_RUNTIMEABORT("GL supports ARB_robustness without supplying GetGraphicsResetStatusARB.");
-                mInitialized = false;
+                if (!LoadSymbols(&robustnessSymbols[0], trygl, prefix)) {
+                    NS_RUNTIMEABORT("GL supports ARB_robustness without supplying GetGraphicsResetStatusARB.");
+                    mInitialized = false;
+                } else {
+                    mHasRobustness = true;
+                }
+            } else if (IsExtensionSupported(EXT_robustness)) {
+                SymLoadStruct robustnessSymbols[] = {
+                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusEXT", NULL } },
+                    { NULL, { NULL } },
+                };
+
+                if (!LoadSymbols(&robustnessSymbols[0], trygl, prefix)) {
+                    NS_RUNTIMEABORT("GL supports EGL_robustness without supplying GetGraphicsResetStatusEXT.");
+                    mInitialized = false;
+                } else {
+                    mHasRobustness = true;
+                }
             }
-
-            mHasRobustness = true;
         }
 
         // Check for aux symbols based on extensions
@@ -2574,11 +2589,6 @@ RemoveNamesFromArray(GLContext *aOrigin, GLsizei aCount, GLuint *aNames, nsTArra
                 break;
             }
         }
-#ifdef DEBUG
-        if (!found) {
-            printf_stderr("GL Context %p deleting resource %d, which doesn't exist!\n", aOrigin, name);
-        }
-#endif
     }
 }
 

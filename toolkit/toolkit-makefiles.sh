@@ -268,12 +268,6 @@ MAKEFILES_libjar="
   modules/libjar/Makefile
 "
 
-MAKEFILES_libreg="
-  modules/libreg/Makefile
-  modules/libreg/include/Makefile
-  modules/libreg/src/Makefile
-"
-
 MAKEFILES_libpref="
   modules/libpref/Makefile
   modules/libpref/public/Makefile
@@ -557,6 +551,10 @@ MAKEFILES_profiler="
   tools/profiler/Makefile
 "
 
+MAKEFILES_snappy="
+  other-licenses/snappy/Makefile
+"
+
 add_makefiles "
   $MAKEFILES_dom
   $MAKEFILES_editor
@@ -571,7 +569,6 @@ add_makefiles "
   $MAKEFILES_smil
   $MAKEFILES_layout
   $MAKEFILES_libjar
-  $MAKEFILES_libreg
   $MAKEFILES_libpref
   $MAKEFILES_mathml
   $MAKEFILES_netwerk
@@ -593,6 +590,7 @@ add_makefiles "
   $MAKEFILES_hal
   $MAKEFILES_psm_public
   $MAKEFILES_profiler
+  $MAKEFILES_snappy
 "
 
 #
@@ -892,7 +890,7 @@ if [ "$ENABLE_TESTS" ]; then
     testing/tools/screenshot/Makefile
     testing/xpcshell/Makefile
     testing/xpcshell/example/Makefile
-    toolkit/components/aboutmemory/tests/chrome/Makefile
+    toolkit/components/aboutmemory/tests/Makefile
     toolkit/components/alerts/test/Makefile
     toolkit/components/commandlines/test/Makefile
     toolkit/components/contentprefs/tests/Makefile
@@ -942,6 +940,7 @@ if [ "$ENABLE_TESTS" ]; then
       accessible/tests/mochitest/actions/Makefile
       accessible/tests/mochitest/attributes/Makefile
       accessible/tests/mochitest/editabletext/Makefile
+      accessible/tests/mochitest/elm/Makefile
       accessible/tests/mochitest/events/Makefile
       accessible/tests/mochitest/focus/Makefile
       accessible/tests/mochitest/hyperlink/Makefile
@@ -1059,7 +1058,7 @@ if [ "$ENABLE_TESTS" ]; then
       toolkit/components/downloads/test/browser/Makefile
       toolkit/components/passwordmgr/test/browser/Makefile
       toolkit/components/places/tests/browser/Makefile
-      toolkit/components/startup/tests/browser/Makefile
+      toolkit/components/startup/tests/Makefile
       toolkit/content/tests/browser/Makefile
       toolkit/content/tests/browser/common/Makefile
       toolkit/content/tests/browser/data/Makefile
@@ -1157,6 +1156,14 @@ if [ "$MOZ_ANGLE" ]; then
   add_makefiles "
     gfx/angle/src/libGLESv2/Makefile
     gfx/angle/src/libEGL/Makefile
+  "
+fi
+
+if [ "$MOZ_B2G_RIL" ]; then
+  add_makefiles "
+    dom/system/b2g/Makefile
+    dom/telephony/Makefile
+    ipc/ril/Makefile
   "
 fi
 

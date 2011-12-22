@@ -54,7 +54,8 @@ DebuggerTransport.prototype = {
   set hooks(aHooks) { this._hooks = aHooks; },
 
   send: function DS_send(aPacket) {
-    let data = JSON.stringify(aPacket);
+    // TODO: remove pretty printing when the protocol is done.
+    let data = JSON.stringify(aPacket, null, 2);
     data = data.length + ':' + data;
     this._outgoing += data;
     this._flushOutgoing();

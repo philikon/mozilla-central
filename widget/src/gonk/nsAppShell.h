@@ -40,7 +40,11 @@
 
 #include "nsBaseAppShell.h"
 #include "nsTArray.h"
-#include "GonkGlue.h"
+
+namespace mozilla {
+bool ProcessNextEvent();
+void NotifyEvent();
+}
 
 extern bool gDrawRequest;
 
