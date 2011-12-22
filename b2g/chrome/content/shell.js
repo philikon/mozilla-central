@@ -106,18 +106,17 @@ var shell = {
   },
 
   startMarionetteServer: function shell_startMarionetteServer() {
-    dump("starting Marionette....");
     try {
-      var port = Services.prefs.getIntPref('marionette.server.port');
-      Cu.import("resource:///modules/marionette-logger.jsm");
-      Cu.import("resource:///modules/dbg-server.jsm");
-      DebuggerServer.addActors("resource:///modules/marionette-actors.js");
+      let port = Services.prefs.getIntPref('marionette.server.port');
+      Cu.import('resource:///modules/marionette-logger.jsm');
+      Cu.import('resource:///modules/dbg-server.jsm');
+      DebuggerServer.addActors('resource:///modules/marionette-actors.js');
       DebuggerServer.initTransport();
       DebuggerServer.openListener(port, true);
       MarionetteLogger.write('opened listener on port ' + port);
     }
     catch(e) {
-      dump("exception: " + e.name + ", " + e.message);
+      dump('exception: ' + e.name + ', ' + e.message);
     }
   },
 
