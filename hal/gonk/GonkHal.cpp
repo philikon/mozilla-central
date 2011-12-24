@@ -212,7 +212,7 @@ public:
   NS_IMETHOD Run()
   {
     hal::BatteryInformation info;
-    GetCurrentBatteryInformation(&info);
+    hal_impl::GetCurrentBatteryInformation(&info);
     hal::NotifyBatteryChange(info);
     return NS_OK;
   }
