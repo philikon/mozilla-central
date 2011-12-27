@@ -2457,13 +2457,7 @@ CallMethodHelper::GatherAndConvertResults()
         }
 
         if (paramInfo.IsRetval()) {
-            if (!mCallContext.GetReturnValueWasSet()) {
-                mCallContext.SetRetVal(v);
-            } else {
-                // really, this should assert TagPart() == nsXPTType::T_VOID
-                NS_ASSERTION(type.TagPart() != nsXPTType::T_JSVAL,
-                             "dropping declared return value");
-            }
+            mCallContext.SetRetVal(v);
         } else if (i < mArgc) {
             // we actually assured this before doing the invoke
             NS_ASSERTION(JSVAL_IS_OBJECT(mArgv[i]), "out var is not object");
@@ -2521,7 +2515,7 @@ CallMethodHelper::QueryInterfaceFastPath() const
     uintN err;
     JSBool success =
         XPCConvert::NativeData2JS(mCallContext, &v, &qiresult,
-                                  nsXPTType::T_INTERFACE_IS | XPT_TDP_POINTER,
+                                  nsXPTType::T_INTERFACE_IS,
                                   iid, &err);
     NS_IF_RELEASE(qiresult);
 
@@ -3689,7 +3683,7 @@ ConstructSlimWrapper(XPCCallContext &ccx,
         return false;
     }
 
-    if (ccx.GetJSContext()->compartment != js::GetObjectCompartment(parent)) {
+    if (!js::IsObjectInContextCompartment(parent, ccx.GetJSContext())) {
         SLIM_LOG_NOT_CREATED(ccx, identityObj, "wrong compartment");
 
         return false;

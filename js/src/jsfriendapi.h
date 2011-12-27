@@ -86,11 +86,12 @@ extern JS_FRIEND_API(JSBool)
 JS_NondeterministicGetWeakMapKeys(JSContext *cx, JSObject *obj, JSObject **ret);
 
 /*
- * Marks all the children of a shape except the parent, which avoids using
- * unbounded stack space. Returns the parent.
+ * Used by the cycle collector to trace through the shape and all
+ * shapes it reaches, marking all non-shape children found in the
+ * process. Uses bounded stack space.
  */
-extern JS_FRIEND_API(void *)
-JS_TraceShapeChildrenAcyclic(JSTracer *trc, void *shape);
+extern JS_FRIEND_API(void)
+JS_TraceShapeCycleCollectorChildren(JSTracer *trc, void *shape);
 
 enum {
     JS_TELEMETRY_GC_REASON,
@@ -112,25 +113,6 @@ typedef void
 
 extern JS_FRIEND_API(void)
 JS_SetGCFinishedCallback(JSRuntime *rt, JSGCFinishedCallback callback);
-
-/* Data for tracking analysis/inference memory usage. */
-typedef struct TypeInferenceMemoryStats
-{
-    int64_t scripts;
-    int64_t objects;
-    int64_t tables;
-    int64_t temporary;
-} TypeInferenceMemoryStats;
-
-extern JS_FRIEND_API(void)
-JS_GetTypeInferenceMemoryStats(JSContext *cx, JSCompartment *compartment,
-                               TypeInferenceMemoryStats *stats,
-                               JSMallocSizeOfFun mallocSizeOf);
-
-extern JS_FRIEND_API(void)
-JS_GetTypeInferenceObjectStats(/*TypeObject*/ void *object,
-                               TypeInferenceMemoryStats *stats,
-                               JSMallocSizeOfFun mallocSizeOf);
 
 extern JS_FRIEND_API(JSPrincipals *)
 JS_GetCompartmentPrincipals(JSCompartment *compartment);
@@ -208,11 +190,8 @@ JS_FRIEND_API(JSBool) obj_defineGetter(JSContext *cx, uintN argc, js::Value *vp)
 JS_FRIEND_API(JSBool) obj_defineSetter(JSContext *cx, uintN argc, js::Value *vp);
 #endif
 
-extern JS_FRIEND_API(size_t)
-GetObjectDynamicSlotSize(JSObject *obj, JSMallocSizeOfFun mallocSizeOf);
-
-extern JS_FRIEND_API(size_t)
-GetCompartmentShapeTableSize(JSCompartment *c, JSMallocSizeOfFun mallocSizeOf);
+extern JS_FRIEND_API(bool)
+IsSystemCompartment(const JSCompartment *compartment);
 
 /*
  * Check whether it is OK to assign an undeclared property with name
@@ -305,6 +284,7 @@ extern JS_FRIEND_DATA(js::Class) ObjectProxyClass;
 extern JS_FRIEND_DATA(js::Class) QNameClass;
 extern JS_FRIEND_DATA(js::Class) ScriptClass;
 extern JS_FRIEND_DATA(js::Class) XMLClass;
+extern JS_FRIEND_DATA(js::Class) ObjectClass;
 
 inline js::Class *
 GetObjectClass(const JSObject *obj)
@@ -431,6 +411,9 @@ StringIsArrayIndex(JSLinearString *str, jsuint *indexp);
 JS_FRIEND_API(void)
 SetPreserveWrapperCallback(JSRuntime *rt, PreserveWrapperCallback callback);
 
+JS_FRIEND_API(bool)
+IsObjectInContextCompartment(const JSObject *obj, const JSContext *cx);
+
 /*
  * NB: these flag bits are encoded into the bytecode stream in the immediate
  * operand of JSOP_ITER, so don't change them without advancing jsxdrapi.h's
@@ -442,7 +425,34 @@ SetPreserveWrapperCallback(JSRuntime *rt, PreserveWrapperCallback callback);
 #define JSITER_OWNONLY    0x8   /* iterate over obj's own properties only */
 #define JSITER_HIDDEN     0x10  /* also enumerate non-enumerable properties */
 
+JS_FRIEND_API(void)
+StartPCCountProfiling(JSContext *cx);
+
+JS_FRIEND_API(void)
+StopPCCountProfiling(JSContext *cx);
+
+JS_FRIEND_API(void)
+PurgePCCounts(JSContext *cx);
+
+JS_FRIEND_API(size_t)
+GetPCCountScriptCount(JSContext *cx);
+
+JS_FRIEND_API(JSString *)
+GetPCCountScriptSummary(JSContext *cx, size_t script);
+
+JS_FRIEND_API(JSString *)
+GetPCCountScriptContents(JSContext *cx, size_t script);
+
 } /* namespace js */
+
+/*
+ * If protoKey is not JSProto_Null, then clasp is ignored. If protoKey is
+ * JSProto_Null, clasp must non-null.
+ */
+extern JS_FRIEND_API(JSBool)
+js_GetClassPrototype(JSContext *cx, JSObject *scope, JSProtoKey protoKey,
+                     JSObject **protop, js::Class *clasp = NULL);
+
 #endif
 
 #endif /* jsfriendapi_h___ */

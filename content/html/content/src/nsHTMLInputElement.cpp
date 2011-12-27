@@ -2593,7 +2593,7 @@ nsHTMLInputElement::IsAttributeMapped(const nsIAtom* aAttribute) const
     sImageBorderAttributeMap,
   };
 
-  return FindAttributeDependence(aAttribute, map, ArrayLength(map));
+  return FindAttributeDependence(aAttribute, map);
 }
 
 nsMapRuleToAttributesFunc
@@ -2622,6 +2622,12 @@ nsHTMLInputElement::GetControllers(nsIControllers** aResult)
       nsCOMPtr<nsIController>
         controller(do_CreateInstance("@mozilla.org/editor/editorcontroller;1",
                                      &rv));
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      mControllers->AppendController(controller);
+
+      controller = do_CreateInstance("@mozilla.org/editor/editingcontroller;1",
+                                     &rv);
       NS_ENSURE_SUCCESS(rv, rv);
 
       mControllers->AppendController(controller);

@@ -764,7 +764,6 @@ nsXULAppInfo::GetWidgetToolkit(nsACString& aResult)
 SYNC_ENUMS(DEFAULT, Default)
 SYNC_ENUMS(PLUGIN, Plugin)
 SYNC_ENUMS(CONTENT, Content)
-SYNC_ENUMS(JETPACK, Jetpack)
 SYNC_ENUMS(IPDLUNITTEST, IPDLUnitTest)
 
 // .. and ensure that that is all of them:
@@ -3511,9 +3510,8 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
         }
 
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
-        bool event_tracing_running = false;
-        if (PR_GetEnv("MOZ_INSTRUMENT_EVENT_LOOP")) {
-          event_tracing_running = mozilla::InitEventTracing();
+        if (PR_GetEnv("MOZ_INSTRUMENT_EVENT_LOOP") || SAMPLER_IS_ACTIVE()) {
+          mozilla::InitEventTracing();
         }
 #endif /* MOZ_INSTRUMENT_EVENT_LOOP */
 
@@ -3534,8 +3532,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
         NS_TIME_FUNCTION_MARK("appStartup->Run done");
 
 #ifdef MOZ_INSTRUMENT_EVENT_LOOP
-        if (event_tracing_running)
-          mozilla::ShutdownEventTracing();
+        mozilla::ShutdownEventTracing();
 #endif
 
         // Check for an application initiated restart.  This is one that

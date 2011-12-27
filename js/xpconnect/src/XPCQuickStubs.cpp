@@ -187,7 +187,7 @@ GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, uintN argc, Op pop)
     JSFunction *fun =
         js::NewFunctionByIdWithReserved(cx, PropertyOpForwarder<Op>, argc, 0, obj, id);
     if (!fun)
-        return false;
+        return nsnull;
 
     JSObject *funobj = JS_GetFunctionObject(fun);
 
@@ -197,10 +197,10 @@ GeneratePropertyOp(JSContext *cx, JSObject *obj, jsid id, uintN argc, Op pop)
     // second object to work around this.
     JSObject *ptrobj = JS_NewObject(cx, &PointerHolderClass, nsnull, funobj);
     if (!ptrobj)
-        return false;
+        return nsnull;
     Op *popp = new Op;
     if (!popp)
-        return false;
+        return nsnull;
     *popp = pop;
     JS_SetPrivate(cx, ptrobj, popp);
 
@@ -1012,8 +1012,10 @@ xpc_qsJsvalToWcharStr(JSContext *cx, jsval v, jsval *pval, const PRUnichar **pst
     return true;
 }
 
-JSBool
-xpc_qsStringToJsval(JSContext *cx, nsString &str, jsval *rval)
+namespace xpc {
+
+bool
+StringToJsval(JSContext *cx, nsString &str, JS::Value *rval)
 {
     // From the T_DOMSTRING case in XPCConvert::NativeData2JS.
     if (str.IsVoid()) {
@@ -1033,6 +1035,8 @@ xpc_qsStringToJsval(JSContext *cx, nsString &str, jsval *rval)
     }
     return true;
 }
+
+} // namespace xpc
 
 JSBool
 xpc_qsStringToJsstring(JSContext *cx, nsString &str, JSString **rval)

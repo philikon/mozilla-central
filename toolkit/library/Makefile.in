@@ -192,7 +192,6 @@ COMPONENT_LIBS += \
   appcomps \
   jsreflect \
   composer \
-  jetpack_s \
   telemetry \
   jsdebugger \
   storagecomps \
@@ -374,7 +373,6 @@ EXTRA_DSO_LDOPTS += \
   $(NSS_LIBS) \
   $(MOZ_CAIRO_LIBS) \
   $(MOZ_HARFBUZZ_LIBS) \
-  $(MOZ_OTS_LIBS) \
   $(MOZ_APP_EXTRA_LIBS) \
   $(SQLITE_LIBS) \
   $(NULL)

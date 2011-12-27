@@ -1451,8 +1451,9 @@ nsDisplayBorder::Paint(nsDisplayListBuilder* aBuilder,
 nsRect
 nsDisplayBorder::GetBounds(nsDisplayListBuilder* aBuilder)
 {
-  return SnapBounds(mSnappingEnabled, mFrame->PresContext(),
-                    nsRect(ToReferenceFrame(), mFrame->GetSize()));
+  nsRect borderBounds(ToReferenceFrame(), mFrame->GetSize());
+  borderBounds.Inflate(mFrame->GetStyleBorder()->GetImageOutset());
+  return SnapBounds(mSnappingEnabled, mFrame->PresContext(), borderBounds);
 }
 
 // Given a region, compute a conservative approximation to it as a list
@@ -2567,6 +2568,15 @@ nsDisplayTransform::GetResultingTransformMatrix(const nsIFrame* aFrame,
     (newOrigin + toMozOrigin, result);
 }
 
+bool
+nsDisplayTransform::ShouldPrerenderTransformedContent(nsDisplayListBuilder* aBuilder,
+                                                      nsIFrame* aFrame)
+{
+  return aFrame->AreLayersMarkedActive(nsChangeHint_UpdateTransformLayer) &&
+         aFrame->GetVisualOverflowRectRelativeToSelf().Size() <=
+          aBuilder->ReferenceFrame()->GetSize();
+}
+
 /* If the matrix is singular, or a hidden backface is shown, the frame won't be visible or hit. */
 static bool IsFrameVisible(nsIFrame* aFrame, const gfx3DMatrix& aMatrix) 
 {
@@ -2644,7 +2654,8 @@ bool nsDisplayTransform::ComputeVisibility(nsDisplayListBuilder *aBuilder,
    * think that it's painting in its original rectangular coordinate space.
    * If we can't untransform, take the entire overflow rect */
   nsRect untransformedVisibleRect;
-  if (!UntransformRect(mVisibleRect, 
+  if (ShouldPrerenderTransformedContent(aBuilder, mFrame) ||
+      !UntransformRect(mVisibleRect,
                        mFrame, 
                        aBuilder->ToReferenceFrame(mFrame), 
                        &untransformedVisibleRect)) 

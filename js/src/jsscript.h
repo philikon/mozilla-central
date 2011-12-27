@@ -342,6 +342,7 @@ namespace analyze { class ScriptAnalysis; }
 class ScriptOpcodeCounts
 {
     friend struct ::JSScript;
+    friend struct ScriptOpcodeCountsPair;
     OpcodeCounts *counts;
 
  public:
@@ -349,8 +350,11 @@ class ScriptOpcodeCounts
     ScriptOpcodeCounts() : counts(NULL) {
     }
 
-    ~ScriptOpcodeCounts() {
-        JS_ASSERT(!counts);
+    inline void destroy(JSContext *cx);
+
+    void steal(ScriptOpcodeCounts &other) {
+        *this = other;
+        js::PodZero(&other);
     }
 
     // Boolean conversion, for 'if (counters) ...'
@@ -509,7 +513,7 @@ struct JSScript : public js::gc::Cell {
     /*
      * A global object for the script.
      * - All scripts returned by JSAPI functions (JS_CompileScript,
-     *   JS_CompileFile, etc.) have a non-null globalObject.
+     *   JS_CompileUTF8File, etc.) have a non-null globalObject.
      * - A function script has a globalObject if the function comes from a
      *   compile-and-go script.
      * - Temporary scripts created by obj_eval, JS_EvaluateScript, and
@@ -647,8 +651,8 @@ struct JSScript : public js::gc::Cell {
         return JITScript_Valid;
     }
 
-    /* Size of the JITScript and all sections.  (This method is implemented in MethodJIT.h.) */
-    JS_FRIEND_API(size_t) jitDataSize(JSMallocSizeOfFun mallocSizeOf);
+    /* Size of the JITScript and all sections.  (This method is implemented in MethodJIT.cpp.) */
+    size_t jitDataSize(JSMallocSizeOfFun mallocSizeOf);
 
 #endif
 
@@ -848,6 +852,17 @@ extern void
 js_CallDestroyScriptHook(JSContext *cx, JSScript *script);
 
 namespace js {
+
+struct ScriptOpcodeCountsPair
+{
+    JSScript *script;
+    ScriptOpcodeCounts counters;
+
+    OpcodeCounts &getCounts(jsbytecode *pc) const {
+        JS_ASSERT(unsigned(pc - script->code) < script->length);
+        return counters.counts[pc - script->code];
+    }
+};
 
 #ifdef JS_CRASH_DIAGNOSTICS
 

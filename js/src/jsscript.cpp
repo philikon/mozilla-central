@@ -68,6 +68,7 @@
 
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
+#include "js/MemoryMetrics.h"
 #include "methodjit/MethodJIT.h"
 #include "methodjit/Retcon.h"
 #include "vm/Debugger.h"
@@ -776,6 +777,11 @@ JSScript::initCounts(JSContext *cx)
 
     JS_ASSERT(size_t(cursor - base) == bytes);
 
+    /* Enable interrupts in any interpreter frames running on this script. */
+    InterpreterFrames *frames;
+    for (frames = JS_THREAD_DATA(cx)->interpreterFrames; frames; frames = frames->older)
+        frames->enableInterruptsIfRunning(this);
+
     return true;
 }
 
@@ -1304,6 +1310,12 @@ JSScript::dataSize(JSMallocSizeOfFun mallocSizeOf)
 #endif
 
     return mallocSizeOf(data, dataSize());
+}
+
+JS_PUBLIC_API(size_t)
+JS::SizeOfScriptData(JSScript *script, JSMallocSizeOfFun mallocSizeOf)
+{
+    return script->dataSize(mallocSizeOf);
 }
 
 /*

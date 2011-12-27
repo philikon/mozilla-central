@@ -69,8 +69,9 @@
 #include "nsIMIMEService.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIVariant.h"
-#include "xpcprivate.h"
-#include "XPCQuickStubs.h"
+#include "nsVariant.h"
+#include "nsIScriptError.h"
+#include "xpcpublic.h"
 #include "nsStringStream.h"
 #include "nsIStreamConverterService.h"
 #include "nsICachingChannel.h"
@@ -1036,7 +1037,7 @@ NS_IMETHODIMP nsXMLHttpRequest::GetResponse(JSContext *aCx, jsval *aResult)
       nsString str;
       rv = GetResponseText(str);
       if (NS_FAILED(rv)) return rv;
-      NS_ENSURE_TRUE(xpc_qsStringToJsval(aCx, str, aResult),
+      NS_ENSURE_TRUE(xpc::StringToJsval(aCx, str, aResult),
                      NS_ERROR_OUT_OF_MEMORY);
     }
     break;
@@ -2691,8 +2692,8 @@ nsXMLHttpRequest::Send(nsIVariant *aBody)
     // can run script that would try to restart this request, and that could end
     // up doing our AsyncOpen on a null channel if the reentered AsyncOpen fails.
     ChangeState(XML_HTTP_REQUEST_SENT);
-    if (!mUploadComplete &&
-        HasListenersFor(NS_LITERAL_STRING(UPLOADPROGRESS_STR)) ||
+    if ((!mUploadComplete &&
+         HasListenersFor(NS_LITERAL_STRING(UPLOADPROGRESS_STR))) ||
         (mUpload && mUpload->HasListenersFor(NS_LITERAL_STRING(PROGRESS_STR)))) {
       StartProgressEventTimer();
     }
