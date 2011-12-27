@@ -164,7 +164,7 @@ inline void
 XPCCallContext::SetScopeForNewJSObjects(JSObject *scope)
 {
     NS_ABORT_IF_FALSE(mState == HAVE_CONTEXT, "wrong call context state");
-    NS_ABORT_IF_FALSE(js::GetObjectCompartment(scope) == mJSContext->compartment, "wrong compartment");
+    NS_ABORT_IF_FALSE(js::IsObjectInContextCompartment(scope, mJSContext), "wrong compartment");
     mScopeForNewJSObjects = scope;
     mState = HAVE_SCOPE;
 }
@@ -298,13 +298,6 @@ XPCCallContext::GetRetVal() const
 {
     CHECK_STATE(READY_TO_CALL);
     return mRetVal;
-}
-
-inline JSBool
-XPCCallContext::GetReturnValueWasSet() const
-{
-    CHECK_STATE(READY_TO_CALL);
-    return mReturnValueWasSet;
 }
 
 inline void

@@ -324,7 +324,7 @@ JSObject::scopeChain() const
 }
 
 inline JSObject *
-JSObject::getStaticBlockScopeChain() const
+JSObject::staticBlockScopeChain() const
 {
     JS_ASSERT(isStaticBlock());
     return getFixedSlot(SCOPE_CHAIN_SLOT).toObjectOrNull();
@@ -893,11 +893,6 @@ inline bool JSObject::setDelegate(JSContext *cx)
     return setFlag(cx, js::BaseShape::DELEGATE, GENERATE_SHAPE);
 }
 
-inline bool JSObject::setIndexed(JSContext *cx)
-{
-    return setFlag(cx, js::BaseShape::INDEXED);
-}
-
 inline bool JSObject::isVarObj() const
 {
     return lastProperty()->hasObjectFlag(js::BaseShape::VAROBJ);
@@ -1142,17 +1137,11 @@ JSObject::slotSpan() const
     return lastProperty()->slotSpan();
 }
 
-inline bool
-JSObject::containsSlot(uint32_t slot) const
-{
-    return slot < slotSpan();
-}
-
 inline js::HeapValue &
 JSObject::nativeGetSlotRef(uintN slot)
 {
     JS_ASSERT(isNative());
-    JS_ASSERT(containsSlot(slot));
+    JS_ASSERT(slot < slotSpan());
     return getSlotRef(slot);
 }
 
@@ -1160,7 +1149,7 @@ inline const js::Value &
 JSObject::nativeGetSlot(uintN slot) const
 {
     JS_ASSERT(isNative());
-    JS_ASSERT(containsSlot(slot));
+    JS_ASSERT(slot < slotSpan());
     return getSlot(slot);
 }
 
@@ -1184,7 +1173,7 @@ inline void
 JSObject::nativeSetSlot(uintN slot, const js::Value &value)
 {
     JS_ASSERT(isNative());
-    JS_ASSERT(containsSlot(slot));
+    JS_ASSERT(slot < slotSpan());
     return setSlot(slot, value);
 }
 

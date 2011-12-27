@@ -82,6 +82,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
+#include "js/MemoryMetrics.h"
 
 #include "jsarrayinlines.h"
 #include "jsinterpinlines.h"
@@ -1318,12 +1319,14 @@ DirectEval(JSContext *cx, const CallArgs &args)
 
     AutoFunctionCallProbe callProbe(cx, args.callee().toFunction(), caller->script());
 
-    JSObject *scopeChain =
-        GetScopeChainFast(cx, caller, JSOP_EVAL, JSOP_EVAL_LENGTH + JSOP_LINENO_LENGTH);
+    JSObject *scopeChain = GetScopeChain(cx, caller);
+    if (!scopeChain)
+        return false;
 
-    return scopeChain &&
-           WarnOnTooManyArgs(cx, args) &&
-           EvalKernel(cx, args, DIRECT_EVAL, caller, *scopeChain);
+    if (!WarnOnTooManyArgs(cx, args))
+        return false;
+
+    return EvalKernel(cx, args, DIRECT_EVAL, caller, *scopeChain);
 }
 
 bool
@@ -2331,7 +2334,8 @@ DefinePropertyOnObject(JSContext *cx, JSObject *obj, const jsid &id, const PropD
             unchanged |= JSPROP_PERMANENT;
         if (!desc.hasEnumerable)
             unchanged |= JSPROP_ENUMERATE;
-        if (!desc.hasWritable)
+        /* Watch out for accessor -> data transformations here. */
+        if (!desc.hasWritable && shape->isDataDescriptor())
             unchanged |= JSPROP_READONLY;
 
         if (desc.hasValue)
@@ -3196,7 +3200,7 @@ Detecting(JSContext *cx, jsbytecode *pc)
              */
             if (++pc < endpc) {
                 op = JSOp(*pc);
-                return *pc == JSOP_EQ || *pc == JSOP_NE;
+                return op == JSOP_EQ || op == JSOP_NE;
             }
             return JS_FALSE;
 
@@ -3675,20 +3679,28 @@ block_setProperty(JSContext *cx, JSObject *obj, jsid id, JSBool strict, Value *v
 }
 
 const Shape *
-JSObject::defineBlockVariable(JSContext *cx, jsid id, intN index)
+JSObject::defineBlockVariable(JSContext *cx, jsid id, intN index, bool *redeclared)
 {
     JS_ASSERT(isStaticBlock());
 
+    *redeclared = false;
+
+    /* Inline JSObject::addProperty in order to trap the redefinition case. */
+    Shape **spp = nativeSearch(cx, id, true);
+    if (SHAPE_FETCH(spp)) {
+        *redeclared = true;
+        return NULL;
+    }
+
     /*
-     * Use JSPROP_ENUMERATE to aid the disassembler, and don't convert this
-     * object to dictionary mode so that we can clone the block's shape later.
+     * Don't convert this object to dictionary mode so that we can clone the
+     * block's shape later.
      */
     uint32_t slot = JSSLOT_FREE(&BlockClass) + index;
-    const Shape *shape = addProperty(cx, id,
-                                     block_getProperty, block_setProperty,
-                                     slot, JSPROP_ENUMERATE | JSPROP_PERMANENT,
-                                     Shape::HAS_SHORTID, index,
-                                     /* allowDictionary = */ false);
+    const Shape *shape = addPropertyInternal(cx, id, block_getProperty, block_setProperty,
+                                             slot, JSPROP_ENUMERATE | JSPROP_PERMANENT,
+                                             Shape::HAS_SHORTID, index, spp,
+                                             /* allowDictionary = */ false);
     if (!shape)
         return NULL;
     return shape;
@@ -4133,7 +4145,7 @@ js_XDRBlockObject(JSXDRState *xdr, JSObject **objp)
 
     if (xdr->mode == JSXDR_ENCODE) {
         obj = *objp;
-        parent = obj->getStaticBlockScopeChain();
+        parent = obj->staticBlockScopeChain();
         parentId = JSScript::isValidOffset(xdr->script->objectsOffset)
                    ? FindObjectIndex(xdr->script->objects(), parent)
                    : NO_PARENT_INDEX;
@@ -4188,8 +4200,11 @@ js_XDRBlockObject(JSXDRState *xdr, JSObject **objp)
             if (!js_XDRAtom(xdr, &atom))
                 return false;
 
-            if (!obj->defineBlockVariable(cx, ATOM_TO_JSID(atom), i))
+            bool redeclared;
+            if (!obj->defineBlockVariable(cx, ATOM_TO_JSID(atom), i, &redeclared)) {
+                JS_ASSERT(!redeclared);
                 return false;
+            }
         }
     } else {
         AutoShapeVector shapes(cx);
@@ -5033,7 +5048,7 @@ js_FindClassObject(JSContext *cx, JSObject *start, JSProtoKey protoKey,
     Value v = UndefinedValue();
     if (prop && pobj->isNative()) {
         shape = (Shape *) prop;
-        if (pobj->containsSlot(shape->slot())) {
+        if (shape->hasSlot()) {
             v = pobj->nativeGetSlot(shape->slot());
             if (v.isPrimitive())
                 v.setUndefined();
@@ -5290,7 +5305,7 @@ CallAddPropertyHook(JSContext *cx, Class *clasp, JSObject *obj, const Shape *sha
         if (!CallJSPropertyOp(cx, clasp->addProperty, obj, shape->propid(), vp))
             return false;
         if (*vp != nominal) {
-            if (obj->containsSlot(shape->slot()))
+            if (shape->hasSlot())
                 obj->nativeSetSlotWithType(cx, shape, *vp);
         }
     }
@@ -5420,7 +5435,7 @@ DefineNativeProperty(JSContext *cx, JSObject *obj, jsid id, const Value &value,
     }
 
     /* Store valueCopy before calling addProperty, in case the latter GC's. */
-    if (shape->hasSlot() && obj->containsSlot(shape->slot()))
+    if (shape->hasSlot())
         obj->nativeSetSlot(shape->slot(), valueCopy);
 
     /* XXXbe called with lock held */
@@ -5855,7 +5870,6 @@ js_NativeSet(JSContext *cx, JSObject *obj, const Shape *shape, bool added, bool 
 
     if (shape->hasSlot()) {
         uint32_t slot = shape->slot();
-        JS_ASSERT(obj->containsSlot(slot));
 
         /* If shape has a stub setter, just store *vp. */
         if (shape->hasDefaultSetter()) {
@@ -6337,7 +6351,7 @@ js_SetPropertyHelper(JSContext *cx, JSObject *obj, jsid id, uintN defineHow,
          * Note that we store before calling addProperty, to match the order
          * in DefineNativeProperty.
          */
-        if (obj->containsSlot(shape->slot()))
+        if (shape->hasSlot())
             obj->nativeSetSlot(shape->slot(), UndefinedValue());
 
         /* XXXbe called with obj locked */
@@ -6464,12 +6478,7 @@ js_DeleteProperty(JSContext *cx, JSObject *obj, jsid id, Value *rval, JSBool str
         return true;
     }
 
-    if (!CallJSPropertyOp(cx, obj->getClass()->delProperty, obj, shape->getUserId(), rval))
-        return false;
-    if (rval->isFalse())
-        return true;
-
-    if (shape->hasSlot() && obj->containsSlot(shape->slot())) {
+    if (shape->hasSlot()) {
         const Value &v = obj->nativeGetSlot(shape->slot());
         GCPoke(cx, v);
 
@@ -6503,6 +6512,11 @@ js_DeleteProperty(JSContext *cx, JSObject *obj, jsid id, Value *rval, JSBool str
         }
     }
 
+    if (!CallJSPropertyOp(cx, obj->getClass()->delProperty, obj, shape->getUserId(), rval))
+        return false;
+    if (rval->isFalse())
+        return true;
+
     return obj->removeProperty(cx, id) && js_SuppressDeletedProperty(cx, obj, id);
 }
 
@@ -6522,7 +6536,6 @@ HasDataProperty(JSContext *cx, JSObject *obj, jsid methodid, Value *vp)
 {
     if (const Shape *shape = obj->nativeLookup(cx, methodid)) {
         if (shape->hasDefaultGetterOrIsMethod() && shape->hasSlot()) {
-            JS_ASSERT(obj->containsSlot(shape->slot()));
             *vp = obj->nativeGetSlot(shape->slot());
             return true;
         }
@@ -6966,10 +6979,8 @@ js_PrintObjectSlotName(JSTracer *trc, char *buf, size_t bufsize)
     const Shape *shape;
     if (obj->isNative()) {
         shape = obj->lastProperty();
-        while (shape->previous() && shape->maybeSlot() != slot)
+        while (shape && (!shape->hasSlot() || shape->slot() != slot))
             shape = shape->previous();
-        if (shape->maybeSlot() != slot)
-            shape = NULL;
     } else {
         shape = NULL;
     }
@@ -7026,8 +7037,8 @@ js_ClearNative(JSContext *cx, JSObject *obj)
         if (shape->isDataDescriptor() &&
             shape->writable() &&
             shape->hasDefaultSetter() &&
-            obj->containsSlot(shape->maybeSlot())) {
-            obj->setSlot(shape->slot(), UndefinedValue());
+            shape->hasSlot()) {
+            obj->nativeSetSlot(shape->slot(), UndefinedValue());
         }
     }
     return true;
@@ -7118,6 +7129,12 @@ js::HandleNonGenericMethodClassMismatch(JSContext *cx, CallArgs args, Native nat
 
     ReportIncompatibleMethod(cx, args, clasp);
     return false;
+}
+
+JS_PUBLIC_API(size_t)
+JS::SizeOfObjectDynamicSlots(JSObject *obj, JSMallocSizeOfFun mallocSizeOf)
+{
+    return obj->dynamicSlotSize(mallocSizeOf);
 }
 
 #ifdef DEBUG
@@ -7294,7 +7311,7 @@ DumpProperty(JSObject *obj, const Shape &shape)
 
     uint32_t slot = shape.hasSlot() ? shape.maybeSlot() : SHAPE_INVALID_SLOT;
     fprintf(stderr, ": slot %d", slot);
-    if (obj->containsSlot(slot)) {
+    if (shape.hasSlot()) {
         fprintf(stderr, " = ");
         dumpValue(obj->getSlot(slot));
     } else if (slot != SHAPE_INVALID_SLOT) {
@@ -7405,7 +7422,6 @@ js_DumpStackFrame(JSContext *cx, StackFrame *start)
             fprintf(stderr, "no stack for cx = %p\n", (void*) cx);
             return;
         }
-        start = i.fp();
     } else {
         while (!i.done() && i.fp() != start)
             ++i;
@@ -7462,6 +7478,7 @@ js_DumpStackFrame(JSContext *cx, StackFrame *start)
             fprintf(stderr, "\n");
         }
         MaybeDumpObject("argsobj", fp->maybeArgsObj());
+        MaybeDumpObject("blockChain", fp->maybeBlockChain());
         if (!fp->isDummyFrame()) {
             MaybeDumpValue("this", fp->thisValue());
             fprintf(stderr, "  rval: ");
