@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -12,14 +11,15 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is JavaScript Engine testing utilities.
+ * The Original Code is Telephony.
  *
  * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2007
+ *   The Mozilla Foundation.
+ * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
- * Contributor(s): Igor Bukanov
+ * Contributor(s):
+ *   Ben Turner <bent.mozilla@gmail.com> (Original Author)
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -35,53 +35,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-//-----------------------------------------------------------------------------
-var BUGNUMBER = 371636;
-var summary = 'Numeric sort performance';
-var actual = false;
-var expect = '(tint/tstr < 3)=true';
-
-
-//-----------------------------------------------------------------------------
-test();
-//-----------------------------------------------------------------------------
-
-function test()
-{
-  enterFunc ('test');
-  printBugNumber(BUGNUMBER);
-  printStatus (summary);
- 
-  function testint(power)
-  {
-    var N = 1 << power;
-    var a = new Array(N);
-    for (var i = 0; i != N; ++i)
-      a[i] = (N-1) & (0x9E3779B9 * i);
-    var now = Date.now;
-    var t = now();
-    a.sort();
-    return now() - t;
-  }
-
-  function teststr(power)
-  {
-    var N = 1 << power;
-    var a = new Array(N);
-    for (var i = 0; i != N; ++i)
-      a[i] = String((N-1) & (0x9E3779B9 * i));
-    var now = Date.now;
-    var t = now();
-    a.sort();
-    return now() - t;
-  }
-
-  var tint = testint(18);
-  var tstr = teststr(18);
-  print('int: ' + tint, 'str: ' + tstr, 'int/str: ' + (tint/tstr).toFixed(2));
-
-  actual = '(tint/tstr < 3)=' + (tint/tstr < 3);
-  reportCompare(expect, actual, summary);
-
-  exitFunc ('test');
-}
+#define NS_WIFIWORKER_CID \
+{ 0xA14E8977, 0xD259, 0x433A, \
+  { 0xA8, 0x8D, 0x58, 0xDD, 0x44, 0x65, 0x7E, 0x5B } }
