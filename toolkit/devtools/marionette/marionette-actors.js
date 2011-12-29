@@ -57,6 +57,9 @@ var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
                  .getService(Ci.nsIXULAppInfo);
 var isB2G = xulAppInfo.name.indexOf('B2G') > -1;
 
+Cu.import("resource:///modules/marionette-logger.jsm");
+MarionetteLogger.write('marionette-actors.js loaded');
+
 function createRootActor(aConnection)
 {
   return new MarionetteRootActor(aConnection);
@@ -105,6 +108,7 @@ function MarionetteDriverActor(aConnection)
   this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
+  this.messageManager.addMessageListener("Marionette:log", this);
   this.windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].getService(Ci.nsIWindowMediator);
   this.browser = null;
   this.tab = null;
@@ -329,6 +333,7 @@ MarionetteDriverActor.prototype = {
     this.messageManager.removeMessageListener("Marionette:ok", this);
     this.messageManager.removeMessageListener("Marionette:done", this);
     this.messageManager.removeMessageListener("Marionette:error", this);
+    this.messageManager.removeMessageListener("Marionette:log", this);
     this.sendOk();
   },
 
@@ -345,6 +350,9 @@ MarionetteDriverActor.prototype = {
     }
     else if (message.name == "Marionette:error") {
       this.sendError(message.json.message, message.json.status, message.json.stacktrace);
+    }
+    else if (message.name == "Marionette:log") {
+        MarionetteLogger.write(message.json.message);
     }
   },
 };

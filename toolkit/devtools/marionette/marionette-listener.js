@@ -98,6 +98,10 @@ function sendOk() {
   sendAsyncMessage("Marionette:ok", {});
 }
 
+function sendLog(msg) {
+  sendAsyncMessage("Marionette:log", { message: msg });
+}
+
 function sendError(message, status, trace) {
   var error_msg = { message: message, status: status, stacktrace: trace };
   sendAsyncMessage("Marionette:error", error_msg);
