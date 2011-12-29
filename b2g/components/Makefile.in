@@ -46,8 +46,7 @@ XPIDL_MODULE = B2GComponents
 
 EXTRA_PP_COMPONENTS = \
         B2GComponents.manifest \
-        marionette_module.js \
-        marionette_module.manifest \
+        marionettemodule.js \
         $(NULL)
 
 include $(topsrcdir)/config/rules.mk

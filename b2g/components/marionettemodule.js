@@ -16,12 +16,13 @@ MarionetteModule.prototype = {
   classDescription: "Marionette module",
   classID: kMARIONETTE_CID,
   contractID: kMARIONETTE_CONTRACTID,
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver]),
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver, Ci.nsIMarionette]),
+  _xpcom_categories: [{category: "profile-after-change", service: true}],
 
   observe: function mm_observe(aSubject, aTopic, aData) {
     let observerService = Services.obs;
     switch (aTopic) {
-      case "app-startup":
+      case "profile-after-change":
         observerService.addObserver(this, "final-ui-startup", false);
         observerService.addObserver(this, "xpcom-shutdown", false);
         break;
