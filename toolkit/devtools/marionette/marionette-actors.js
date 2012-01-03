@@ -220,7 +220,7 @@ MarionetteDriverActor.prototype = {
       }
       catch (e) {
         // 17 = JavascriptException
-        this.sendError(e.name + ': ' + e.message, 17, null);
+        this.sendError(e.name + ': ' + e.message, 17, e.stack);
       }
       Marionette.reset();
     }
@@ -292,7 +292,7 @@ MarionetteDriverActor.prototype = {
         }
         Cu.evalInSandbox(script, _chromeSandbox);
       } catch (e) {
-        this.sendError(e.name + ": " + e.message, 17, null);
+        this.sendError(e.name + ": " + e.message, 17, e.stack);
       }
     }
     else {

@@ -245,7 +245,7 @@ function executeScript(msg, directInject) {
   }
   catch (e) {
     // 17 = JavascriptException
-    sendError(e.name + ': ' + e.message, 17, null);
+    sendError(e.name + ': ' + e.message, 17, e.stack);
   }
   Marionette.reset();
 }
@@ -315,7 +315,7 @@ function executeWithCallback(msg, timeout) {
    Cu.evalInSandbox(scriptSrc, sandbox);
   } catch (e) {
     // 17 = JavascriptException
-    sendError(e.name + ': ' + e.message, 17, null);
+    sendError(e.name + ': ' + e.message, 17, e.stack);
   }
 }
 
