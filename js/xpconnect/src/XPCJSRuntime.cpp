@@ -1110,7 +1110,7 @@ XPCJSRuntime::~XPCJSRuntime()
     // clean up and destroy maps...
     if (mWrappedJSMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mWrappedJSMap->Count();
+        uint32_t count = mWrappedJSMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live wrapped JSObject\n", (int)count);
 #endif
@@ -1120,7 +1120,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mWrappedJSClassMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mWrappedJSClassMap->Count();
+        uint32_t count = mWrappedJSClassMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live nsXPCWrappedJSClass\n", (int)count);
 #endif
@@ -1129,7 +1129,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mIID2NativeInterfaceMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mIID2NativeInterfaceMap->Count();
+        uint32_t count = mIID2NativeInterfaceMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live XPCNativeInterfaces\n", (int)count);
 #endif
@@ -1138,7 +1138,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mClassInfo2NativeSetMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mClassInfo2NativeSetMap->Count();
+        uint32_t count = mClassInfo2NativeSetMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live XPCNativeSets\n", (int)count);
 #endif
@@ -1147,7 +1147,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mNativeSetMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mNativeSetMap->Count();
+        uint32_t count = mNativeSetMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live XPCNativeSets\n", (int)count);
 #endif
@@ -1159,7 +1159,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mThisTranslatorMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mThisTranslatorMap->Count();
+        uint32_t count = mThisTranslatorMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live ThisTranslator\n", (int)count);
 #endif
@@ -1179,7 +1179,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mNativeScriptableSharedMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mNativeScriptableSharedMap->Count();
+        uint32_t count = mNativeScriptableSharedMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live XPCNativeScriptableShared\n", (int)count);
 #endif
@@ -1188,7 +1188,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mDyingWrappedNativeProtoMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mDyingWrappedNativeProtoMap->Count();
+        uint32_t count = mDyingWrappedNativeProtoMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live but dying XPCWrappedNativeProto\n", (int)count);
 #endif
@@ -1197,7 +1197,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mDetachedWrappedNativeProtoMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mDetachedWrappedNativeProtoMap->Count();
+        uint32_t count = mDetachedWrappedNativeProtoMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live detached XPCWrappedNativeProto\n", (int)count);
 #endif
@@ -1206,7 +1206,7 @@ XPCJSRuntime::~XPCJSRuntime()
 
     if (mExplicitNativeWrapperMap) {
 #ifdef XPC_DUMP_AT_SHUTDOWN
-        uint32 count = mExplicitNativeWrapperMap->Count();
+        uint32_t count = mExplicitNativeWrapperMap->Count();
         if (count)
             printf("deleting XPCJSRuntime with %d live explicit XPCNativeWrapper\n", (int)count);
 #endif
@@ -1260,12 +1260,21 @@ CompartmentMemoryCallback(JSContext *cx, void *vdata, JSCompartment *compartment
 }
 
 void
+ExplicitNonHeapCompartmentCallback(JSContext *cx, void *data, JSCompartment *compartment)
+{
+    size_t *n = static_cast<size_t *>(data);
+#ifdef JS_METHODJIT
+    *n += JS::SizeOfCompartmentMjitCode(compartment);
+#endif
+}
+
+void
 ChunkCallback(JSContext *cx, void *vdata, js::gc::Chunk *chunk)
 {
     // Nb: This function is only called for dirty chunks, which is why we
     // increment gcHeapChunkDirtyDecommitted.
     IterateData *data = static_cast<IterateData *>(vdata);
-    for (uint32 i = 0; i < js::gc::ArenasPerChunk; i++)
+    for (uint32_t i = 0; i < js::gc::ArenasPerChunk; i++)
         if (chunk->decommittedArenas.get(i))
             data->gcHeapChunkDirtyDecommitted += js::gc::ArenaSize;
 }
@@ -1541,8 +1550,9 @@ CompartmentStats::CompartmentStats(JSContext *cx, JSCompartment *c)
 }
 
 JSBool
-CollectCompartmentStatsForRuntime(JSRuntime *rt, IterateData *data)
+CollectCompartmentStatsForRuntime(JSRuntime *rt, void *vdata)
 {
+    IterateData *data = (IterateData *)vdata;
     JSContext *cx = JS_NewContext(rt, 0);
     if (!cx) {
         NS_ERROR("couldn't create context for memory tracing");
@@ -1684,6 +1694,60 @@ CollectCompartmentStatsForRuntime(JSRuntime *rt, IterateData *data)
                                     data->gcHeapChunkDirtyDecommitted +
                                     data->gcHeapArenaUnused) * 10000 /
                                    data->gcHeapChunkTotal;
+
+    return true;
+}
+
+JSBool
+GetExplicitNonHeapForRuntime(JSRuntime *rt, void *data)
+{
+    PRInt64 *amount = (PRInt64 *)data;
+
+    JSContext *cx = JS_NewContext(rt, 0);
+    if (!cx) {
+        NS_ERROR("couldn't create context for memory tracing");
+        return NS_ERROR_ABORT;
+    }
+
+    // explicit/<compartment>/gc-heap/*
+    *amount = PRInt64(JS_GetGCParameter(rt, JSGC_TOTAL_CHUNKS)) *
+              js::gc::ChunkSize;
+
+    {
+        JSAutoRequest ar(cx);
+
+        // explicit/<compartment>/mjit-code
+        size_t n = 0;
+        js::IterateCompartments(cx, &n, ExplicitNonHeapCompartmentCallback);
+        *amount += n;
+
+        {
+            #ifndef JS_THREADSAFE
+            #error "This code assumes JS_THREADSAFE is defined"
+            #endif
+
+            // Need the GC lock to call JS_ContextIteratorUnlocked() and to
+            // access rt->threads.
+            js::AutoLockGC lock(rt);
+
+            // explicit/runtime/threads/regexp-code
+            // explicit/runtime/threads/stack-committed
+            for (JSThread::Map::Range r = rt->threads.all(); !r.empty(); r.popFront()) {
+                JSThread *thread = r.front().value;
+                size_t regexpCode, stackCommitted;
+                thread->sizeOfIncludingThis(JsMallocSizeOf,
+                                            NULL,
+                                            NULL,
+                                            &regexpCode,
+                                            &stackCommitted);
+
+                *amount += regexpCode;
+                *amount += stackCommitted;
+            }
+        }
+    }
+
+    JS_DestroyContextNoGC(cx);
 
     return true;
 }
@@ -1958,7 +2022,7 @@ ReportJSRuntimeStats(const IterateData &data, const nsACString &pathPrefix,
                       "Memory on the garbage-collected JavaScript heap, within chunks with at "
                       "least one allocated GC thing, that could be holding useful data but "
                       "currently isn't.  Memory here is mutually exclusive with memory reported"
-                      "under gc-heap-decommitted.",
+                      "under 'explicit/js/gc-heap-decommitted'.",
                       callback, closure);
 
     ReportGCHeapBytes(pathPrefix +
@@ -1967,7 +2031,7 @@ ReportJSRuntimeStats(const IterateData &data, const nsACString &pathPrefix,
                       "Memory on the garbage-collected JavaScript heap taken by completely empty "
                       "chunks, that soon will be released unless claimed for new allocations.  "
                       "Memory here is mutually exclusive with memory reported under "
-                      "gc-heap-decommitted.",
+                      "'explicit/js/gc-heap-decommitted'.",
                       callback, closure);
 
     ReportGCHeapBytes(pathPrefix +
@@ -2102,6 +2166,17 @@ public:
                           "Memory used transiently during type inference and compilation. "
                           "This is the sum of all compartments' 'analysis-temporary' numbers.",
                           callback, closure);
+
+        return NS_OK;
+    }
+
+    NS_IMETHOD
+    GetExplicitNonHeap(PRInt64 *n)
+    {
+        JSRuntime *rt = nsXPConnect::GetRuntimeInstance()->GetJSRuntime();
+
+        if (!GetExplicitNonHeapForRuntime(rt, n))
+            return NS_ERROR_FAILURE;
 
         return NS_OK;
     }

@@ -532,24 +532,6 @@ public:
     nsresult GetInfoForIID(const nsIID * aIID, nsIInterfaceInfo** info);
     nsresult GetInfoForName(const char * name, nsIInterfaceInfo** info);
 
-    static nsresult Base64Encode(const nsACString &aString,
-                                 nsACString &aBinary);
-
-    static nsresult Base64Encode(const nsAString &aString,
-                                 nsAString &aBinaryData);
-
-    // If this returns false then an exception will be set on cx.
-    static JSBool Base64Encode(JSContext *cx, jsval val, jsval *out);
-
-    static nsresult Base64Decode(const nsACString &aBinaryData,
-                                 nsACString &aString);
-
-    static nsresult Base64Decode(const nsAString &aBinaryData,
-                                 nsAString &aString);
-
-    // If this returns false then an exception will be set on cx.
-    static JSBool Base64Decode(JSContext *cx, jsval val, jsval *out);
-
     // nsCycleCollectionParticipant
     NS_IMETHOD Root(void *p);
     NS_IMETHOD Unlink(void *p);
@@ -1554,9 +1536,6 @@ public:
     {return mScriptObjectPrincipal ?
          mScriptObjectPrincipal->GetPrincipal() : nsnull;}
 
-    JSObject*
-    GetPrototypeJSFunction() const {return mPrototypeJSFunction;}
-
     void RemoveWrappedNativeProtos();
 
     static XPCWrappedNativeScope*
@@ -1675,8 +1654,6 @@ private:
 
     // Cached value of Object.prototype
     JS::HeapPtrObject                mPrototypeJSObject;
-    // Cached value of Function.prototype
-    JS::HeapPtrObject                mPrototypeJSFunction;
     // Prototype to use for wrappers with no helper.
     JSObject*                        mPrototypeNoHelper;
 
@@ -2908,7 +2885,7 @@ public:
 
     JSObject* GetRootJSObject(XPCCallContext& ccx, JSObject* aJSObj);
 
-    NS_IMETHOD CallMethod(nsXPCWrappedJS* wrapper, uint16 methodIndex,
+    NS_IMETHOD CallMethod(nsXPCWrappedJS* wrapper, uint16_t methodIndex,
                           const XPTMethodDescriptor* info,
                           nsXPTCMiniVariant* params);
 
@@ -2937,24 +2914,24 @@ private:
 
     JSObject*  NewOutObject(JSContext* cx, JSObject* scope);
 
-    JSBool IsReflectable(uint16 i) const
+    JSBool IsReflectable(uint16_t i) const
         {return (JSBool)(mDescriptors[i/32] & (1 << (i%32)));}
-    void SetReflectable(uint16 i, JSBool b)
+    void SetReflectable(uint16_t i, JSBool b)
         {if (b) mDescriptors[i/32] |= (1 << (i%32));
          else mDescriptors[i/32] &= ~(1 << (i%32));}
 
     JSBool GetArraySizeFromParam(JSContext* cx,
                                  const XPTMethodDescriptor* method,
                                  const nsXPTParamInfo& param,
-                                 uint16 methodIndex,
-                                 uint8 paramIndex,
+                                 uint16_t methodIndex,
+                                 uint8_t paramIndex,
                                  nsXPTCMiniVariant* params,
                                  uint32_t* result);
 
     JSBool GetInterfaceTypeFromParam(JSContext* cx,
                                      const XPTMethodDescriptor* method,
                                      const nsXPTParamInfo& param,
-                                     uint16 methodIndex,
+                                     uint16_t methodIndex,
                                      const nsXPTType& type,
                                      nsXPTCMiniVariant* params,
                                      nsID* result);
@@ -2971,7 +2948,7 @@ private:
     nsIInterfaceInfo* mInfo;
     char* mName;
     nsIID mIID;
-    uint32* mDescriptors;
+    uint32_t* mDescriptors;
 };
 
 /*************************/
@@ -4388,9 +4365,6 @@ xpc_ForcePropertyResolve(JSContext* cx, JSObject* obj, jsid id);
 inline jsid
 GetRTIdByIndex(JSContext *cx, uintN index);
 
-inline jsval
-GetRTStringByIndex(JSContext *cx, uintN index);
-
 // Wrapper for JS_NewObject to mark the new object as system when parent is
 // also a system object. If uniqueType is specified then a new type object will
 // be created which is used only by the result, so that its property types
@@ -4398,11 +4372,6 @@ GetRTStringByIndex(JSContext *cx, uintN index);
 inline JSObject*
 xpc_NewSystemInheritingJSObject(JSContext *cx, JSClass *clasp, JSObject *proto,
                                 bool uniqueType, JSObject *parent);
-
-inline JSBool
-xpc_SameScope(XPCWrappedNativeScope *objectscope,
-              XPCWrappedNativeScope *xpcscope,
-              JSBool *sameOrigin);
 
 nsISupports *
 XPC_GetIdentityObject(JSContext *cx, JSObject *obj);
