@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- *
- * ***** BEGIN LICENSE BLOCK *****
+/* -*- Mode: IDL; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -13,11 +12,11 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Communicator client code.
+ * The Original Code is the Mozilla SVG project.
  *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
+ * Robert Longson
+ * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
@@ -36,21 +35,25 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsUCConstructors.h"
-#include "nsGEOSTD8ToUnicode.h"
+#include "domstubs.idl"
 
-//----------------------------------------------------------------------
-// Global functions and data [declaration]
+[scriptable, uuid(481f01a5-0bbb-4abf-8623-f3c2fb5642a9)]
+interface nsIDOMSVGStringList : nsISupports
+{ 
+  readonly attribute unsigned long numberOfItems;
 
-static const PRUint16 g_utMappingTable[] = {
-#include "geostd8.ut"
+  void clear();
+          // raises(nsIDOMDOMException);
+  DOMString initialize(in DOMString newItem);
+                    // raises(nsIDOMDOMException);
+  DOMString getItem(in unsigned long index);
+                    // raises(nsIDOMDOMException);
+  DOMString insertItemBefore(in DOMString newItem, in unsigned long index);
+                    // raises(nsIDOMDOMException);
+  DOMString replaceItem(in DOMString newItem, in unsigned long index);
+                    // raises(nsIDOMDOMException);
+  DOMString removeItem(in unsigned long index);
+                    // raises(nsIDOMDOMException);
+  DOMString appendItem(in DOMString newItem);
+                    // raises(nsIDOMDOMException);
 };
-
-nsresult
-nsGEOSTD8ToUnicodeConstructor(nsISupports *aOuter, REFNSIID aIID,
-                              void **aResult) 
-{
-  return CreateOneByteDecoder((uMappingTable*) &g_utMappingTable,
-                              aOuter, aIID, aResult);
-}
-

@@ -1891,7 +1891,7 @@ TypeHasGlobal(Type type, JSObject *global)
         return false;
 
     if (type.isSingleObject())
-        return type.singleObject()->getGlobal() == global;
+        return &type.singleObject()->global() == global;
 
     if (type.isTypeObject())
         return type.typeObject()->getGlobal() == global;
@@ -1969,6 +1969,8 @@ TypeObject *
 TypeCompartment::newTypeObject(JSContext *cx, JSScript *script,
                                JSProtoKey key, JSObject *proto, bool unknown)
 {
+    RootObject root(cx, &proto);
+
     TypeObject *object = gc::NewGCThing<TypeObject>(cx, gc::FINALIZE_TYPE_OBJECT, sizeof(TypeObject));
     if (!object)
         return NULL;
@@ -5176,7 +5178,11 @@ TypeScript::SetScope(JSContext *cx, JSScript *script, JSObject *scope)
 {
     JS_ASSERT(script->types && !script->types->hasScope());
 
+    Root<JSScript*> scriptRoot(cx, &script);
+    RootObject scopeRoot(cx, &scope);
+
     JSFunction *fun = script->function();
+    bool nullClosure = fun && fun->isNullClosure();
 
     JS_ASSERT_IF(!fun, !script->isOuterFunction && !script->isInnerFunction);
     JS_ASSERT_IF(!scope, fun && !script->isInnerFunction);
@@ -5193,8 +5199,8 @@ TypeScript::SetScope(JSContext *cx, JSScript *script, JSObject *scope)
         return true;
     }
 
-    JS_ASSERT_IF(fun && scope, fun->getGlobal() == scope->getGlobal());
-    script->types->global = fun ? fun->getGlobal() : scope->getGlobal();
+    JS_ASSERT_IF(fun && scope, fun->global() == scope->global());
+    script->types->global = fun ? &fun->global() : &scope->global();
 
     /*
      * Update the parent in the script's bindings. The bindings are created
@@ -5207,7 +5213,7 @@ TypeScript::SetScope(JSContext *cx, JSScript *script, JSObject *scope)
     if (!cx->typeInferenceEnabled())
         return true;
 
-    if (!script->isInnerFunction || fun->isNullClosure()) {
+    if (!script->isInnerFunction || nullClosure) {
         /*
          * Outermost functions need nesting information if there are inner
          * functions directly nested in them.
@@ -5225,7 +5231,7 @@ TypeScript::SetScope(JSContext *cx, JSScript *script, JSObject *scope)
      * the script is nested inside.
      */
     while (!scope->isCall())
-        scope = scope->internalScopeChain();
+        scope = &scope->asScope().enclosingScope();
 
     CallObject &call = scope->asCall();
 
@@ -5258,9 +5264,9 @@ TypeScript::SetScope(JSContext *cx, JSScript *script, JSObject *scope)
     if (!parent->ensureHasTypes(cx))
         return false;
     if (!parent->types->hasScope()) {
-        if (!SetScope(cx, parent, scope->internalScopeChain()))
+        if (!SetScope(cx, parent, &call.enclosingScope()))
             return false;
-        parent->nesting()->activeCall = scope;
+        parent->nesting()->activeCall = &call;
         parent->nesting()->argArray = Valueify(call.argArray());
         parent->nesting()->varArray = Valueify(call.varArray());
     }
@@ -5353,7 +5359,7 @@ CheckNestingParent(JSContext *cx, JSObject *scope, JSScript *script)
     JS_ASSERT(parent);
 
     while (!scope->isCall() || scope->asCall().getCalleeFunction()->script() != parent)
-        scope = scope->internalScopeChain();
+        scope = &scope->asScope().enclosingScope();
 
     if (scope != parent->nesting()->activeCall) {
         parent->reentrantOuterFunction = true;
@@ -5368,7 +5374,7 @@ CheckNestingParent(JSContext *cx, JSObject *scope, JSScript *script)
          * parent.
          */
         if (parent->nesting()->parent) {
-            scope = scope->internalScopeChain();
+            scope = &scope->asScope().enclosingScope();
             script = parent;
             goto restart;
         }
@@ -5811,9 +5817,6 @@ JSObject::setNewTypeUnknown(JSContext *cx)
 TypeObject *
 JSObject::getNewType(JSContext *cx, JSFunction *fun)
 {
-    if (!setDelegate(cx))
-        return NULL;
-
     TypeObjectSet &table = cx->compartment->newTypeObjects;
 
     if (!table.initialized() && !table.init())
@@ -5840,14 +5843,19 @@ JSObject::getNewType(JSContext *cx, JSFunction *fun)
         return type;
     }
 
-    bool markUnknown = lastProperty()->hasObjectFlag(BaseShape::NEW_TYPE_UNKNOWN);
+    RootedVarObject self(cx, this);
+
+    if (!setDelegate(cx))
+        return NULL;
+
+    bool markUnknown = self->lastProperty()->hasObjectFlag(BaseShape::NEW_TYPE_UNKNOWN);
 
     TypeObject *type = cx->compartment->types.newTypeObject(cx, NULL,
-                                                            JSProto_Object, this, markUnknown);
+                                                            JSProto_Object, self, markUnknown);
     if (!type)
         return NULL;
 
-    if (!table.relookupOrAdd(p, this, type))
+    if (!table.relookupOrAdd(p, self, type))
         return NULL;
 
     if (!cx->typeInferenceEnabled())
@@ -5860,7 +5868,7 @@ JSObject::getNewType(JSContext *cx, JSFunction *fun)
      * flag set. This is a hack, :XXX: need a real correspondence between
      * types and the possible js::Class of objects with that type.
      */
-    if (hasSpecialEquality())
+    if (self->hasSpecialEquality())
         type->flags |= OBJECT_FLAG_SPECIAL_EQUALITY;
 
     if (fun)
@@ -5868,11 +5876,11 @@ JSObject::getNewType(JSContext *cx, JSFunction *fun)
 
 #if JS_HAS_XML_SUPPORT
     /* Special case for XML object equality, see makeLazyType(). */
-    if (isXML() && !type->unknownProperties())
+    if (self->isXML() && !type->unknownProperties())
         type->flags |= OBJECT_FLAG_UNKNOWN_MASK;
 #endif
 
-    if (getClass()->ext.equality)
+    if (self->getClass()->ext.equality)
         type->flags |= OBJECT_FLAG_SPECIAL_EQUALITY;
 
     /*
@@ -5892,6 +5900,8 @@ JSObject::getNewType(JSContext *cx, JSFunction *fun)
 TypeObject *
 JSCompartment::getLazyType(JSContext *cx, JSObject *proto)
 {
+    gc::MaybeCheckStackRoots(cx);
+
     TypeObjectSet &table = cx->compartment->lazyTypeObjects;
 
     if (!table.initialized() && !table.init())

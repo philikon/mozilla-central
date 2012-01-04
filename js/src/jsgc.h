@@ -734,8 +734,8 @@ struct Chunk {
         return info.numArenasFree == ArenasPerChunk;
     }
 
-    bool noAvailableArenas() const {
-        return info.numArenasFree == 0;
+    bool hasAvailableArenas() const {
+        return info.numArenasFree != 0;
     }
 
     inline void addToAvailableList(JSCompartment *compartment);
@@ -1368,13 +1368,13 @@ js_IsAddressableGCThing(JSRuntime *rt, jsuword w, js::gc::AllocKind *thingKind, 
 
 namespace js {
 
-extern JS_REQUIRES_STACK void
+extern void
 MarkRuntime(JSTracer *trc);
 
 extern void
 TraceRuntime(JSTracer *trc);
 
-extern JS_REQUIRES_STACK JS_FRIEND_API(void)
+extern JS_FRIEND_API(void)
 MarkContext(JSTracer *trc, JSContext *acx);
 
 /* Must be called with GC lock taken. */
@@ -1836,6 +1836,15 @@ NewCompartment(JSContext *cx, JSPrincipals *principals);
 /* Tries to run a GC no matter what (used for GC zeal). */
 void
 RunDebugGC(JSContext *cx);
+
+#if defined(JSGC_ROOT_ANALYSIS) && defined(DEBUG) && !defined(JS_THREADSAFE)
+/* Overwrites stack references to GC things which have not been rooted. */
+void CheckStackRoots(JSContext *cx);
+
+inline void MaybeCheckStackRoots(JSContext *cx) { CheckStackRoots(cx); }
+#else
+inline void MaybeCheckStackRoots(JSContext *cx) {}
+#endif
 
 const int ZealPokeThreshold = 1;
 const int ZealAllocThreshold = 2;

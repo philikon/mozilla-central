@@ -442,7 +442,7 @@ mozJSComponentLoader::ReallyInit()
     if (!mContext)
         return NS_ERROR_OUT_OF_MEMORY;
 
-    uint32 options = JS_GetOptions(mContext);
+    uint32_t options = JS_GetOptions(mContext);
     JS_SetOptions(mContext, options | JSOPTION_XML);
 
     // Always use the latest js version
@@ -792,7 +792,7 @@ mozJSComponentLoader::GlobalForLocation(nsILocalFile *aComponentFile,
         // If |exception| is non-null, then our caller wants us to propagate
         // any exceptions out to our caller. Ensure that the engine doesn't
         // eagerly report the exception.
-        uint32 oldopts = JS_GetOptions(cx);
+        uint32_t oldopts = JS_GetOptions(cx);
         JS_SetOptions(cx, oldopts | JSOPTION_NO_SCRIPT_RVAL |
                       (exception ? JSOPTION_DONT_REPORT_UNCAUGHT : 0));
 
@@ -966,7 +966,7 @@ mozJSComponentLoader::GlobalForLocation(nsILocalFile *aComponentFile,
     // See bug 384168.
     *aGlobal = global;
 
-    uint32 oldopts = JS_GetOptions(cx);
+    uint32_t oldopts = JS_GetOptions(cx);
     JS_SetOptions(cx, oldopts |
                   (exception ? JSOPTION_DONT_REPORT_UNCAUGHT : 0));
     bool ok = JS_ExecuteScriptVersion(cx, global, script, NULL, JSVERSION_LATEST);
