@@ -46,6 +46,11 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm")
 Cu.import("resource://gre/modules/AddonManager.jsm");
 
+XPCOMUtils.defineLazyGetter(this, "PluralForm", function() {
+  Cu.import("resource://gre/modules/PluralForm.jsm");
+  return PluralForm;
+});
+
 XPCOMUtils.defineLazyServiceGetter(this, "URIFixup",
   "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
 
@@ -422,7 +427,6 @@ var BrowserApp = {
   },
 
   quit: function quit() {
-      Cu.reportError("got quit quit message");
       window.QueryInterface(Ci.nsIDOMChromeWindow).minimize();
       window.close();
   },
@@ -634,8 +638,65 @@ var BrowserApp = {
       return;
     let focused = doc.activeElement;
     if ((focused instanceof HTMLInputElement && focused.mozIsTextField(false)) || (focused instanceof HTMLTextAreaElement)) {
-      focused.scrollIntoView(false);
-      BrowserApp.getTabForBrowser(aBrowser).sendViewportUpdate();
+      let tab = BrowserApp.getTabForBrowser(aBrowser);
+      let win = aBrowser.contentWindow;
+
+      // tell gecko to scroll the field into view. this will scroll any nested scrollable elements
+      // as well as the browser's content window, and modify the scrollX and scrollY on the content window.
+      focused.scrollIntoView(true);
+
+      // update userScrollPos so that we don't send a duplicate viewport update by triggering
+      // our scroll listener
+      tab.userScrollPos.x = win.scrollX;
+      tab.userScrollPos.y = win.scrollY;
+
+      // note that:
+      // 1. because of the way we do zooming using a CSS transform, gecko does not take into
+      // account the effect of the zoom on the viewport size.
+      // 2. if the input element is near the bottom/right of the page (less than one viewport
+      // height/width away from the bottom/right), the scrollIntoView call will make gecko scroll to the
+      // bottom/right of the page in an attempt to align the input field with the top of the viewport.
+      // however, since gecko doesn't know about the zoom, what it thinks is the "bottom/right of
+      // the page" isn't actually the bottom/right of the page at the current zoom level, and we 
+      // need to adjust this further.
+      // 3. we can't actually adjust this by changing the window scroll position, as gecko already thinks
+      // we're at the bottom/right, so instead we do it by changing the viewportExcess on the tab and
+      // moving the browser element.
+
+      let visibleContentWidth = tab._viewport.width / tab._viewport.zoom;
+      let visibleContentHeight = tab._viewport.height / tab._viewport.zoom;
+      // get the rect that the focused element occupies relative to what gecko thinks the viewport is,
+      // and adjust it by viewportExcess to so that it is relative to what the user sees as the viewport.
+      let focusedRect = focused.getBoundingClientRect();
+      focusedRect = {
+        left: focusedRect.left - tab.viewportExcess.x,
+        right: focusedRect.right - tab.viewportExcess.x,
+        top: focusedRect.top - tab.viewportExcess.y,
+        bottom: focusedRect.bottom - tab.viewportExcess.y
+      };
+      let transformChanged = false;
+      if (focusedRect.right >= visibleContentWidth && focusedRect.left > 0) {
+        // the element is too far off the right side, so we need to scroll to the right more
+        tab.viewportExcess.x += Math.min(focusedRect.left, focusedRect.right - visibleContentWidth);
+        transformChanged = true;
+      } else if (focusedRect.left < 0) {
+        // the element is too far off the left side, so we need to scroll to the left more
+        tab.viewportExcess.x += focusedRect.left;
+        transformChanged = true;
+      }
+      if (focusedRect.bottom >= visibleContentHeight && focusedRect.top > 0) {
+        // the element is too far down, so we need to scroll down more
+        tab.viewportExcess.y += Math.min(focusedRect.top, focusedRect.bottom - visibleContentHeight);
+        transformChanged = true;
+      } else if (focusedRect.top < 0) {
+        // the element is too far up, so we need to scroll up more
+        tab.viewportExcess.y += focusedRect.top;
+        transformChanged = true;
+      }
+      if (transformChanged)
+        tab.updateTransform();
+      // finally, let java know where we ended up
+      tab.sendViewportUpdate();
     }
   },
 
@@ -839,6 +900,10 @@ var NativeWindow = {
                function(aTarget) {
                  let url = NativeWindow.contextmenus._getLinkURL(aTarget);
                  BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id });
+
+                 let newtabStrings = Strings.browser.GetStringFromName("newtabpopup.opened");
+                 let label = PluralForm.get(1, newtabStrings).replace("#1", 1);
+                 NativeWindow.toast.show(label, "short");
                });
 
       this.add(Strings.browser.GetStringFromName("contextmenu.fullScreen"),
@@ -1085,7 +1150,7 @@ nsBrowserAccess.prototype = {
 
   openURI: function browser_openURI(aURI, aOpener, aWhere, aContext) {
     let browser = this._getBrowser(aURI, aOpener, aWhere, aContext);
-    return browser ? browser.QueryInterface(Ci.nsIFrameLoaderOwner) : null;
+    return browser ? browser.contentWindow : null;
   },
 
   openURIInFrame: function browser_openURIInFrame(aURI, aOpener, aWhere, aContext) {
@@ -1171,6 +1236,7 @@ Tab.prototype = {
     this.browser.addEventListener("DOMContentLoaded", this, true);
     this.browser.addEventListener("DOMLinkAdded", this, true);
     this.browser.addEventListener("DOMTitleChanged", this, true);
+    this.browser.addEventListener("DOMWindowClose", this, true);
     this.browser.addEventListener("scroll", this, true);
     this.browser.addEventListener("PluginClickToPlay", this, true);
     this.browser.addEventListener("pagehide", this, true);
@@ -1231,6 +1297,7 @@ Tab.prototype = {
     this.browser.removeEventListener("DOMContentLoaded", this, true);
     this.browser.removeEventListener("DOMLinkAdded", this, true);
     this.browser.removeEventListener("DOMTitleChanged", this, true);
+    this.browser.removeEventListener("DOMWindowClose", this, true);
     this.browser.removeEventListener("scroll", this, true);
     this.browser.removeEventListener("PluginClickToPlay", this, true);
     this.browser.removeEventListener("pagehide", this, true);
@@ -1311,20 +1378,22 @@ Tab.prototype = {
       transformChanged = true;
     }
 
+    if (transformChanged)
+      this.updateTransform();
+  },
+
+  updateTransform: function() {
     let hasZoom = (Math.abs(this._viewport.zoom - 1.0) >= 1e-6);
+    let x = this._viewport.offsetX + Math.round(-this.viewportExcess.x * this._viewport.zoom);
+    let y = this._viewport.offsetY + Math.round(-this.viewportExcess.y * this._viewport.zoom);
 
-    if (transformChanged) {
-      let x = this._viewport.offsetX + Math.round(-excessX * this._viewport.zoom);
-      let y = this._viewport.offsetY + Math.round(-excessY * this._viewport.zoom);
+    let transform =
+      "translate(" + x + "px, " +
+                     y + "px)";
+    if (hasZoom)
+      transform += " scale(" + this._viewport.zoom + ")";
 
-      let transform =
-        "translate(" + x + "px, " +
-                       y + "px)";
-      if (hasZoom)
-        transform += " scale(" + this._viewport.zoom + ")";
-
-      this.browser.style.MozTransform = transform;
-    }
+    this.browser.style.MozTransform = transform;
   },
 
   get viewport() {
@@ -1338,12 +1407,8 @@ Tab.prototype = {
     this._viewport.x = Math.round(this._viewport.x * this._viewport.zoom);
     this._viewport.y = Math.round(this._viewport.y * this._viewport.zoom);
 
-    /*
-     * Don't alter the page size until we hit DOMContentLoaded, because this causes the page size
-     * to jump around wildly during page load.
-     */
     let doc = this.browser.contentDocument;
-    if (doc != null && doc.readyState === 'complete') {
+    if (doc != null) {
       let pageWidth = this._viewport.width, pageHeight = this._viewport.height;
       let body = doc.body || { scrollWidth: pageWidth, scrollHeight: pageHeight };
       let html = doc.documentElement || { scrollWidth: pageWidth, scrollHeight: pageHeight };
@@ -1351,8 +1416,18 @@ Tab.prototype = {
       pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
 
       /* Transform the page width and height based on the zoom factor. */
-      this._viewport.pageWidth = Math.round(pageWidth * this._viewport.zoom);
-      this._viewport.pageHeight = Math.round(pageHeight * this._viewport.zoom);
+      pageWidth = Math.round(pageWidth * this._viewport.zoom);
+      pageHeight = Math.round(pageHeight * this._viewport.zoom);
+
+      /*
+       * Avoid sending page sizes of less than screen size before we hit DOMContentLoaded, because
+       * this causes the page size to jump around wildly during page load. After the page is loaded,
+       * send updates regardless of page size; we'll zoom to fit the content as needed.
+       */
+      if (doc.readyState === 'complete' || (pageWidth >= gScreenWidth && pageHeight >= gScreenHeight)) {
+        this._viewport.pageWidth = pageWidth;
+        this._viewport.pageHeight = pageHeight;
+      }
     }
 
     return this._viewport;
@@ -1476,6 +1551,24 @@ Tab.prototype = {
             title: aEvent.target.title
           }
         });
+        break;
+      }
+
+      case "DOMWindowClose": {
+        if (!aEvent.isTrusted)
+          return;
+
+        // Find the relevant tab, and close it from Java
+        if (this.browser.contentWindow == aEvent.target) {
+          aEvent.preventDefault();
+
+          sendMessageToJava({
+            gecko: {
+              type: "DOMWindowClose",
+              tabID: this.id
+            }
+          });
+        }
         break;
       }
 
@@ -3341,7 +3434,7 @@ var PluginHelper = {
 
 var PermissionsHelper = {
 
-  _permissonTypes: ["password", "geo", "popup", "indexedDB",
+  _permissonTypes: ["password", "geolocation", "popup", "indexedDB",
                     "offline-app", "desktop-notification"],
   _permissionStrings: {
     "password": {
@@ -3349,10 +3442,10 @@ var PermissionsHelper = {
       allowed: "password.remember",
       denied: "password.never"
     },
-    "geo": {
+    "geolocation": {
       label: "geolocation.shareLocation",
-      allowed: "geolocation.alwaysShare",
-      denied: "geolocation.neverShare"
+      allowed: "geolocation.alwaysAllow",
+      denied: "geolocation.neverAllow"
     },
     "popup": {
       label: "blockPopups.label",
@@ -3444,7 +3537,7 @@ var PermissionsHelper = {
    *
    * @param aType
    *        The permission type string stored in permission manager.
-   *        e.g. "cookie", "geo", "indexedDB", "popup", "image"
+   *        e.g. "geolocation", "indexedDB", "popup"
    *
    * @return A permission value defined in nsIPermissionManager.
    */
@@ -3465,7 +3558,7 @@ var PermissionsHelper = {
     }
 
     // Geolocation consumers use testExactPermission
-    if (aType == "geo")
+    if (aType == "geolocation")
       return Services.perms.testExactPermission(aURI, aType);
 
     return Services.perms.testPermission(aURI, aType);
@@ -3476,7 +3569,7 @@ var PermissionsHelper = {
    *
    * @param aType
    *        The permission type string stored in permission manager.
-   *        e.g. "cookie", "geo", "indexedDB", "popup", "image"
+   *        e.g. "geolocation", "indexedDB", "popup"
    */
   clearPermission: function clearPermission(aURI, aType) {
     // Password saving isn't a nsIPermissionManager permission type, so handle
@@ -3497,6 +3590,8 @@ var PermissionsHelper = {
 
 var MasterPassword = {
   pref: "privacy.masterpassword.enabled",
+  _tokenName: "",
+
   get _secModuleDB() {
     delete this._secModuleDB;
     return this._secModuleDB = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(Ci.nsIPKCS11ModuleDB);

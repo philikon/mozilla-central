@@ -619,8 +619,6 @@ class NodeBuilder
 
     bool xmlComment(Value text, TokenPos *pos, Value *dst);
 
-    bool xmlPI(Value target, TokenPos *pos, Value *dst);
-
     bool xmlPI(Value target, Value content, TokenPos *pos, Value *dst);
 };
 
@@ -1571,12 +1569,6 @@ NodeBuilder::xmlComment(Value text, TokenPos *pos, Value *dst)
 }
 
 bool
-NodeBuilder::xmlPI(Value target, TokenPos *pos, Value *dst)
-{
-    return xmlPI(target, NullValue(), pos, dst);
-}
-
-bool
 NodeBuilder::xmlPI(Value target, Value contents, TokenPos *pos, Value *dst)
 {
     Value cb = callbacks[AST_XMLPI];
@@ -2410,7 +2402,7 @@ ASTSerializer::expression(ParseNode *pn, Value *dst)
                builder.sequenceExpression(exprs, &pn->pn_pos, dst);
       }
 
-      case PNK_HOOK:
+      case PNK_CONDITIONAL:
       {
         Value test, cons, alt;
 
@@ -2432,15 +2424,22 @@ ASTSerializer::expression(ParseNode *pn, Value *dst)
         return leftAssociate(pn, dst);
       }
 
-      case PNK_INC:
-      case PNK_DEC:
+      case PNK_PREINCREMENT:
+      case PNK_PREDECREMENT:
       {
-        bool incr = pn->isKind(PNK_INC);
-        bool prefix = pn->getOp() >= JSOP_INCNAME && pn->getOp() <= JSOP_DECELEM;
-
+        bool inc = pn->isKind(PNK_PREINCREMENT);
         Value expr;
         return expression(pn->pn_kid, &expr) &&
-               builder.updateExpression(expr, incr, prefix, &pn->pn_pos, dst);
+               builder.updateExpression(expr, inc, true, &pn->pn_pos, dst);
+      }
+
+      case PNK_POSTINCREMENT:
+      case PNK_POSTDECREMENT:
+      {
+        bool inc = pn->isKind(PNK_POSTINCREMENT);
+        Value expr;
+        return expression(pn->pn_kid, &expr) &&
+               builder.updateExpression(expr, inc, false, &pn->pn_pos, dst);
       }
 
       case PNK_ASSIGN:
@@ -2623,13 +2622,16 @@ ASTSerializer::expression(ParseNode *pn, Value *dst)
 
       case PNK_DEFSHARP:
       {
+        DefSharpExpression &defsharp = pn->asDefSharpExpression();
         Value expr;
-        return expression(pn->pn_kid, &expr) &&
-               builder.graphExpression(pn->pn_num, expr, &pn->pn_pos, dst);
+        return expression(&defsharp.expression(), &expr) &&
+               builder.graphExpression(defsharp.number(), expr, &defsharp.pn_pos, dst);
       }
 
-      case PNK_USESHARP:
-        return builder.graphIndexExpression(pn->pn_num, &pn->pn_pos, dst);
+      case PNK_USESHARP: {
+        UseSharpExpression &expr = pn->asUseSharpExpression();
+        return builder.graphIndexExpression(expr.number(), &expr.pn_pos, dst);
+      }
 
       case PNK_ARRAYCOMP:
         /* NB: it's no longer the case that pn_count could be 2. */
@@ -2788,14 +2790,13 @@ ASTSerializer::xml(ParseNode *pn, Value *dst)
       case PNK_XMLCOMMENT:
         return builder.xmlComment(atomContents(pn->pn_atom), &pn->pn_pos, dst);
 
-      case PNK_XMLPI:
-        if (!pn->pn_pidata)
-            return builder.xmlPI(atomContents(pn->pn_pitarget), &pn->pn_pos, dst);
-        else
-            return builder.xmlPI(atomContents(pn->pn_pitarget),
-                                 atomContents(pn->pn_pidata),
-                                 &pn->pn_pos,
-                                 dst);
+      case PNK_XMLPI: {
+        XMLProcessingInstruction &pi = pn->asXMLProcessingInstruction();
+        return builder.xmlPI(atomContents(pi.target()),
+                             atomContents(pi.data()),
+                             &pi.pn_pos,
+                             dst);
+      }
 #endif
 
       default:
@@ -3260,7 +3261,10 @@ JS_BEGIN_EXTERN_C
 JS_PUBLIC_API(JSObject *)
 JS_InitReflect(JSContext *cx, JSObject *obj)
 {
-    JSObject *Reflect = NewObjectWithClassProto(cx, &ObjectClass, NULL, obj);
+    RootObject root(cx, &obj);
+    RootedVarObject Reflect(cx);
+
+    Reflect = NewObjectWithClassProto(cx, &ObjectClass, NULL, obj);
     if (!Reflect || !Reflect->setSingletonType(cx))
         return NULL;
 

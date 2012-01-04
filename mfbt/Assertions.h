@@ -38,6 +38,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/* Implementations of runtime and static assertion macros for C and C++. */
+
 #ifndef mozilla_Assertions_h_
 #define mozilla_Assertions_h_
 
@@ -70,15 +72,15 @@
 #  elif defined(__GNUC__)
 #    if (defined(__GXX_EXPERIMENTAL_CXX0X__) || __cplusplus >= 201103L) && \
         (__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
-#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), #cond)
+#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), reason)
 #    endif
 #  elif defined(_MSC_VER)
 #    if _MSC_VER >= 1600 /* MSVC 10 */
-#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), #cond)
+#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), reason)
 #    endif
 #  elif defined(__HP_aCC)
 #    if __HP_aCC >= 62500 && defined(_HP_CXX0x_SOURCE)
-#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), #cond)
+#      define MOZ_STATIC_ASSERT(cond, reason)    static_assert((cond), reason)
 #    endif
 #  endif
 #endif
