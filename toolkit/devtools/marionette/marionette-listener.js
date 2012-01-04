@@ -75,7 +75,8 @@ addMessageListener("Marionette:deleteSession", deleteSession);
 function newSession(msg) {
   isB2G = msg.json.B2G;
   resetValues();
-  sendResponse({value: 'mobile'});
+  let session='mobile' + (isB2G ? '-b2g' : '');
+  sendResponse({value: session});
 }
 
 function deleteSession(msg) {
