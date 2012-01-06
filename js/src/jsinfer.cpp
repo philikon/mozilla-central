@@ -1685,7 +1685,7 @@ types::MarkArgumentsCreated(JSContext *cx, JSScript *script)
              */
             Value *sp = fp->base() + analysis->getCode(iter.pc()).stackDepth;
             for (Value *vp = fp->slots(); vp < sp; vp++) {
-                if (vp->isMagicCheck(JS_LAZY_ARGUMENTS)) {
+                if (vp->isParticularMagic(JS_LAZY_ARGUMENTS)) {
                     if (!js_GetArgsValue(cx, fp, vp))
                         vp->setNull();
                 }
@@ -3896,14 +3896,16 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
       case JSOP_NEWARRAY:
       case JSOP_NEWOBJECT: {
         TypeObject *initializer = GetInitializerType(cx, script, pc);
+        TypeSet *types = script->analysis()->bytecodeTypes(pc);
         if (script->hasGlobal()) {
             if (!initializer)
                 return false;
-            pushed[0].addType(cx, Type::ObjectType(initializer));
+            types->addType(cx, Type::ObjectType(initializer));
         } else {
             JS_ASSERT(!initializer);
-            pushed[0].addType(cx, Type::UnknownType());
+            types->addType(cx, Type::UnknownType());
         }
+        types->addSubset(cx, &pushed[0]);
         break;
       }
 

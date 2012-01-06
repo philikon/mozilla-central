@@ -125,6 +125,8 @@ public class PanZoomController
 
     /* The timer that handles flings or bounces. */
     private Timer mAnimationTimer;
+    /* The runnable being scheduled by the animation timer. */
+    private AnimationRunnable mAnimationRunnable;
     /* Information about the X axis. */
     private AxisX mX;
     /* Information about the Y axis. */
@@ -255,7 +257,10 @@ public class PanZoomController
             // the screen orientation changed) so abort it and start a new one to
             // ensure the viewport doesn't contain out-of-bounds areas
         case NOTHING:
-            bounce();
+            // Don't do animations here; they're distracting and can cause flashes on page
+            // transitions.
+            mController.setViewportMetrics(getValidViewportMetrics());
+            mController.notifyLayerClientOfGeometryChange();
             break;
         }
     }
@@ -484,7 +489,7 @@ public class PanZoomController
         }
 
         mX.setFlingState(Axis.FlingStates.PANNING); mY.setFlingState(Axis.FlingStates.PANNING);
-        mX.displace(); mY.displace();
+        mX.displace(mOverridePanning); mY.displace(mOverridePanning);
         updatePosition();
     }
 
@@ -494,7 +499,7 @@ public class PanZoomController
 
         mX.disableSnap = mY.disableSnap = mOverridePanning;
 
-        mX.displace(); mY.displace();
+        mX.displace(mOverridePanning); mY.displace(mOverridePanning);
         updatePosition();
 
         stopAnimationTimer();
@@ -528,13 +533,14 @@ public class PanZoomController
     }
 
     /* Starts the fling or bounce animation. */
-    private void startAnimationTimer(final Runnable runnable) {
+    private void startAnimationTimer(final AnimationRunnable runnable) {
         if (mAnimationTimer != null) {
             Log.e(LOGTAG, "Attempted to start a new fling without canceling the old one!");
             stopAnimationTimer();
         }
 
         mAnimationTimer = new Timer("Animation Timer");
+        mAnimationRunnable = runnable;
         mAnimationTimer.scheduleAtFixedRate(new TimerTask() {
             @Override
             public void run() { mController.post(runnable); }
@@ -546,6 +552,10 @@ public class PanZoomController
         if (mAnimationTimer != null) {
             mAnimationTimer.cancel();
             mAnimationTimer = null;
+        }
+        if (mAnimationRunnable != null) {
+            mAnimationRunnable.terminate();
+            mAnimationRunnable = null;
         }
     }
 
@@ -584,8 +594,33 @@ public class PanZoomController
         mX.displacement = mY.displacement = 0;
     }
 
+    private abstract class AnimationRunnable implements Runnable {
+        private boolean mAnimationTerminated;
+
+        /* This should always run on the UI thread */
+        public final void run() {
+            /*
+             * Since the animation timer queues this runnable on the UI thread, it
+             * is possible that even when the animation timer is cancelled, there
+             * are multiple instances of this queued, so we need to have another
+             * mechanism to abort. This is done by using the mAnimationTerminated flag.
+             */
+            if (mAnimationTerminated) {
+                return;
+            }
+            animateFrame();
+        }
+
+        protected abstract void animateFrame();
+
+        /* This should always run on the UI thread */
+        protected final void terminate() {
+            mAnimationTerminated = true;
+        }
+    }
+
     /* The callback that performs the bounce animation. */
-    private class BounceRunnable implements Runnable {
+    private class BounceRunnable extends AnimationRunnable {
         /* The current frame of the bounce-back animation */
         private int mBounceFrame;
         /*
@@ -600,7 +635,7 @@ public class PanZoomController
             mBounceEndMetrics = endMetrics;
         }
 
-        public void run() {
+        protected void animateFrame() {
             /*
              * The pan/zoom controller might have signaled to us that it wants to abort the
              * animation by setting the state to PanZoomState.NOTHING. Handle this case and bail
@@ -645,8 +680,8 @@ public class PanZoomController
     }
 
     // The callback that performs the fling animation.
-    private class FlingRunnable implements Runnable {
-        public void run() {
+    private class FlingRunnable extends AnimationRunnable {
+        protected void animateFrame() {
             /*
              * The pan/zoom controller might have signaled to us that it wants to abort the
              * animation by setting the state to PanZoomState.NOTHING. Handle this case and bail
@@ -667,7 +702,7 @@ public class PanZoomController
 
             /* If we're still flinging in any direction, update the origin. */
             if (flingingX || flingingY) {
-                mX.displace(); mY.displace();
+                mX.displace(mOverridePanning); mY.displace(mOverridePanning);
                 updatePosition();
 
                 /*
@@ -846,8 +881,8 @@ public class PanZoomController
         }
 
         // Performs displacement of the viewport position according to the current velocity.
-        public void displace() {
-            if (locked || !scrollable())
+        public void displace(boolean panningOverridden) {
+            if (!panningOverridden && (locked || !scrollable()))
                 return;
 
             if (mFlingState == FlingStates.PANNING)
@@ -980,18 +1015,12 @@ public class PanZoomController
     public void onScaleEnd(ScaleGestureDetector detector) {
         Log.d(LOGTAG, "onScaleEnd in " + mState);
 
-        PointF o = mController.getOrigin();
         if (mState == PanZoomState.ANIMATED_ZOOM)
             return;
 
         mState = PanZoomState.PANNING_HOLD_LOCKED;
         mX.firstTouchPos = mX.lastTouchPos = mX.touchPos = detector.getFocusX();
         mY.firstTouchPos = mY.lastTouchPos = mY.touchPos = detector.getFocusY();
-
-        RectF viewport = mController.getViewport();
-
-        FloatSize pageSize = mController.getPageSize();
-        RectF pageRect = new RectF(0,0, pageSize.width, pageSize.height);
 
         // Force a viewport synchronisation
         mController.setForceRedraw();
