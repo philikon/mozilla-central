@@ -149,6 +149,8 @@ MarionetteDriverActor.prototype = {
       if (!prefs.getBoolPref("marionette.contentListener")) {
         this.messageManager.loadFrameScript("resource:///modules/marionette-listener.js", false);
         prefs.setBoolPref("marionette.contentListener", true);
+        // prevent 'slow script' dialogs
+        prefs.setIntPref("dom.max_script_run_time", 180);
       }
     } else {
       //XXX: this doesn't work in b2g
