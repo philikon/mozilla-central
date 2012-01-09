@@ -300,7 +300,6 @@ JSObject::methodReadBarrier(JSContext *cx, const js::Shape &shape, js::Value *vp
 {
     JS_ASSERT(nativeContains(cx, shape));
     JS_ASSERT(shape.isMethod());
-    JS_ASSERT(shape.writable());
     JS_ASSERT(shape.hasSlot());
     JS_ASSERT(shape.hasDefaultSetter());
     JS_ASSERT(!isGlobal());  /* i.e. we are not changing the global shape */
@@ -1324,9 +1323,9 @@ JSObject::getElementIfPresent(JSContext *cx, JSObject *receiver, uint32_t index,
 }
 
 inline JSBool
-JSObject::getSpecial(JSContext *cx, js::SpecialId sid, js::Value *vp)
+JSObject::getSpecial(JSContext *cx, JSObject *receiver, js::SpecialId sid, js::Value *vp)
 {
-    return getGeneric(cx, SPECIALID_TO_JSID(sid), vp);
+    return getGeneric(cx, receiver, SPECIALID_TO_JSID(sid), vp);
 }
 
 inline JSBool

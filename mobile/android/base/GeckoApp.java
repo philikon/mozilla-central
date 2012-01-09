@@ -108,6 +108,7 @@ abstract public class GeckoApp
     public static boolean mFullScreen = false;
     public static File sGREDir = null;
     public static Menu sMenu;
+    private static GeckoThread sGeckoThread = null;
     public Handler mMainHandler;
     private File mProfileDir;
     private static boolean sIsGeckoReady = false;
@@ -384,29 +385,6 @@ abstract public class GeckoApp
         return pluginCL.loadClass(className);
     }
 
-    // Returns true when the intent is going to be handled by gecko launch
-    boolean launch(Intent intent)
-    {
-        Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - launch");
-        
-        if (!checkAndSetLaunchState(LaunchState.Launching, LaunchState.Launched))
-            return false;
-
-                String args = intent.getStringExtra("args");
-                if (args != null && args.contains("-profile")) {
-                    // XXX: TO-DO set mProfileDir to the path passed in
-                    mUserDefinedProfile = true;
-                }
-
-        if (intent == null)
-            intent = getIntent();
-
-        prefetchDNS(intent.getData());
-        new GeckoThread(intent, mLastUri, mLastTitle).start();
-
-        return true;
-    }
-
     @Override
     public boolean onCreateOptionsMenu(Menu menu)
     {
@@ -459,6 +437,7 @@ abstract public class GeckoApp
         MenuItem share = aMenu.findItem(R.id.share);
         MenuItem agentMode = aMenu.findItem(R.id.agent_mode);
         MenuItem saveAsPDF = aMenu.findItem(R.id.save_as_pdf);
+        MenuItem downloads = aMenu.findItem(R.id.downloads);
 
         if (tab == null) {
             bookmark.setEnabled(false);
@@ -475,11 +454,9 @@ abstract public class GeckoApp
         if (tab.isBookmark()) {
             bookmark.setChecked(true);
             bookmark.setIcon(R.drawable.ic_menu_bookmark_remove);
-            bookmark.setTitle(R.string.bookmark_remove);
         } else {
             bookmark.setChecked(false);
             bookmark.setIcon(R.drawable.ic_menu_bookmark_add);
-            bookmark.setTitle(R.string.bookmark_add);
         }
 
         forward.setEnabled(tab.canDoForward());
@@ -494,6 +471,10 @@ abstract public class GeckoApp
         // Disable save as PDF for about:home and xul pages
         saveAsPDF.setEnabled(!(tab.getURL().equals("about:home") ||
                                tab.getContentType().equals("application/vnd.mozilla.xul+xml")));
+
+        // DownloadManager support is tied to level 12 and higher
+        if (Build.VERSION.SDK_INT < 12)
+            downloads.setVisible(false);
 
         return true;
     }
@@ -520,12 +501,10 @@ abstract public class GeckoApp
                         tab.removeBookmark();
                         Toast.makeText(this, R.string.bookmark_removed, Toast.LENGTH_SHORT).show();
                         item.setIcon(R.drawable.ic_menu_bookmark_add);
-                        item.setTitle(R.string.bookmark_add);
                     } else {
                         tab.addBookmark();
                         Toast.makeText(this, R.string.bookmark_added, Toast.LENGTH_SHORT).show();
                         item.setIcon(R.drawable.ic_menu_bookmark_remove);
-                        item.setTitle(R.string.bookmark_remove);
                     }
                 }
                 return true;
@@ -553,7 +532,11 @@ abstract public class GeckoApp
                 GeckoAppShell.sendEventToGecko(new GeckoEvent("Permissions:Get", null));
                 return true;
             case R.id.addons:
-                loadUrlInNewTab("about:addons");
+                loadUrlInTab("about:addons");
+                return true;
+            case R.id.downloads:
+                intent = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
+                startActivity(intent);
                 return true;
             case R.id.agent_mode:
                 Tab selectedTab = Tabs.getInstance().getSelectedTab();
@@ -612,11 +595,13 @@ abstract public class GeckoApp
                 if (getLayerController().getLayerClient() != mSoftwareLayerClient)
                     return;
 
-                if (mLastUri == lastHistoryEntry.mUri &&
-                    mLastTitle == lastHistoryEntry.mTitle)
+                if (lastHistoryEntry.mUri.equals(mLastUri))
                     return;
-   
-                mLastViewport = mSoftwareLayerClient.getGeckoViewportMetrics().toJSON();
+
+                ViewportMetrics viewportMetrics = mSoftwareLayerClient.getGeckoViewportMetrics();
+                if (viewportMetrics != null)
+                    mLastViewport = viewportMetrics.toJSON();
+
                 mLastUri = lastHistoryEntry.mUri;
                 mLastTitle = lastHistoryEntry.mTitle;
                 Bitmap bitmap = mSoftwareLayerClient.getBitmap();
@@ -995,6 +980,13 @@ abstract public class GeckoApp
                 String host = message.getString("host");
                 JSONArray permissions = message.getJSONArray("permissions");
                 showSiteSettingsDialog(host, permissions);
+            } else if (event.equals("Downloads:Done")) {
+                String displayName = message.getString("displayName");
+                String path = message.getString("path");
+                String mimeType = message.getString("mimeType");
+                int size = message.getInt("size");
+
+                handleDownloadDone(displayName, path, mimeType, size);
             }
         } catch (Exception e) {
             Log.e(LOGTAG, "Exception handling message \"" + event + "\":", e);
@@ -1322,6 +1314,17 @@ abstract public class GeckoApp
         tabs.closeTab(tab);
     }
 
+    void handleDownloadDone(String displayName, String path, String mimeType, int size) {
+        // DownloadManager.addCompletedDownload is supported in level 12 and higher
+        if (Build.VERSION.SDK_INT >= 12) {
+            DownloadManager dm = (DownloadManager) mAppContext.getSystemService(Context.DOWNLOAD_SERVICE);
+            dm.addCompletedDownload(displayName, displayName,
+                false /* do not use media scanner */,
+                mimeType, path, size,
+                false /* no notification */);
+        }
+    }
+
     void addPluginView(final View view,
                        final double x, final double y,
                        final double w, final double h) {
@@ -1430,7 +1433,9 @@ abstract public class GeckoApp
             mLastViewport = savedInstanceState.getString(SAVED_STATE_VIEWPORT);
             mLastScreen = savedInstanceState.getByteArray(SAVED_STATE_SCREEN);
         }
-        String uri = getIntent().getDataString();
+
+        Intent intent = getIntent();
+        String uri = intent.getDataString();
         String title = uri;
         if (uri != null && uri.length() > 0) {
             mLastUri = uri;
@@ -1442,10 +1447,27 @@ abstract public class GeckoApp
             showAboutHome();
         }
 
+        mAppContext = this;
+
+        if (sGREDir == null)
+            sGREDir = new File(this.getApplicationInfo().dataDir);
+
+        String args = intent.getStringExtra("args");
+        if (args != null && args.contains("-profile")) {
+            // XXX: TO-DO set mProfileDir to the path passed in
+            mUserDefinedProfile = true;
+        }
+
+        prefetchDNS(intent.getData());
+
+        sGeckoThread = new GeckoThread(intent, mLastUri, mLastTitle);
+        if (!ACTION_DEBUG.equals(intent.getAction()) &&
+            checkAndSetLaunchState(LaunchState.Launching, LaunchState.Launched))
+            sGeckoThread.start();
+
         super.onCreate(savedInstanceState);
 
         setContentView(R.layout.gecko_app);
-        mAppContext = this;
 
         if (Build.VERSION.SDK_INT >= 11) {
             mBrowserToolbar = (BrowserToolbar) getLayoutInflater().inflate(R.layout.gecko_app_actionbar, null);
@@ -1515,9 +1537,6 @@ abstract public class GeckoApp
 
         Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - UI almost up");
 
-        if (sGREDir == null)
-            sGREDir = new File(this.getApplicationInfo().dataDir);
-
         if (!sTryCatchAttached) {
             sTryCatchAttached = true;
             mMainHandler.post(new Runnable() {
@@ -1563,6 +1582,7 @@ abstract public class GeckoApp
         GeckoAppShell.registerGeckoEventListener("AgentMode:Changed", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("FormAssist:AutoComplete", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Permissions:Data", GeckoApp.mAppContext);
+        GeckoAppShell.registerGeckoEventListener("Downloads:Done", GeckoApp.mAppContext);
 
         mConnectivityFilter = new IntentFilter();
         mConnectivityFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
@@ -1580,7 +1600,7 @@ abstract public class GeckoApp
 
         final GeckoApp self = this;
  
-        mMainHandler.postDelayed(new Runnable() {
+        GeckoAppShell.getHandler().postDelayed(new Runnable() {
             public void run() {
                 
                 Log.w(LOGTAG, "zerdatime " + new Date().getTime() + " - pre checkLaunchState");
@@ -1657,13 +1677,13 @@ abstract public class GeckoApp
                 public void run() {
                     Log.i(LOGTAG, "Launching from debug intent after 5s wait");
                     setLaunchState(LaunchState.Launching);
-                    launch(getIntent());
+                    sGeckoThread.start();
                 }
             }, 1000 * 5 /* 5 seconds */);
             Log.i(LOGTAG, "Intent : ACTION_DEBUG - waiting 5s before launching");
             return;
         }
-        if (checkLaunchState(LaunchState.WaitForDebugger) || launch(intent))
+        if (checkLaunchState(LaunchState.WaitForDebugger) || intent == getIntent())
             return;
 
         if (Intent.ACTION_MAIN.equals(action)) {
@@ -1798,6 +1818,7 @@ abstract public class GeckoApp
         GeckoAppShell.unregisterGeckoEventListener("AgentMode:Changed", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("FormAssist:AutoComplete", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Permissions:Data", GeckoApp.mAppContext);
+        GeckoAppShell.unregisterGeckoEventListener("Downloads:Done", GeckoApp.mAppContext);
 
         mFavicons.close();
 
@@ -1849,7 +1870,6 @@ abstract public class GeckoApp
         Map<String,String> envMap = System.getenv();
         Set<Map.Entry<String,String>> envSet = envMap.entrySet();
         Iterator<Map.Entry<String,String>> envIter = envSet.iterator();
-        StringBuffer envstr = new StringBuffer();
         int c = 0;
         while (envIter.hasNext()) {
             Map.Entry<String,String> entry = envIter.next();
@@ -2197,11 +2217,24 @@ abstract public class GeckoApp
     }
 
     /**
-     * Open the link as a new tab, and mark the selected tab as its "parent".
+     * Open the url as a new tab, and mark the selected tab as its "parent".
+     * If the url is already open in a tab, the existing tab is selected.
      * Use this for tabs opened by the browser chrome, so users can press the
      * "Back" button to return to the previous tab.
      */
-    public void loadUrlInNewTab(String url) {
+    public void loadUrlInTab(String url) {
+        ArrayList<Tab> tabs = Tabs.getInstance().getTabsInOrder();
+        if (tabs != null) {
+            Iterator<Tab> tabsIter = tabs.iterator();
+            while (tabsIter.hasNext()) {
+                Tab tab = tabsIter.next();
+                if (url.equals(tab.getURL())) {
+                    GeckoAppShell.sendEventToGecko(new GeckoEvent("Tab:Select", String.valueOf(tab.getId())));
+                    return;
+                }
+            }
+        }
+
         JSONObject args = new JSONObject();
         try {
             args.put("url", url);
