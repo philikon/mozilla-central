@@ -87,6 +87,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
 #include "js/MemoryMetrics.h"
+#include "mozilla/Util.h" // DebugOnly
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -692,7 +693,6 @@ JSRuntime::JSRuntime()
     gcLastBytes(0),
     gcMaxBytes(0),
     gcMaxMallocBytes(0),
-    gcEmptyArenaPoolLifespan(0),
     gcNumArenasFreeCommitted(0),
     gcNumber(0),
     gcIncrementalTracer(NULL),
@@ -1193,6 +1193,18 @@ JS_PUBLIC_API(void)
 JS_SetContextPrivate(JSContext *cx, void *data)
 {
     cx->data = data;
+}
+
+JS_PUBLIC_API(void *)
+JS_GetSecondContextPrivate(JSContext *cx)
+{
+    return cx->data2;
+}
+
+JS_PUBLIC_API(void)
+JS_SetSecondContextPrivate(JSContext *cx, void *data)
+{
+    cx->data2 = data;
 }
 
 JS_PUBLIC_API(JSRuntime *)
@@ -2896,14 +2908,14 @@ JS_PUBLIC_API(void)
 JS_SetGCParameter(JSRuntime *rt, JSGCParamKey key, uint32_t value)
 {
     switch (key) {
-      case JSGC_MAX_BYTES:
+      case JSGC_MAX_BYTES: {
+        AutoLockGC lock(rt);
+        JS_ASSERT(value >= rt->gcBytes);
         rt->gcMaxBytes = value;
         break;
+      }
       case JSGC_MAX_MALLOC_BYTES:
         rt->setGCMaxMallocBytes(value);
-        break;
-      case JSGC_STACKPOOL_LIFESPAN:
-        rt->gcEmptyArenaPoolLifespan = value;
         break;
       default:
         JS_ASSERT(key == JSGC_MODE);
@@ -2919,13 +2931,11 @@ JS_GetGCParameter(JSRuntime *rt, JSGCParamKey key)
 {
     switch (key) {
       case JSGC_MAX_BYTES:
-        return rt->gcMaxBytes;
+        return uint32_t(rt->gcMaxBytes);
       case JSGC_MAX_MALLOC_BYTES:
         return rt->gcMaxMallocBytes;
-      case JSGC_STACKPOOL_LIFESPAN:
-        return rt->gcEmptyArenaPoolLifespan;
       case JSGC_BYTES:
-        return rt->gcBytes;
+        return uint32_t(rt->gcBytes);
       case JSGC_MODE:
         return uint32_t(rt->gcMode);
       case JSGC_UNUSED_CHUNKS:
@@ -3004,11 +3014,11 @@ JS_GetExternalStringClosure(JSContext *cx, JSString *str)
 }
 
 JS_PUBLIC_API(void)
-JS_SetThreadStackLimit(JSContext *cx, jsuword limitAddr)
+JS_SetThreadStackLimit(JSContext *cx, uintptr_t limitAddr)
 {
 #if JS_STACK_GROWTH_DIRECTION > 0
     if (limitAddr == 0)
-        limitAddr = jsuword(-1);
+        limitAddr = UINTPTR_MAX;
 #endif
     cx->stackLimit = limitAddr;
 }
@@ -3022,9 +3032,9 @@ JS_SetNativeStackQuota(JSContext *cx, size_t stackSize)
 
 #if JS_STACK_GROWTH_DIRECTION > 0
     if (stackSize == 0) {
-        cx->stackLimit = jsuword(-1);
+        cx->stackLimit = UINTPTR_MAX;
     } else {
-        jsuword stackBase = reinterpret_cast<jsuword>(JS_THREAD_DATA(cx)->nativeStackBase);
+        uintptr_t stackBase = reinterpret_cast<uintptr_t>(JS_THREAD_DATA(cx)->nativeStackBase);
         JS_ASSERT(stackBase <= size_t(-1) - stackSize);
         cx->stackLimit = stackBase + stackSize - 1;
     }
@@ -3032,7 +3042,7 @@ JS_SetNativeStackQuota(JSContext *cx, size_t stackSize)
     if (stackSize == 0) {
         cx->stackLimit = 0;
     } else {
-        jsuword stackBase = reinterpret_cast<jsuword>(JS_THREAD_DATA(cx)->nativeStackBase);
+        uintptr_t stackBase = reinterpret_cast<uintptr_t>(JS_THREAD_DATA(cx)->nativeStackBase);
         JS_ASSERT(stackBase >= stackSize);
         cx->stackLimit = stackBase - (stackSize - 1);
     }
@@ -4167,7 +4177,11 @@ JS_DeletePropertyById2(JSContext *cx, JSObject *obj, jsid id, jsval *rval)
     CHECK_REQUEST(cx);
     assertSameCompartment(cx, obj, id);
     JSAutoResolveFlags rf(cx, JSRESOLVE_QUALIFIED);
-    return obj->deleteGeneric(cx, id, rval, false);
+
+    if (JSID_IS_SPECIAL(id))
+        return obj->deleteSpecial(cx, JSID_TO_SPECIALID(id), rval, false);
+
+    return obj->deleteByValue(cx, IdToValue(id), rval, false);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -4175,24 +4189,37 @@ JS_DeleteElement2(JSContext *cx, JSObject *obj, uint32_t index, jsval *rval)
 {
     AssertNoGC(cx);
     CHECK_REQUEST(cx);
-    jsid id;
-    if (!IndexToId(cx, index, &id))
-        return false;
-    return JS_DeletePropertyById2(cx, obj, id, rval);
+    assertSameCompartment(cx, obj);
+    JSAutoResolveFlags rf(cx, JSRESOLVE_QUALIFIED);
+    return obj->deleteElement(cx, index, rval, false);
 }
 
 JS_PUBLIC_API(JSBool)
 JS_DeleteProperty2(JSContext *cx, JSObject *obj, const char *name, jsval *rval)
 {
+    CHECK_REQUEST(cx);
+    assertSameCompartment(cx, obj);
+    JSAutoResolveFlags rf(cx, JSRESOLVE_QUALIFIED);
+
     JSAtom *atom = js_Atomize(cx, name, strlen(name));
-    return atom && JS_DeletePropertyById2(cx, obj, ATOM_TO_JSID(atom), rval);
+    if (!atom)
+        return false;
+
+    return obj->deleteByValue(cx, StringValue(atom), rval, false);
 }
 
 JS_PUBLIC_API(JSBool)
 JS_DeleteUCProperty2(JSContext *cx, JSObject *obj, const jschar *name, size_t namelen, jsval *rval)
 {
+    CHECK_REQUEST(cx);
+    assertSameCompartment(cx, obj);
+    JSAutoResolveFlags rf(cx, JSRESOLVE_QUALIFIED);
+
     JSAtom *atom = js_AtomizeChars(cx, name, AUTO_NAMELEN(name, namelen));
-    return atom && JS_DeletePropertyById2(cx, obj, ATOM_TO_JSID(atom), rval);
+    if (!atom)
+        return false;
+
+    return obj->deleteByValue(cx, StringValue(atom), rval, false);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -5340,7 +5367,7 @@ JS_EvaluateUCScriptForPrincipalsVersion(JSContext *cx, JSObject *obj,
     return EvaluateUCScriptForPrincipalsCommon(cx, obj, principals, NULL, chars, length,
                                                filename, lineno, rval, avi.version());
 }
- 
+
 extern JS_PUBLIC_API(JSBool)
 JS_EvaluateUCScriptForPrincipalsVersionOrigin(JSContext *cx, JSObject *obj,
                                               JSPrincipals *principals,
@@ -6561,15 +6588,21 @@ JS_ThrowStopIteration(JSContext *cx)
     return js_ThrowStopIteration(cx);
 }
 
+JS_PUBLIC_API(intptr_t)
+JS_GetCurrentThread()
+{
+    return reinterpret_cast<intptr_t>(js_CurrentThreadId());
+}
+
 /*
  * Get the owning thread id of a context. Returns 0 if the context is not
  * owned by any thread.
  */
-JS_PUBLIC_API(jsword)
+JS_PUBLIC_API(intptr_t)
 JS_GetContextThread(JSContext *cx)
 {
 #ifdef JS_THREADSAFE
-    return reinterpret_cast<jsword>(JS_THREAD_ID(cx));
+    return cx->thread() ? reinterpret_cast<intptr_t>(cx->thread()->id) : 0;
 #else
     return 0;
 #endif
@@ -6579,7 +6612,7 @@ JS_GetContextThread(JSContext *cx)
  * Set the current thread as the owning thread of a context. Returns the
  * old owning thread id, or -1 if the operation failed.
  */
-JS_PUBLIC_API(jsword)
+JS_PUBLIC_API(intptr_t)
 JS_SetContextThread(JSContext *cx)
 {
     /* This function can be called by a finalizer. */
@@ -6589,7 +6622,7 @@ JS_SetContextThread(JSContext *cx)
     JS_ASSERT(!cx->outstandingRequests);
     if (cx->thread()) {
         JS_ASSERT(CURRENT_THREAD_IS_ME(cx->thread()));
-        return reinterpret_cast<jsword>(cx->thread()->id);
+        return reinterpret_cast<intptr_t>(cx->thread()->id);
     }
 
     if (!js_InitContextThreadAndLockGC(cx)) {
@@ -6629,7 +6662,7 @@ JS_AbortIfWrongThread(JSRuntime *rt)
 #endif
 }
 
-JS_PUBLIC_API(jsword)
+JS_PUBLIC_API(intptr_t)
 JS_ClearContextThread(JSContext *cx)
 {
     JS_AbortIfWrongThread(cx->runtime);
@@ -6661,7 +6694,7 @@ JS_ClearContextThread(JSContext *cx)
      * We can access t->id as long as the GC lock is held and we cannot race
      * with the GC that may delete t.
      */
-    return reinterpret_cast<jsword>(t->id);
+    return reinterpret_cast<intptr_t>(t->id);
 #else
     return 0;
 #endif
@@ -6823,3 +6856,31 @@ JS_CallOnce(JSCallOnceType *once, JSInitCallback func)
     }
 #endif
 }
+
+namespace JS {
+
+AutoGCRooter::AutoGCRooter(JSContext *cx, ptrdiff_t tag)
+  : down(cx->autoGCRooters), tag(tag), context(cx)
+{
+    JS_ASSERT(this != cx->autoGCRooters);
+    CHECK_REQUEST(cx);
+    cx->autoGCRooters = this;
+}
+
+AutoGCRooter::~AutoGCRooter()
+{
+    JS_ASSERT(this == context->autoGCRooters);
+    CHECK_REQUEST(context);
+    context->autoGCRooters = down;
+}
+
+AutoEnumStateRooter::~AutoEnumStateRooter()
+{
+    if (!stateValue.isNull()) {
+        DebugOnly<JSBool> ok =
+            obj->enumerate(context, JSENUMERATE_DESTROY, &stateValue, 0);
+        JS_ASSERT(ok);
+    }
+}
+
+} // namespace JS

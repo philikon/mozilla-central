@@ -876,7 +876,6 @@ js::Class XPC_WN_NoHelper_JSClass = {
         nsnull, // setAttributes
         nsnull, // setElementAttributes
         nsnull, // setSpecialAttributes
-        nsnull, // deleteGeneric
         nsnull, // deleteProperty
         nsnull, // deleteElement
         nsnull, // deleteSpecial
@@ -1312,7 +1311,7 @@ public:
   ~AutoPopJSContext()
   {
       if (mCx)
-          mStack->Pop(nsnull);
+          mStack->Pop();
   }
 
   void PushIfNotTop(JSContext *cx)
@@ -1320,10 +1319,9 @@ public:
       NS_ASSERTION(cx, "Null context!");
       NS_ASSERTION(!mCx, "This class is only meant to be used once!");
 
-      JSContext *cxTop = nsnull;
-      mStack->Peek(&cxTop);
+      JSContext *cxTop = mStack->Peek();
 
-      if (cxTop != cx && NS_SUCCEEDED(mStack->Push(cx)))
+      if (cxTop != cx && mStack->Push(cx))
           mCx = cx;
   }
 

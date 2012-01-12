@@ -62,6 +62,8 @@ XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
 
 const kStateActive = 0x00000001; // :active pseudoclass for elements
 
+const kXLinkNamespace = "http://www.w3.org/1999/xlink";
+
 // TODO: Take into account ppi in these units?
 
 // The ratio of velocity that is retained every ms.
@@ -161,11 +163,30 @@ var MetadataProvider = {
   },
 
   paintingSuppressed: function paintingSuppressed() {
-    let browser = BrowserApp.selectedBrowser;
-    if (!browser)
+    // Get the current tab. Don't suppress painting if there are no tabs yet.
+    let tab = BrowserApp.selectedTab;
+    if (!tab)
       return false;
-    let cwu = browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                   .getInterface(Ci.nsIDOMWindowUtils);
+
+    // If the viewport metadata has not yet been updated (and therefore the browser size has not
+    // been changed accordingly), do not draw yet. We'll get an unsightly flash on page transitions
+    // otherwise, because we receive a paint event after the new document is shown but before the
+    // correct browser size for the new document has been set.
+    //
+    // This whole situation exists because the docshell and the browser element are unaware of the
+    // existence of <meta viewport>. Therefore they dispatch paint events without knowledge of the
+    // invariant that the page must not be drawn until the browser size has been appropriately set.
+    // It would be easier if the docshell were made aware of the existence of <meta viewport> so
+    // that this logic could be removed.
+
+    let viewportDocumentId = tab.documentIdForCurrentViewport;
+    let contentDocumentId = ViewportHandler.getIdForDocument(tab.browser.contentDocument);
+    if (viewportDocumentId != null && viewportDocumentId != contentDocumentId)
+      return true;
+
+    // Suppress painting if the current presentation shell is suppressing painting.
+    let cwu = tab.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                       .getInterface(Ci.nsIDOMWindowUtils);
     return cwu.paintingSuppressed;
   }
 };
@@ -241,8 +262,13 @@ var BrowserApp = {
     Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
 
     let url = "about:home";
-    if ("arguments" in window && window.arguments[0])
-      url = window.arguments[0];
+    let restoreSession = false;
+    if ("arguments" in window) {
+      if (window.arguments[0])
+        url = window.arguments[0];
+      if (window.arguments[1])
+        restoreSession = window.arguments[1];
+    }
 
     // XXX maybe we don't do this if the launch was kicked off from external
     Services.io.offline = false;
@@ -254,7 +280,7 @@ var BrowserApp = {
 
     // restore the previous session
     let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    if (ss.shouldRestore()) {
+    if (restoreSession || ss.shouldRestore()) {
       // A restored tab should not be active if we are loading a URL
       let restoreToFront = false;
 
@@ -280,6 +306,9 @@ var BrowserApp = {
       ss.restoreLastSession(restoreToFront);
     } else {
       this.addTab(url);
+
+      // show telemetry door hanger if we aren't restoring a session
+      this._showTelemetryPrompt();
     }
 
     // notify java that gecko has loaded
@@ -288,35 +317,35 @@ var BrowserApp = {
         type: "Gecko:Ready"
       }
     });
+  },
 
+  _showTelemetryPrompt: function _showTelemetryPrompt() {
     let telemetryPrompted = false;
     try {
       telemetryPrompted = Services.prefs.getBoolPref("toolkit.telemetry.prompted");
-    } catch (e) {
-      // optional
-    }
+    } catch (e) { /* Optional */ }
+    if (telemetryPrompted)
+      return;
 
-    if (!telemetryPrompted) {
-      let buttons = [
-        {
-          label: Strings.browser.GetStringFromName("telemetry.optin.yes"),
-          callback: function () {
-            Services.prefs.setBoolPref("toolkit.telemetry.prompted", true);
-            Services.prefs.setBoolPref("toolkit.telemetry.enabled", true);
-          }
-        },
-        {
-          label: Strings.browser.GetStringFromName("telemetry.optin.no"),
-          callback: function () {
-            Services.prefs.setBoolPref("toolkit.telemetry.prompted", true);
-            Services.prefs.setBoolPref("toolkit.telemetry.enabled", false);
-          }
+    let buttons = [
+      {
+        label: Strings.browser.GetStringFromName("telemetry.optin.yes"),
+        callback: function () {
+          Services.prefs.setBoolPref("toolkit.telemetry.prompted", true);
+          Services.prefs.setBoolPref("toolkit.telemetry.enabled", true);
         }
-      ];
-      let brandShortName = Strings.brand.GetStringFromName("brandShortName");
-      let message = Strings.browser.formatStringFromName("telemetry.optin.message", [brandShortName], 1);
-      NativeWindow.doorhanger.show(message, "telemetry-optin", buttons);
-    }
+      },
+      {
+        label: Strings.browser.GetStringFromName("telemetry.optin.no"),
+        callback: function () {
+          Services.prefs.setBoolPref("toolkit.telemetry.prompted", true);
+          Services.prefs.setBoolPref("toolkit.telemetry.enabled", false);
+        }
+      }
+    ];
+    let brandShortName = Strings.brand.GetStringFromName("brandShortName");
+    let message = Strings.browser.formatStringFromName("telemetry.optin.message", [brandShortName], 1);
+    NativeWindow.doorhanger.show(message, "telemetry-optin", buttons);
   },
 
   shutdown: function shutdown() {
@@ -465,8 +494,27 @@ var BrowserApp = {
   },
 
   quit: function quit() {
-      window.QueryInterface(Ci.nsIDOMChromeWindow).minimize();
-      window.close();
+    // Figure out if there's at least one other browser window around.
+    let lastBrowser = true;
+    let e = Services.wm.getEnumerator("navigator:browser");
+    while (e.hasMoreElements() && lastBrowser) {
+      let win = e.getNext();
+      if (win != window)
+        lastBrowser = false;
+    }
+
+    if (lastBrowser) {
+      // Let everyone know we are closing the last browser window
+      let closingCanceled = Cc["@mozilla.org/supports-PRBool;1"].createInstance(Ci.nsISupportsPRBool);
+      Services.obs.notifyObservers(closingCanceled, "browser-lastwindow-close-requested", null);
+      if (closingCanceled.data)
+        return;
+
+      Services.obs.notifyObservers(null, "browser-lastwindow-close-granted", null);
+    }
+
+    window.QueryInterface(Ci.nsIDOMChromeWindow).minimize();
+    window.close();
   },
 
   saveAsPDF: function saveAsPDF(aBrowser) {
@@ -921,20 +969,16 @@ var NativeWindow = {
   },
   contextmenus: {
     items: {}, //  a list of context menu items that we may show
-    textContext: null, // saved selector for text input areas
-    linkContext: null, // saved selector for links
     _contextId: 0, // id to assign to new context menu items if they are added
 
     init: function() {
-      this.textContext = this.SelectorContext("input[type='text'],input[type='password'],textarea");
-      this.linkContext = this.SelectorContext("a:not([href='']),area:not([href='']),link");
       this.imageContext = this.SelectorContext("img");
 
       Services.obs.addObserver(this, "Gesture:LongPress", false);
 
       // TODO: These should eventually move into more appropriate classes
       this.add(Strings.browser.GetStringFromName("contextmenu.openInNewTab"),
-               this.linkContext,
+               this.linkOpenableContext,
                function(aTarget) {
                  let url = NativeWindow.contextmenus._getLinkURL(aTarget);
                  BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id });
@@ -1007,6 +1051,39 @@ var NativeWindow = {
       }
     },
 
+    linkOpenableContext: {
+      matches: function linkOpenableContextMatches(aElement) {
+        if (aElement.nodeType == Ci.nsIDOMNode.ELEMENT_NODE &&
+            ((aElement instanceof Ci.nsIDOMHTMLAnchorElement && aElement.href) ||
+            (aElement instanceof Ci.nsIDOMHTMLAreaElement && aElement.href) ||
+            aElement instanceof Ci.nsIDOMHTMLLinkElement ||
+            aElement.getAttributeNS(kXLinkNamespace, "type") == "simple")) {
+          let uri;
+          try {
+            let url = NativeWindow.contextmenus._getLinkURL(aElement);
+            uri = Services.io.newURI(url, null, null);
+          } catch (e) {
+            return false;
+          }
+
+          let scheme = uri.scheme;
+          if (!scheme)
+            return false;
+
+          let dontOpen = /^(mailto|javascript|news|snews)$/;
+          return (scheme && !dontOpen.test(scheme));
+        }
+        return false;
+      }
+    },
+
+    textContext: {
+      matches: function textContext(aElement) {
+        return ((aElement instanceof Ci.nsIDOMHTMLInputElement && aElement.mozIsTextField(false))
+                || aElement instanceof Ci.nsIDOMHTMLTextAreaElement);
+      }
+    },
+
     _sendToContent: function(aX, aY) {
       // initially we look for nearby clickable elements. If we don't find one we fall back to using whatever this click was on
       let rootElement = ElementTouchHelper.elementFromPoint(BrowserApp.selectedBrowser.contentWindow, aX, aY);
@@ -1029,7 +1106,7 @@ var NativeWindow = {
           }
         }
 
-        if (this.linkContext.matches(element) || this.textContext.matches(element))
+        if (this.linkOpenableContext.matches(element) || this.textContext.matches(element))
           break;
         element = element.parentNode;
       }
@@ -1124,7 +1201,7 @@ var NativeWindow = {
         throw "Empty href";
       }
 
-      return Util.makeURLAbsolute(aLink.baseURI, href);
+      return this.makeURLAbsolute(aLink.baseURI, href);
     }
   }
 };
@@ -1204,8 +1281,6 @@ nsBrowserAccess.prototype = {
 
 let gTabIDFactory = 0;
 
-const kDefaultMetadata = { autoSize: false, allowZoom: true, autoScale: true };
-
 // track the last known screen size so that new tabs
 // get created with the right size rather than being 1x1
 let gScreenWidth = 1;
@@ -1218,10 +1293,10 @@ function Tab(aURL, aParams) {
   this.agentMode = UA_MODE_MOBILE;
   this.lastHost = null;
   this.create(aURL, aParams);
-  this._metadata = null;
   this._viewport = { x: 0, y: 0, width: gScreenWidth, height: gScreenHeight, offsetX: 0, offsetY: 0,
                      pageWidth: gScreenWidth, pageHeight: gScreenHeight, zoom: 1.0 };
   this.viewportExcess = { x: 0, y: 0 };
+  this.documentIdForCurrentViewport = null;
   this.userScrollPos = { x: 0, y: 0 };
   this._pluginsToPlay = [];
   this._pluginOverlayShowing = false;
@@ -1278,8 +1353,10 @@ Tab.prototype = {
     this.browser.addEventListener("scroll", this, true);
     this.browser.addEventListener("PluginClickToPlay", this, true);
     this.browser.addEventListener("pagehide", this, true);
+    this.browser.addEventListener("pageshow", this, true);
 
     Services.obs.addObserver(this, "http-on-modify-request", false);
+    Services.obs.addObserver(this, "document-shown", false);
 
     if (!aParams.delayLoad) {
       let flags = "flags" in aParams ? aParams.flags : Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
@@ -1339,6 +1416,7 @@ Tab.prototype = {
     this.browser.removeEventListener("scroll", this, true);
     this.browser.removeEventListener("PluginClickToPlay", this, true);
     this.browser.removeEventListener("pagehide", this, true);
+    this.browser.removeEventListener("pageshow", this, true);
 
     // Make sure the previously selected panel remains selected. The selected panel of a deck is
     // not stable when panels are removed.
@@ -1349,6 +1427,7 @@ Tab.prototype = {
     Services.obs.removeObserver(this, "http-on-modify-request", false);
     this.browser = null;
     this.vbox = null;
+    this.documentIdForCurrentViewport = null;
     let message = {
       gecko: {
         type: "Tab:Closed",
@@ -1505,8 +1584,6 @@ Tab.prototype = {
         if (target.defaultView != this.browser.contentWindow)
           return;
 
-        this.updateViewport(true);
-
         sendMessageToJava({
           gecko: {
             type: "DOMContentLoaded",
@@ -1626,7 +1703,7 @@ Tab.prototype = {
         // Keep track of all the plugins on the current page
         this._pluginsToPlay.push(plugin);
 
-        let overlay = plugin.ownerDocument.getAnonymousElementByAttribute(plugin, "class", "mainBox");        
+        let overlay = plugin.ownerDocument.getAnonymousElementByAttribute(plugin, "class", "mainBox");
         if (!overlay)
           return;
 
@@ -1637,8 +1714,12 @@ Tab.prototype = {
           return;
         }
 
-        // Play all the plugin objects when the user clicks on one
-        PluginHelper.addPluginClickCallback(plugin, "playAllPlugins", this);
+        // Add click to play listener
+        plugin.addEventListener("click", (function(event) {
+          // Play all the plugin objects when the user clicks on one
+          PluginHelper.playAllPlugins(this, event);
+        }).bind(this), true);
+
         this._pluginOverlayShowing = true;
         break;
       }
@@ -1784,7 +1865,7 @@ Tab.prototype = {
   },
 
   get metadata() {
-    return this._metadata || kDefaultMetadata;
+    return ViewportHandler.getMetadataForDocument(this.browser.contentDocument);
   },
 
   /** Update viewport when the metadata changes. */
@@ -1799,7 +1880,7 @@ Tab.prototype = {
       if ("maxZoom" in aMetadata && aMetadata.maxZoom > 0)
         aMetadata.maxZoom *= scaleRatio;
     }
-    this._metadata = aMetadata;
+    ViewportHandler.setMetadataForDocument(this.browser.contentDocument, aMetadata);
     this.updateViewportSize();
     this.updateViewport(true);
   },
@@ -1896,18 +1977,31 @@ Tab.prototype = {
   },
 
   observe: function(aSubject, aTopic, aData) {
-    if (!(aSubject instanceof Ci.nsIHttpChannel))
-      return;
+    switch (aTopic) {
+      case "http-on-modify-request":
+        if (!(aSubject instanceof Ci.nsIHttpChannel))
+          return;
 
-    let channel = aSubject.QueryInterface(Ci.nsIHttpChannel);
-    if (!(channel.loadFlags & Ci.nsIChannel.LOAD_DOCUMENT_URI))
-      return;
+        let channel = aSubject.QueryInterface(Ci.nsIHttpChannel);
+        if (!(channel.loadFlags & Ci.nsIChannel.LOAD_DOCUMENT_URI))
+          return;
 
-    let channelWindow = this.getWindowForRequest(channel);
-    if (channelWindow == this.browser.contentWindow) {
-      this.setHostFromURL(channel.URI.spec);
-      if (this.agentMode == UA_MODE_DESKTOP)
-        channel.setRequestHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:7.0.1) Gecko/20100101 Firefox/7.0.1", false);
+        let channelWindow = this.getWindowForRequest(channel);
+        if (channelWindow == this.browser.contentWindow) {
+          this.setHostFromURL(channel.URI.spec);
+          if (this.agentMode == UA_MODE_DESKTOP)
+            channel.setRequestHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:7.0.1) Gecko/20100101 Firefox/7.0.1", false);
+        }
+        break;
+
+      case "document-shown":
+        // Is it on the top level?
+        let contentDocument = aSubject;
+        if (contentDocument == this.browser.contentDocument) {
+          ViewportHandler.updateMetadata(this);
+          this.documentIdForCurrentViewport = ViewportHandler.getIdForDocument(contentDocument);
+        }
+        break;
     }
   },
 
@@ -2483,8 +2577,7 @@ var FormAssistant = {
     Services.obs.addObserver(this, "FormAssist:AutoComplete", false);
     Services.obs.addObserver(this, "FormAssist:Closed", false);
 
-    BrowserApp.deck.addEventListener("compositionstart", this, false);
-    BrowserApp.deck.addEventListener("compositionupdate", this, false);
+    BrowserApp.deck.addEventListener("input", this, false);
   },
 
   uninit: function() {
@@ -2510,9 +2603,8 @@ var FormAssistant = {
   },
 
   handleEvent: function(aEvent) {
-   switch (aEvent.type) {
-      case "compositionstart":
-      case "compositionupdate":
+    switch (aEvent.type) {
+      case "input":
         let currentElement = aEvent.target;
         if (!this._isAutocomplete(currentElement))
           break;
@@ -2520,7 +2612,7 @@ var FormAssistant = {
         // Keep track of input element so we can fill it in if the user
         // selects an autocomplete suggestion
         this._currentInputElement = currentElement;
-        let suggestions = this._getAutocompleteSuggestions(aEvent.data, currentElement);
+        let suggestions = this._getAutocompleteSuggestions(currentElement.value, currentElement);
 
         let rect = currentElement.getBoundingClientRect();
         let zoom = BrowserApp.selectedTab.viewport.zoom;
@@ -2587,6 +2679,7 @@ var FormAssistant = {
     let target = aTarget;
     while (target) {
       if (this._isSelectElement(target)) {
+        target.focus();
         let list = this.getListForElement(target);
         this.show(list, target);
         target = null;
@@ -2794,19 +2887,23 @@ const kViewportMinHeight = 223;
 const kViewportMaxHeight = 10000;
 
 var ViewportHandler = {
+  // The cached viewport metadata for each document. We tie viewport metadata to each document
+  // instead of to each tab so that we don't have to update it when the document changes. Using an
+  // ES6 weak map lets us avoid leaks.
+  _metadata: new WeakMap(),
+
+  // A list of document IDs, arbitrarily assigned. We use IDs to refer to content documents instead
+  // of strong references to avoid leaking them.
+  _documentIds: new WeakMap(),
+  _nextDocumentId: 0,
+
   init: function init() {
-    addEventListener("DOMWindowCreated", this, false);
     addEventListener("DOMMetaAdded", this, false);
-    addEventListener("DOMContentLoaded", this, false);
-    addEventListener("pageshow", this, false);
     addEventListener("resize", this, false);
   },
 
   uninit: function uninit() {
-    removeEventListener("DOMWindowCreated", this, false);
     removeEventListener("DOMMetaAdded", this, false);
-    removeEventListener("DOMContentLoaded", this, false);
-    removeEventListener("pageshow", this, false);
     removeEventListener("resize", this, false);
   },
 
@@ -2819,18 +2916,9 @@ var ViewportHandler = {
       return;
 
     switch (aEvent.type) {
-      case "DOMWindowCreated":
-        this.resetMetadata(tab);
-        break;
-
       case "DOMMetaAdded":
         if (target.name == "viewport")
           this.updateMetadata(tab);
-        break;
-
-      case "DOMContentLoaded":
-      case "pageshow":
-        this.updateMetadata(tab);
         break;
 
       case "resize":
@@ -2940,6 +3028,46 @@ var ViewportHandler = {
     let utils = window.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     delete this.displayDPI;
     return this.displayDPI = utils.displayDPI;
+  },
+
+  /**
+   * Returns the viewport metadata for the given document, or the default metrics if no viewport
+   * metadata is available for that document.
+   */
+  getMetadataForDocument: function getMetadataForDocument(aDocument) {
+    let metadata = this._metadata.get(aDocument, this.getDefaultMetadata());
+    return metadata;
+  },
+
+  /** Updates the saved viewport metadata for the given content document. */
+  setMetadataForDocument: function setMetadataForDocument(aDocument, aMetadata) {
+    if (!aMetadata)
+      this._metadata.delete(aDocument);
+    else
+      this._metadata.set(aDocument, aMetadata);
+  },
+
+  /** Returns the default viewport metadata for a document. */
+  getDefaultMetadata: function getDefaultMetadata() {
+    return {
+      autoSize: false,
+      allowZoom: true,
+      autoScale: true,
+      scaleRatio: ViewportHandler.getScaleRatio()
+    };
+  },
+
+  /**
+   * Returns a globally unique ID for the given content document. Using IDs to refer to documents
+   * allows content documents to be identified without any possibility of leaking them.
+   */
+  getIdForDocument: function getIdForDocument(aDocument) {
+    let id = this._documentIds.get(aDocument, null);
+    if (id == null) {
+      id = this._nextDocumentId++;
+      this._documentIds.set(aDocument, id);
+    }
+    return id;
   }
 };
 
@@ -3311,7 +3439,7 @@ var ClipboardHelper = {
   init: function() {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copy"), ClipboardHelper.getCopyContext(false), ClipboardHelper.copy.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyAll"), ClipboardHelper.getCopyContext(true), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), NativeWindow.contextmenus.textContext, ClipboardHelper.select.bind(ClipboardHelper));
+    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), ClipboardHelper.selectAllContext, ClipboardHelper.select.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.paste"), ClipboardHelper.pasteContext, ClipboardHelper.paste.bind(ClipboardHelper));
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"), NativeWindow.contextmenus.textContext, ClipboardHelper.inputMethod.bind(ClipboardHelper));
   },
@@ -3361,15 +3489,32 @@ var ClipboardHelper = {
     return {
       matches: function(aElement) {
         if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+          // Don't include "copy" for password fields.
+          // mozIsTextField(true) tests for only non-password fields.
+          if (aElement instanceof Ci.nsIDOMHTMLInputElement && !aElement.mozIsTextField(true))
+            return false;
+
           let selectionStart = aElement.selectionStart;
           let selectionEnd = aElement.selectionEnd;
           if (selectionStart != selectionEnd)
             return true;
-          else if (isCopyAll)
+
+          if (isCopyAll && aElement.textLength > 0)
             return true;
         }
         return false;
       }
+    }
+  },
+
+  selectAllContext: {
+    matches: function selectAllContextMatches(aElement) {
+      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+          let selectionStart = aElement.selectionStart;
+          let selectionEnd = aElement.selectionEnd;
+          return (selectionStart > 0 || selectionEnd < aElement.textLength);
+      }
+      return false;
     }
   },
 
@@ -3404,12 +3549,23 @@ var PluginHelper = {
     NativeWindow.doorhanger.show(message, "ask-to-play-plugins", buttons, aTab.id);
   },
 
-  playAllPlugins: function(aTab) {
+  playAllPlugins: function(aTab, aEvent) {
     let plugins = aTab._pluginsToPlay;
+    if (!plugins.length)
+      return;
+
+    if (aEvent) {
+      if (!aEvent.isTrusted)
+        return;
+      aEvent.preventDefault();
+    }
+
     for (let i = 0; i < plugins.length; i++) {
       let objLoadingContent = plugins[i].QueryInterface(Ci.nsIObjectLoadingContent);
       objLoadingContent.playPlugin();
     }
+    // Clear _pluginsToPlay so we don't accidentally re-load them
+    aTab._pluginsToPlay = [];
   },
 
   getPluginPreference: function getPluginPreference() {
@@ -3436,33 +3592,6 @@ var PluginHelper = {
         Services.prefs.clearUserPref("plugins.click_to_play");
         break;
     }
-  },
-
-  // Mostly copied from /browser/base/content/browser.js
-  addPluginClickCallback: function (plugin, callbackName /*callbackArgs...*/) {
-    // XXX just doing (callback)(arg) was giving a same-origin error. bug?
-    let self = this;
-    let callbackArgs = Array.prototype.slice.call(arguments).slice(2);
-    plugin.addEventListener("click", function(evt) {
-      if (!evt.isTrusted)
-        return;
-      evt.preventDefault();
-      if (callbackArgs.length == 0)
-        callbackArgs = [ evt ];
-      (self[callbackName]).apply(self, callbackArgs);
-    }, true);
-
-    plugin.addEventListener("keydown", function(evt) {
-      if (!evt.isTrusted)
-        return;
-      if (evt.keyCode == evt.DOM_VK_RETURN) {
-        evt.preventDefault();
-        if (callbackArgs.length == 0)
-          callbackArgs = [ evt ];
-        evt.preventDefault();
-        (self[callbackName]).apply(self, callbackArgs);
-      }
-    }, true);
   },
 
   // Copied from /browser/base/content/browser.js
@@ -3630,6 +3759,8 @@ var PermissionsHelper = {
       Services.logins.setLoginSavingEnabled(aURI.prePath, true);
     } else {
       Services.perms.remove(aURI.host, aType);
+      // Clear content prefs set in ContentPermissionPrompt.js
+      Services.contentPrefs.removePref(aURI, aType + ".request.remember");
     }
   }
 }

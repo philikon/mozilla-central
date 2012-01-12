@@ -132,7 +132,9 @@ public class GeckoAppShell
     public static native void loadLibs(String apkName, boolean shouldExtract);
     public static native void onChangeNetworkLinkStatus(String status);
     public static native void reportJavaCrash(String stack);
-    public static native void notifyUriVisited(String uri);
+    public static void notifyUriVisited(String uri) {
+        sendEventToGecko(new GeckoEvent(GeckoEvent.VISTITED, uri));
+    }
 
     public static native void processNextNativeEvent();
 
@@ -302,17 +304,19 @@ public class GeckoAppShell
         // libxul will depend on.  Not ideal.
         GeckoApp geckoApp = GeckoApp.mAppContext;
         String homeDir;
+        sHomeDir = GeckoDirProvider.getFilesDir(geckoApp);
+        homeDir = sHomeDir.getPath();
+
+        // handle the application being moved to phone from sdcard
+        File profileDir = new File(homeDir, "mozilla");
+        File oldHome = new File("/data/data/" + 
+                    GeckoApp.mAppContext.getPackageName() + "/mozilla");
+        if (oldHome.exists())
+            moveDir(oldHome, profileDir);
+
         if (Build.VERSION.SDK_INT < 8 ||
             geckoApp.getApplication().getPackageResourcePath().startsWith("/data") ||
             geckoApp.getApplication().getPackageResourcePath().startsWith("/system")) {
-            sHomeDir = geckoApp.getFilesDir();
-            homeDir = sHomeDir.getPath();
-            // handle the application being moved to phone from sdcard
-            File profileDir = new File(homeDir, "mozilla");
-            File oldHome = new File("/data/data/" + 
-                        GeckoApp.mAppContext.getPackageName() + "/mozilla");
-            if (oldHome.exists())
-                moveDir(oldHome, profileDir);
             if (Build.VERSION.SDK_INT >= 8) {
                 File extHome =  geckoApp.getExternalFilesDir(null);
                 File extProf = new File (extHome, "mozilla");
@@ -320,15 +324,6 @@ public class GeckoAppShell
                     moveDir(extProf, profileDir);
             }
         } else {
-            sHomeDir = geckoApp.getExternalFilesDir(null);
-            homeDir = sHomeDir.getPath();
-            // handle the application being moved to phone from sdcard
-            File profileDir = new File(homeDir, "mozilla");
-            File oldHome = new File("/data/data/" + 
-                        GeckoApp.mAppContext.getPackageName() + "/mozilla");
-            if (oldHome.exists())
-                moveDir(oldHome, profileDir);
-
             File intHome =  geckoApp.getFilesDir();
             File intProf = new File(intHome, "mozilla");
             if (intHome != null && intProf != null && intProf.exists())
@@ -424,7 +419,7 @@ public class GeckoAppShell
         }
     }
 
-    public static void runGecko(String apkPath, String args, String url) {
+    public static void runGecko(String apkPath, String args, String url, boolean restoreSession) {
         // run gecko -- it will spawn its own thread
         GeckoAppShell.nativeInit();
 
@@ -449,6 +444,8 @@ public class GeckoAppShell
             combinedArgs += " " + args;
         if (url != null)
             combinedArgs += " -remote " + url;
+        if (restoreSession)
+            combinedArgs += " -restoresession";
 
         GeckoApp.mAppContext.runOnUiThread(new Runnable() {
                 public void run() {

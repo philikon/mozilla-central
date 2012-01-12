@@ -43,6 +43,7 @@
 
 #include <new>
 
+#include "jsapi.h"
 #include "jsarray.h"
 #include "jsbool.h"
 #include "jscntxt.h"
@@ -229,35 +230,36 @@ JSObject::getProperty(JSContext *cx, js::PropertyName *name, js::Value *vp)
     return getGeneric(cx, ATOM_TO_JSID(name), vp);
 }
 
-inline JSBool
-JSObject::deleteGeneric(JSContext *cx, jsid id, js::Value *rval, JSBool strict)
+inline bool
+JSObject::deleteProperty(JSContext *cx, js::PropertyName *name, js::Value *rval, bool strict)
 {
-    js::types::AddTypePropertyId(cx, this, id,
-                                 js::types::Type::UndefinedType());
+    jsid id = js_CheckForStringIndex(ATOM_TO_JSID(name));
+    js::types::AddTypePropertyId(cx, this, id, js::types::Type::UndefinedType());
     js::types::MarkTypePropertyConfigured(cx, this, id);
-    js::DeleteGenericOp op = getOps()->deleteGeneric;
-    return (op ? op : js_DeleteProperty)(cx, this, id, rval, strict);
+    js::DeletePropertyOp op = getOps()->deleteProperty;
+    return (op ? op : js_DeleteProperty)(cx, this, name, rval, strict);
 }
 
-inline JSBool
-JSObject::deleteProperty(JSContext *cx, js::PropertyName *name, js::Value *rval, JSBool strict)
-{
-    return deleteGeneric(cx, ATOM_TO_JSID(name), rval, strict);
-}
-
-inline JSBool
-JSObject::deleteElement(JSContext *cx, uint32_t index, js::Value *rval, JSBool strict)
+inline bool
+JSObject::deleteElement(JSContext *cx, uint32_t index, js::Value *rval, bool strict)
 {
     jsid id;
     if (!js::IndexToId(cx, index, &id))
         return false;
-    return deleteGeneric(cx, id, rval, strict);
+    js::types::AddTypePropertyId(cx, this, id, js::types::Type::UndefinedType());
+    js::types::MarkTypePropertyConfigured(cx, this, id);
+    js::DeleteElementOp op = getOps()->deleteElement;
+    return (op ? op : js_DeleteElement)(cx, this, index, rval, strict);
 }
 
-inline JSBool
-JSObject::deleteSpecial(JSContext *cx, js::SpecialId sid, js::Value *rval, JSBool strict)
+inline bool
+JSObject::deleteSpecial(JSContext *cx, js::SpecialId sid, js::Value *rval, bool strict)
 {
-    return deleteGeneric(cx, SPECIALID_TO_JSID(sid), rval, strict);
+    jsid id = SPECIALID_TO_JSID(sid);
+    js::types::AddTypePropertyId(cx, this, id, js::types::Type::UndefinedType());
+    js::types::MarkTypePropertyConfigured(cx, this, id);
+    js::DeleteSpecialOp op = getOps()->deleteSpecial;
+    return (op ? op : js_DeleteSpecial)(cx, this, sid, rval, strict);
 }
 
 inline void
@@ -632,6 +634,23 @@ JSObject::denseArrayHasInlineSlots() const
 }
 
 namespace js {
+
+inline JSObject *
+ValueToObjectOrPrototype(JSContext *cx, const Value &v)
+{
+    if (v.isObject())
+        return &v.toObject();
+    GlobalObject *global = &cx->fp()->scopeChain().global();
+    if (v.isString())
+        return global->getOrCreateStringPrototype(cx);
+    if (v.isNumber())
+        return global->getOrCreateNumberPrototype(cx);
+    if (v.isBoolean())
+        return global->getOrCreateBooleanPrototype(cx);
+    JS_ASSERT(v.isNull() || v.isUndefined());
+    js_ReportIsNullOrUndefined(cx, JSDVG_SEARCH_STACK, v, NULL);
+    return NULL;
+}
 
 /*
  * Any name atom for a function which will be added as a DeclEnv object to the
@@ -1505,7 +1524,7 @@ class AutoPropertyDescriptorRooter : private AutoGCRooter, public PropertyDescri
 inline bool
 NewObjectCache::lookup(Class *clasp, gc::Cell *key, gc::AllocKind kind, EntryIndex *pentry)
 {
-    jsuword hash = (jsuword(clasp) ^ jsuword(key)) + kind;
+    uintptr_t hash = (uintptr_t(clasp) ^ uintptr_t(key)) + kind;
     *pentry = hash % js::ArrayLength(entries);
 
     Entry *entry = &entries[*pentry];

@@ -479,8 +479,7 @@ public class AwesomeBarTabs extends TabHost {
             try {
                 byte[] bytes = Base64.decode(base64, Base64.DEFAULT);
                 ByteArrayInputStream stream = new ByteArrayInputStream(bytes);
-                drawable = (Drawable) Drawable.createFromStream(stream, "src");
-            
+                drawable = Drawable.createFromStream(stream, "src");
                 stream.close();
             } catch (IllegalArgumentException e) {
                 Log.i(LOGTAG, "exception while decoding drawable: " + base64, e);
@@ -623,7 +622,15 @@ public class AwesomeBarTabs extends TabHost {
         mAllPagesCursorAdapter.setFilterQueryProvider(new FilterQueryProvider() {
             public Cursor runQuery(CharSequence constraint) {
                 ContentResolver resolver = mContext.getContentResolver();
-                return BrowserDB.filter(resolver, constraint, MAX_RESULTS);
+                long start = new Date().getTime();
+
+                Cursor c = BrowserDB.filter(resolver, constraint, MAX_RESULTS);
+                c.getCount(); // ensure the query runs at least once
+
+                long end = new Date().getTime();
+                Log.i(LOGTAG, "Got cursor in " + (end - start) + "ms");
+
+                return c;
             }
         });
 

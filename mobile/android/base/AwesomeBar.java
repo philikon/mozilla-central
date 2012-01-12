@@ -101,10 +101,10 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
 
         Log.d(LOGTAG, "creating awesomebar");
 
-        setContentView(R.layout.awesomebar_search);
+        setContentView(R.layout.awesomebar);
 
         if (Build.VERSION.SDK_INT >= 11) {
-            RelativeLayout actionBarLayout = (RelativeLayout) getLayoutInflater().inflate(R.layout.awesomebar_search_actionbar, null);
+            RelativeLayout actionBarLayout = (RelativeLayout) getLayoutInflater().inflate(R.layout.awesomebar_search, null);
 
             GeckoActionBar.setBackgroundDrawable(this, getResources().getDrawable(R.drawable.gecko_actionbar_bg));
             GeckoActionBar.setDisplayOptions(this, ActionBar.DISPLAY_SHOW_CUSTOM, ActionBar.DISPLAY_SHOW_CUSTOM |
@@ -399,18 +399,25 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         String title = "";
 
         if (view == (ListView)findViewById(R.id.history_list)) {
+            if (! (menuInfo instanceof ExpandableListView.ExpandableListContextMenuInfo)) {
+                Log.e(LOGTAG, "menuInfo is not ExpandableListContextMenuInfo");
+                return;
+            }
             ExpandableListView.ExpandableListContextMenuInfo info = (ExpandableListView.ExpandableListContextMenuInfo) menuInfo;
             ExpandableListView exList = (ExpandableListView)list;
             int childPosition = exList.getPackedPositionChild(info.packedPosition);
             int groupPosition = exList.getPackedPositionGroup(info.packedPosition);
             selectedItem = exList.getExpandableListAdapter().getChild(groupPosition, childPosition);
 
-            Map<String, Object> map = (Map<String, Object>)selectedItem;
+            Map map = (Map)selectedItem;
             title = (String)map.get(URLColumns.TITLE);
         } else {
+            if (! (menuInfo instanceof AdapterView.AdapterContextMenuInfo)) {
+                Log.e(LOGTAG, "menuInfo is not AdapterContextMenuInfo");
+                return;
+            }
             AdapterView.AdapterContextMenuInfo info = (AdapterView.AdapterContextMenuInfo) menuInfo;
             selectedItem = list.getItemAtPosition(info.position);
-
             Cursor cursor = (Cursor)selectedItem;
             title = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.TITLE));
         }
@@ -439,10 +446,10 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         if (mContextMenuSubject instanceof Cursor) {
             Cursor cursor = (Cursor)mContextMenuSubject;
             url = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.URL));
-            b = (byte[]) cursor.getBlob(cursor.getColumnIndexOrThrow(URLColumns.FAVICON));
+            b = cursor.getBlob(cursor.getColumnIndexOrThrow(URLColumns.FAVICON));
             title = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.TITLE));
         } else if (mContextMenuSubject instanceof Map) {
-            Map<String, Object> map = (Map<String, Object>)mContextMenuSubject;
+            Map map = (Map)mContextMenuSubject;
             url = (String)map.get(URLColumns.URL);
             b = (byte[]) map.get(URLColumns.FAVICON);
             title = (String)map.get(URLColumns.TITLE);

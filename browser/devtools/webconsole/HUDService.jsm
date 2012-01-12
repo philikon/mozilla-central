@@ -1511,8 +1511,8 @@ HUD_SERVICE.prototype =
     this.wakeup();
 
     let window = aContext.linkedBrowser.contentWindow;
-    let nBox = aContext.ownerDocument.defaultView.
-      getNotificationBox(window);
+    let chromeDocument = aContext.ownerDocument;
+    let nBox = chromeDocument.defaultView.getNotificationBox(window);
     this.registerActiveContext(nBox.id);
     this.windowInitializer(window);
 
@@ -1522,6 +1522,8 @@ HUD_SERVICE.prototype =
     if (!aAnimated || hudRef.consolePanel) {
       this.disableAnimation(hudId);
     }
+
+    chromeDocument.getElementById("Tools:WebConsole").setAttribute("checked", "true");
 
     // Create a processing instruction for GCLIs CSS stylesheet, but only if
     // we don't have one for this document. Also record the context we're
@@ -1571,6 +1573,8 @@ HUD_SERVICE.prototype =
 
       window.focus();
     }
+
+    chromeDocument.getElementById("Tools:WebConsole").setAttribute("checked", "false");
 
     // Remove this context from the list of contexts that need the GCLI CSS
     // processing instruction and then remove the processing instruction if it
@@ -3661,7 +3665,7 @@ HeadsUpDisplay.prototype = {
     consoleFilterToolbar.setAttribute("id", "viewGroup");
     this.consoleFilterToolbar = consoleFilterToolbar;
 
-    this.hintNode = this.makeXULNode("div");
+    this.hintNode = this.makeXULNode("vbox");
     this.hintNode.setAttribute("class", "gcliterm-hint-node");
 
     let hintParentNode = this.makeXULNode("vbox");
@@ -6835,7 +6839,7 @@ GcliTerm.prototype = {
     this.inputStack.setAttribute("class", "gcliterm-stack-node");
     this.element.appendChild(this.inputStack);
 
-    this.completeNode = this.document.createElement("div");
+    this.completeNode = this.document.createElementNS(HTML_NS, "div");
     this.completeNode.setAttribute("class", "gcliterm-complete-node");
     this.completeNode.setAttribute("aria-live", "polite");
     this.inputStack.appendChild(this.completeNode);
@@ -6867,16 +6871,16 @@ GcliTerm.prototype = {
     if (aEvent.output.command.returnType == "html" && typeof output == "string") {
       output = this.document.createRange().createContextualFragment(
           '<div xmlns="' + HTML_NS + '" xmlns:xul="' + XUL_NS + '">' +
-          output + '</div>').firstChild;
+          output + '</div>');
     }
 
     // See https://github.com/mozilla/domtemplate/blob/master/README.md
     // for docs on the template() function
     let element = this.document.createRange().createContextualFragment(
-      '<richlistitem xmlns="' + XUL_NS + '" clipboardText="${clipboardText}"' +
-      '    timestamp="${timestamp}" id="${id}" class="hud-msg-node">' +
-      '  <label class="webconsole-timestamp" value="${timestampString}"/>' +
-      '  <vbox class="webconsole-msg-icon-container" style="${iconContainerStyle}">' +
+      '<richlistitem xmlns="' + XUL_NS + '" _clipboardText="${clipboardText}"' +
+      '    _timestamp="${timestamp}" _id="${id}" class="hud-msg-node">' +
+      '  <label class="webconsole-timestamp" _value="${timestampString}"/>' +
+      '  <vbox class="webconsole-msg-icon-container" _style="${iconContainerStyle}">' +
       '    <image class="webconsole-msg-icon"/>' +
       '    <spacer flex="1"/>' +
       '  </vbox>' +
