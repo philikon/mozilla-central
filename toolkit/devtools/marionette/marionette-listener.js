@@ -164,7 +164,10 @@ function getKnownElement(id) {
 }
 
 function sendValue(val) {
-  if (typeof val == "object") {
+  if (typeof val == "undefined") {
+    return null;
+  }
+  else if (typeof val == "object") {
     if ('marionette_object' in val) {
       delete val['marionette_object'];
       return val;

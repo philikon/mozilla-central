@@ -127,6 +127,8 @@ MarionetteDriverActor.prototype = {
   actorPrefix: "marionette",
 
   sendResponse: function (value) {
+    if (typeof(value) == 'undefined')
+      value = null;
     this.conn.send({from:this.actorID, value: value});
   },
 
