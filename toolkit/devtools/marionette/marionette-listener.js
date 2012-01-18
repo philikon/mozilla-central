@@ -188,6 +188,54 @@ function sendValue(val) {
  * Execute* helpers
  */
 
+/* convert any ELEMENT references in 'args' to the actual elements */
+function convertWrappedArguments(args) {
+  var converted;
+  switch (typeof(args)) {
+    case 'number':
+    case 'string':
+    case 'boolean':
+      converted = args;
+      break;
+    case 'object':
+      if (args == null) {
+        converted = null;
+      }
+      else if (args instanceof Array) {
+        converted = [];
+        for (var i in args) {
+          converted.push(convertWrappedArguments(args[i]));
+        }
+      }
+      else if (typeof(args['ELEMENT'] === 'string') &&
+               args.hasOwnProperty('ELEMENT')) {
+        converted = getKnownElement(args['ELEMENT']);
+        if (converted == null)
+          throw "Unknown element: " + args['ELEMENT'];
+      }
+      else {
+        converted = {};
+        for (var prop in args) {
+          converted[prop] = convertWrappedArguments(args[prop]);
+        }
+      }
+      break;
+  }
+  return converted;
+}
+
+/* Apply any namedArgs to the Marionette object */
+function applyNamedArgs(args) {
+  Marionette.namedArgs = {};
+  args.forEach(function(arg) {
+    if (typeof(arg['__marionetteArgs']) === 'object') {
+      for (var prop in arg['__marionetteArgs']) {
+        Marionette.namedArgs[prop] = arg['__marionetteArgs'][prop];
+      }
+    }
+  });
+}
+
 /* send error when we detect an unload event during async scripts */
 function errUnload() {
   sendError("unload was called", 17, null);
@@ -222,18 +270,17 @@ function asyncResponse() {
 /* execute given script */
 function executeScript(msg, directInject) {
   var script = msg.json.value;
-  var args = msg.json.args; //TODO: handle WebElement JSON Objects
-  for (var i in args) {
-    if (args[i]["ELEMENT"] != undefined && args[i]["ELEMENT"] != null) {
-      args[i] = getKnownElement(args[i]["ELEMENT"]);
-      if (!args[i]) {
-        return;
-      }
-    }
+  var args = msg.json.args;
+  try {
+    args = convertWrappedArguments(args);
+  }
+  catch(e) {
+    return;
   }
 
   Marionette.is_async = false;
   Marionette.context = "content";
+  applyNamedArgs(args);
 
   var sandbox = new Cu.Sandbox(content);
   sandbox.window = content;
@@ -290,15 +337,13 @@ function executeWithCallback(msg, timeout) {
   var script = msg.json.value;
   var scriptSrc;
   var args = msg.json.args ? msg.json.args : [];
-  //convert webelements
-  for (var i in args) {
-    if (args[i]["ELEMENT"] != undefined && args[i]["ELEMENT"] != null) {
-      args[i] = getKnownElement(args[i]["ELEMENT"]);
-      if (!args[i]) {
-        return;
-      }
-    }
+  try {
+    args = convertWrappedArguments(args);
   }
+  catch(e) {
+    return;
+  }
+
   var timeoutSrc = "var timeoutId = window.setTimeout(Marionette.asyncComplete," + marionetteTimeout + ", 'timed out', 28);" + 
                    "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);";
   if (timeout) {
@@ -315,6 +360,7 @@ function executeWithCallback(msg, timeout) {
 
   Marionette.is_async = true;
   Marionette.context = "content";
+  applyNamedArgs(args);
 
   var sandbox = new Cu.Sandbox(content);
   sandbox.window = content;
