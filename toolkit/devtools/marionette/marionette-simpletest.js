@@ -20,30 +20,33 @@ var Marionette = {
   is: function Marionette__is(a, b, name) {
     var pass = (a == b);
     var diag = pass ? Marionette.repr(a) + " should equal " + Marionette.repr(b)
-                    : "got " + Marionette.repr(a) + ", expected " + Marionette.repr(b)
+                    : "got " + Marionette.repr(a) + ", expected " + Marionette.repr(b);
     Marionette.ok(pass, name, diag);
   },
 
   isnot: function Marionette__isnot (a, b, name) {
-      var pass = (a != b);
-      var diag = pass ? Marionette.repr(a) + " should not equal " + Marionette.repr(b)
-                      : "didn't expect " + Marionette.repr(a) + ", but got it";
-      Marionette.ok(pass, name, diag);
+    var pass = (a != b);
+    var diag = pass ? Marionette.repr(a) + " should not equal " + Marionette.repr(b)
+                    : "didn't expect " + Marionette.repr(a) + ", but got it";
+    Marionette.ok(pass, name, diag);
   },
 
   generate_results: function Marionette__generate_results() {
     var passed = 0;
     var failed = 0;
+    var failures = [];
     for (var i in Marionette.tests) {
       if(Marionette.tests[i].result) {
         passed++;
       }
       else {
         failed++;
+        failures.push({'name': Marionette.tests[i].name,
+                       'diag': Marionette.tests[i].diag});
       }
     }
     Marionette.reset();
-    return {"passed": passed, "failed": failed, "marionette_object": true};
+    return {"passed": passed, "failed": failed, "failures": failures};
   },
 
   finish: function Marionette__finish() {
