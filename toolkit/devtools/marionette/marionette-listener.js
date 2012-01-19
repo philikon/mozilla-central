@@ -163,30 +163,49 @@ function getKnownElement(id) {
   return el;
 }
 
-function sendValue(val) {
-  if (typeof val == "undefined") {
-    return null;
-  }
-  else if (typeof val == "object") {
-    if ('marionette_object' in val) {
-      delete val['marionette_object'];
-      return val;
-    }
-    for(var i in seenItems) {
-      if (seenItems[i] == val) {
-        return {'ELEMENT': i};
-      }
-    }
-    return {'ELEMENT': addToKnownElements(val)};
-  }
-  else {
-    return val;
-  }
-}
-
-/*
- * Execute* helpers
+/* Convert values to primitives that can be transported over the Marionette
+ * JSON protocol.
  */
+function wrapValue(val) {
+  var result;
+  switch(typeof(val)) {
+    case "undefined":
+      result = null;
+      break;
+    case "string":
+    case "number":
+    case "boolean":
+      result = val;
+      break;
+    case "object":
+      if (val instanceof Array) {
+        result = [];
+        for (var i in val) {
+          result.push(wrapValue(val[i]));
+        }
+      }
+      else if (val == null) {
+        result = null;
+      }
+      // nodeType 1 == 'element'
+      else if (val.nodeType == 1) {
+        for(var i in seenItems) {
+          if (seenItems[i] == val) {
+            result = {'ELEMENT': i};
+          }
+        }
+        result = {'ELEMENT': addToKnownElements(val)};
+      }
+      else {
+        result = {};
+        for (var prop in val) {
+          result[prop] = wrapValue(val[prop]);
+        }
+      }
+      break;
+  }
+  return result;
+}
 
 /* convert any ELEMENT references in 'args' to the actual elements */
 function convertWrappedArguments(args) {
@@ -224,6 +243,10 @@ function convertWrappedArguments(args) {
   return converted;
 }
 
+/*
+ * Execute* helpers
+ */
+
 /* Apply any namedArgs to the Marionette object */
 function applyNamedArgs(args) {
   Marionette.namedArgs = {};
@@ -255,7 +278,7 @@ function asyncResponse() {
 
   var res = window.document.getUserData('__marionetteRes');
   if (res.status == 0){
-    sendResponse({value: sendValue(res.value), status: res.status});
+    sendResponse({value: wrapValue(res.value), status: res.status});
   }
   else {
     sendError(res.value, res.status, null);
@@ -296,14 +319,14 @@ function executeScript(msg, directInject) {
         sendError("Marionette.finish() not called", 17, null);
       }
       else {
-        sendResponse({value: sendValue(res)});
+        sendResponse({value: wrapValue(res)});
       }
     }
     else {
       var scriptSrc = "var __marionetteFunc = function(){" + script +
                     "};  __marionetteFunc.apply(null, __marionetteParams);";
       var res = Cu.evalInSandbox(scriptSrc, sandbox);
-      sendResponse({value: sendValue(res)});
+      sendResponse({value: wrapValue(res)});
     }
   }
   catch (e) {
