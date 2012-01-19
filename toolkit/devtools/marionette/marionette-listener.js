@@ -178,7 +178,7 @@ function wrapValue(val) {
       result = val;
       break;
     case "object":
-      if (val instanceof Array) {
+      if (Object.prototype.toString.call(val) == '[object Array]') {
         result = [];
         for (var i in val) {
           result.push(wrapValue(val[i]));
@@ -220,7 +220,7 @@ function convertWrappedArguments(args) {
       if (args == null) {
         converted = null;
       }
-      else if (args instanceof Array) {
+      else if (Object.prototype.toString.call(args) == '[object Array]') {
         converted = [];
         for (var i in args) {
           converted.push(convertWrappedArguments(args[i]));
