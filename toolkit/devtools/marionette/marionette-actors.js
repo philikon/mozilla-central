@@ -257,6 +257,10 @@ MarionetteDriverActor.prototype = {
            { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
         _chromeSandbox.Marionette = Marionette;
+        _chromeSandbox.is = Marionette.is;
+        _chromeSandbox.isnot = Marionette.isnot;
+        _chromeSandbox.ok = Marionette.ok;
+        _chromeSandbox.finish = Marionette.finish;
         var script;
         var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
                            + 'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';

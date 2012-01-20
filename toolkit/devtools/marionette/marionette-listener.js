@@ -367,6 +367,11 @@ function executeWithCallback(msg, timeout) {
     return;
   }
 
+  // Error code 28 is scriptTimeout, but spec says execute_async should return 21 (Timeout),
+  // see http://code.google.com/p/selenium/wiki/JsonWireProtocol#/session/:sessionId/execute_async.
+  // However Selenium code returns 28, see
+  // http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js.
+  // We'll stay compatible with the Selenium code.
   var timeoutSrc = "var timeoutId = window.setTimeout(Marionette.asyncComplete," + marionetteTimeout + ", 'timed out', 28);" + 
                    "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);";
   if (timeout) {
@@ -394,8 +399,10 @@ function executeWithCallback(msg, timeout) {
   sandbox.document.setUserData("__marionetteRes", {}, null);
   sandbox.__proto__ = sandbox.window;
   sandbox.Marionette = Marionette;
-  //TODO: odd. error code 28 is scriptTimeout, but spec says executeAsync should return code 21: Timeout...
-  //and selenium code returns 28 (http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js)
+  sandbox.is = Marionette.is;
+  sandbox.isnot = Marionette.isnot;
+  sandbox.ok = Marionette.ok;
+  sandbox.finish = Marionette.finish;
   try {
    Cu.evalInSandbox(scriptSrc, sandbox);
   } catch (e) {
