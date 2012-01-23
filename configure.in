@@ -4927,15 +4927,6 @@ cairo-gonk)
     MOZ_B2G_RIL=1
     ;;
 
-cairo-gonk)
-    AC_DEFINE(MOZ_WIDGET_GONK)
-    MOZ_WIDGET_TOOLKIT=gonk
-    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
-    TK_LIBS='$(MOZ_CAIRO_LIBS)'
-    MOZ_WEBGL=1
-    MOZ_PDF_PRINTING=1
-    ;;
-
 esac
 
 AC_SUBST(MOZ_OLD_LINKER)
