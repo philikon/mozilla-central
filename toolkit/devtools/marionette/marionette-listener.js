@@ -62,42 +62,77 @@ var marionetteTimeout = null;
 var marionetteSearchTimeout = 0; //implicit timeout while searching for items
 var seenItems = {}; //holds the seen elements in content
 var timer = Components.classes["@mozilla.org/timer;1"].createInstance(Components.interfaces.nsITimer);
+var winUtil = content.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils);
+var listenerId = null; //unique ID of this listener
+var activeFrame = null;
+var win = content;
 
-addMessageListener("Marionette:newSession", newSession);
-addMessageListener("Marionette:executeScript", executeScript);
-addMessageListener("Marionette:setScriptTimeout", setScriptTimeout);
-addMessageListener("Marionette:executeAsyncScript", executeAsyncScript);
-addMessageListener("Marionette:executeJSScript", executeJSScript);
-addMessageListener("Marionette:setSearchTimeout", setSearchTimeout);
-addMessageListener("Marionette:getUrl", getUrl);
-addMessageListener("Marionette:goBack", goBack);
-addMessageListener("Marionette:goForward", goForward);
-addMessageListener("Marionette:refresh", refresh);
-addMessageListener("Marionette:findElement", findElement);
-addMessageListener("Marionette:clickElement", clickElement);
-addMessageListener("Marionette:deleteSession", deleteSession);
+function registerSelf() {
+  dump("MDAS: this page is registering: " + content.location.href + "\n");
+  dump("MDAS: listener is registering with:" + winUtil.outerWindowID + "\n");
+  var register = sendSyncMessage("Marionette:register", {value: winUtil.outerWindowID, href: content.location.href});
+  dump("MDAS: register called. got: " + register);
+  dump("MDAS: register called. got[0]: " + register[0]);
+  
+  if (register[0]) {
+    listenerId = register[0];
+    startListeners();
+    dump("MDAS: listener registered.");
+  }
+}
 
+function startListeners() {
+  addMessageListener("Marionette:newSession" + listenerId, newSession);
+  addMessageListener("Marionette:executeScript" + listenerId, executeScript);
+  addMessageListener("Marionette:setScriptTimeout" + listenerId, setScriptTimeout);
+  addMessageListener("Marionette:executeAsyncScript" + listenerId, executeAsyncScript);
+  addMessageListener("Marionette:executeJSScript" + listenerId, executeJSScript);
+  addMessageListener("Marionette:setSearchTimeout" + listenerId, setSearchTimeout);
+  addMessageListener("Marionette:getUrl" + listenerId, getUrl);
+  addMessageListener("Marionette:goBack" + listenerId, goBack);
+  addMessageListener("Marionette:goForward" + listenerId, goForward);
+  addMessageListener("Marionette:refresh" + listenerId, refresh);
+  addMessageListener("Marionette:findElement" + listenerId, findElement);
+  addMessageListener("Marionette:clickElement" + listenerId, clickElement);
+  addMessageListener("Marionette:switchToFrame" + listenerId, switchToFrame);
+  addMessageListener("Marionette:deleteSession" + listenerId, deleteSession);
+  addMessageListener("Marionette:sleepSession" + listenerId, sleepSession);
+}
+ 
 function newSession(msg) {
+  dump("MDAS: in newSEssion in listener\n");
   isB2G = msg.json.B2G;
   resetValues();
-  let session='session' + (isB2G ? '-b2g' : '');
-  sendResponse({value: session});
+  dump("MDAS:sending session info\n");
+  sendResponse({value: listenerId});
+}
+
+function sleepSession(msg) {
+  deleteSession();
+  addMessageListener("Marionette:restart", restart);
+}
+
+function restart() {
+  removeMessageListener("Marionette:restart", restart);
+  registerSelf();
 }
 
 function deleteSession(msg) {
-  removeMessageListener("Marionette:newSession", newSession);
-  removeMessageListener("Marionette:executeScript", executeScript);
-  removeMessageListener("Marionette:setScriptTimeout", setScriptTimeout);
-  removeMessageListener("Marionette:executeAsyncScript", executeAsyncScript);
-  removeMessageListener("Marionette:executeJSScript", executeJSScript);
-  removeMessageListener("Marionette:setSearchTimeout", setSearchTimeout);
-  removeMessageListener("Marionette:getUrl", getUrl);
-  removeMessageListener("Marionette:goBack", goBack);
-  removeMessageListener("Marionette:goForward", goForward);
-  removeMessageListener("Marionette:refresh", refresh);
-  removeMessageListener("Marionette:findElement", findElement);
-  removeMessageListener("Marionette:clickElement", clickElement);
-  removeMessageListener("Marionette:deleteSession", deleteSession);
+  removeMessageListener("Marionette:newSession" + listenerId, newSession);
+  removeMessageListener("Marionette:executeScript" + listenerId, executeScript);
+  removeMessageListener("Marionette:setScriptTimeout" + listenerId, setScriptTimeout);
+  removeMessageListener("Marionette:executeAsyncScript" + listenerId, executeAsyncScript);
+  removeMessageListener("Marionette:executeJSScript" + listenerId, executeJSScript);
+  removeMessageListener("Marionette:setSearchTimeout" + listenerId, setSearchTimeout);
+  removeMessageListener("Marionette:getUrl" + listenerId, getUrl);
+  removeMessageListener("Marionette:goBack" + listenerId, goBack);
+  removeMessageListener("Marionette:goForward" + listenerId, goForward);
+  removeMessageListener("Marionette:refresh" + listenerId, refresh);
+  removeMessageListener("Marionette:findElement" + listenerId, findElement);
+  removeMessageListener("Marionette:clickElement" + listenerId, clickElement);
+  removeMessageListener("Marionette:switchToFrame" + listenerId, switchToFrame);
+  removeMessageListener("Marionette:deleteSession" + listenerId, deleteSession);
+  removeMessageListener("Marionette:sleepSession" + listenerId, sleepSession);
 }
 
 /*
@@ -142,7 +177,7 @@ function addToKnownElements(element) {
 
 function inDocument(element) { 
   while (element) {
-      if (element == content.document) {
+      if (element == win.document) {
           return true;
       }
       element = element.parentNode;
@@ -266,17 +301,16 @@ function errUnload() {
 
 /* upon completion or error from the async script, send response to marionette-responder */
 function asyncResponse() {
-  var window = content;
-  window.removeEventListener("unload", errUnload, false);
-  window.document.removeEventListener("marionette-async-response", asyncResponse, false);
+  win.removeEventListener("unload", errUnload, false);
+  win.document.removeEventListener("marionette-async-response", asyncResponse, false);
 
   /* clear all timeouts potentially generated by the script*/
-  var maxTimeoutId = window.document.getUserData('__marionetteTimeoutId');
+  var maxTimeoutId = win.document.getUserData('__marionetteTimeoutId');
   for(var i=0; i<=maxTimeoutId; i++) {
-    window.clearTimeout(i);
+    win.clearTimeout(i);
   }
 
-  var res = window.document.getUserData('__marionetteRes');
+  var res = win.document.getUserData('__marionetteRes');
   if (res.status == 0){
     sendResponse({value: wrapValue(res.value), status: res.status});
   }
@@ -302,11 +336,12 @@ function executeScript(msg, directInject) {
   }
 
   Marionette.is_async = false;
+  Marionette.win = win;
   Marionette.context = "content";
   applyNamedArgs(args);
 
-  var sandbox = new Cu.Sandbox(content);
-  sandbox.window = content;
+  var sandbox = new Cu.Sandbox(win);
+  sandbox.window = win;
   sandbox.document = sandbox.window.document;
   sandbox.navigator = sandbox.window.navigator;
   sandbox.__marionetteParams = args;
@@ -356,7 +391,7 @@ function executeJSScript(msg) {
 
 /* execute given asynchronous script */
 function executeWithCallback(msg, timeout) {
-  content.addEventListener("unload", errUnload, false);
+  win.addEventListener("unload", errUnload, false);
   var script = msg.json.value;
   var scriptSrc;
   var args = msg.json.args ? msg.json.args : [];
@@ -384,14 +419,15 @@ function executeWithCallback(msg, timeout) {
                   "};  __marionetteFunc.apply(null, __marionetteParams); " + 
                   timeoutSrc;
   }
-  content.document.addEventListener("marionette-async-response", asyncResponse, false);
+  win.document.addEventListener("marionette-async-response", asyncResponse, false);
 
   Marionette.is_async = true;
+  Marionette.win = win;
   Marionette.context = "content";
   applyNamedArgs(args);
 
-  var sandbox = new Cu.Sandbox(content);
-  sandbox.window = content;
+  var sandbox = new Cu.Sandbox(win);
+  sandbox.window = win;
   sandbox.document = sandbox.window.document;
   sandbox.timeoutId = null;
   sandbox.navigator = sandbox.window.navigator;
@@ -422,28 +458,29 @@ function setSearchTimeout(msg) {
 }
 
 function getUrl(msg) {
-  sendResponse({value: content.location.href});
+  sendResponse({value: win.location.href});
 }
 
 function goBack(msg) {
-  content.history.back();
+  win.history.back();
   sendOk();
 }
 
 function goForward(msg) {
-  content.history.forward();
+  win.history.forward();
   sendOk();
 }
 
 function refresh(msg) {
-  content.location.reload(true);
-  addEventListener("DOMContentLoaded", function() { removeEventListener("DOMContentLoaded", this, false); sendOk();}, false);
+  win.location.reload(true);
+  var listen = function() { removeEventListener("DOMContentLoaded", arguments.callee, false); sendOk() } ;
+  addEventListener("DOMContentLoaded", listen, false);
 }
 
 //Todo: extend to support findChildElement
 function findElement(msg) {
   var startTime = msg.json.time ? msg.json.time : new Date().getTime();
-  var rootNode = content.document;
+  var rootNode = win.document;
   if (elementStrategies.indexOf(msg.json.using) < 0) {
     sendError("No such strategy", 17, null);
     return;
@@ -488,3 +525,66 @@ function clickElement(msg) {
   sendOk();
 }
 
+function switchToFrame(msg) {
+  var foundFrame = null;
+  if ((msg.json.value == null) && (msg.json.element == null)) {
+    win = content;
+    activeFrame = null;
+    content.focus();
+    sendOk();
+    return;
+  }
+  if (msg.json.element != undefined) {
+    if (this.seenItems[msg.json.element] != undefined) {
+      var wantedFrame = seenItems[msg.json.element]; //HTMLIFrameElement
+      var numFrames = win.frames.length;
+      for (var i = 0; i < numFrames; i++) {
+        if (win.frames[i].frameElement == wantedFrame) {
+          win = win.frames[i]; 
+          activeFrame = i;
+          win.focus();
+          sendOk();
+          return;
+        }
+      }
+    }
+  }
+  switch(typeof(msg.json.value)) {
+    case "string" :
+      var foundById = null;
+      var numFrames = win.frames.length;
+      for (var i = 0; i < numFrames; i++) {
+        //give precedence to name
+        var frame = win.frames[i];
+        var frameElement = frame.frameElement;
+        if (frameElement.name == msg.json.value) {
+          foundFrame = i;
+          break;
+        } else if ((foundById == null) && (frameElement.id == msg.json.value)) {
+          foundById = i;
+        }
+      }
+      if ((foundFrame == null) && (foundById != null)) {
+        foundFrame = foundById;
+      }
+      break;
+    case "number":
+      if (win.frames[msg.json.value] != undefined) {
+        foundFrame = msg.json.value;
+      }
+      break;
+  }
+  //TODO: implement index
+  if (foundFrame != null) {
+    var frameWindow = win.frames[foundFrame];
+    activeFrame = foundFrame;
+    win = frameWindow;
+    win.focus();
+    sendOk();
+  } else {
+    sendError("Unable to locate frame: " + msg.json.value, 8, null);
+  }
+}
+
+dump("MDAS: in listener, calling registerSelf()\n");
+registerSelf();

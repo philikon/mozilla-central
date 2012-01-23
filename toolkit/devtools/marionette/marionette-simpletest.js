@@ -4,6 +4,7 @@
 
 var Marionette = {
   is_async: false,
+  win: null,
   tests: [],
 
   reset: function Marionette__reset() {
@@ -76,7 +77,7 @@ var Marionette = {
   },
 
   asyncComplete: function Marionette__async_completed(value, status) {
-      var document = content.window.document;
+      var document = win.window.document;
       var __marionetteRes = document.getUserData('__marionetteRes');
       if(__marionetteRes.status == undefined) {
         __marionetteRes.value = value;
