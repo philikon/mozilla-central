@@ -108,6 +108,9 @@ pref("browser.cache.offline.capacity", 5120); // kilobytes
 pref("offline-apps.quota.max", 2048); // kilobytes
 pref("offline-apps.quota.warn", 1024); // kilobytes
 
+// cache compression turned off for now - see bug #715198
+pref("browser.cache.compression_level", 0);
+
 /* protocol warning prefs */
 pref("network.protocol-handler.warn-external.tel", false);
 pref("network.protocol-handler.warn-external.mailto", false);
@@ -687,3 +690,6 @@ pref("dom.report_all_js_exceptions", true);
 pref("javascript.options.showInConsole", true);
 
 pref("full-screen-api.enabled", true);
+
+pref("direct-texture.force.enabled", false);
+pref("direct-texture.force.disabled", false);

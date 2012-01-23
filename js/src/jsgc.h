@@ -91,7 +91,15 @@ struct Arena;
  */
 const size_t MAX_BACKGROUND_FINALIZE_KINDS = FINALIZE_LIMIT - FINALIZE_OBJECT_LIMIT / 2;
 
+/*
+ * Default pagesize is 8192 on Solaris SPARC.
+ * Do not use JS_CPU_SPARC here, this header is used outside JS.
+ */ 
+#if defined(SOLARIS) && (defined(__sparc) || defined(__sparcv9))
+const size_t ArenaShift = 13;
+#else
 const size_t ArenaShift = 12;
+#endif
 const size_t ArenaSize = size_t(1) << ArenaShift;
 const size_t ArenaMask = ArenaSize - 1;
 
@@ -1310,9 +1318,6 @@ struct WrapperHasher
 
 typedef HashMap<Value, Value, WrapperHasher, SystemAllocPolicy> WrapperMap;
 
-class AutoValueVector;
-class AutoIdVector;
-
 } /* namespace js */
 
 #ifdef DEBUG
@@ -1403,14 +1408,8 @@ typedef enum JSGCInvocationKind {
     /* Normal invocation. */
     GC_NORMAL           = 0,
 
-    /*
-     * Called from js_DestroyContext for last JSContext in a JSRuntime, when
-     * it is imperative that rt->gcPoke gets cleared early in js_GC.
-     */
-    GC_LAST_CONTEXT     = 1,
-
     /* Minimize GC triggers and release empty GC chunks right away. */
-    GC_SHRINK             = 2
+    GC_SHRINK             = 1
 } JSGCInvocationKind;
 
 /* Pass NULL for |comp| to get a full GC. */

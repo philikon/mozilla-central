@@ -142,6 +142,7 @@ public class LayerController {
         return mViewportMetrics.getZoomFactor();
     }
 
+    public Bitmap getBackgroundPattern()    { return getDrawable("background"); }
     public Bitmap getCheckerboardPattern()  { return getDrawable("checkerboard"); }
     public Bitmap getShadowPattern()        { return getDrawable("shadow"); }
 
@@ -166,7 +167,16 @@ public class LayerController {
      * result in an infinite loop.
      */
     public void setViewportSize(FloatSize size) {
+        // Resize the viewport, and modify its zoom factor so that the page retains proportionally
+        // zoomed relative to the screen.
+        float oldWidth = mViewportMetrics.getSize().width;
+        float oldZoomFactor = mViewportMetrics.getZoomFactor();
         mViewportMetrics.setSize(size);
+
+        PointF newFocus = new PointF(size.width / 2.0f, size.height / 2.0f);
+        float newZoomFactor = size.width * oldZoomFactor / oldWidth;
+        mViewportMetrics.scaleTo(newZoomFactor, newFocus);
+
         Log.d(LOGTAG, "setViewportSize: " + mViewportMetrics);
         setForceRedraw();
 
@@ -178,15 +188,6 @@ public class LayerController {
         mView.requestRender();
     }
 
-    /** Scrolls the viewport to the given point. You must hold the monitor while calling this. */
-    public void scrollTo(PointF point) {
-        mViewportMetrics.setOrigin(point);
-        Log.d(LOGTAG, "scrollTo: " + mViewportMetrics);
-        notifyLayerClientOfGeometryChange();
-        GeckoApp.mAppContext.repositionPluginViews(false);
-        mView.requestRender();
-    }
-
     /** Scrolls the viewport by the given offset. You must hold the monitor while calling this. */
     public void scrollBy(PointF point) {
         PointF origin = mViewportMetrics.getOrigin();
@@ -194,15 +195,6 @@ public class LayerController {
         mViewportMetrics.setOrigin(origin);
         Log.d(LOGTAG, "scrollBy: " + mViewportMetrics);
 
-        notifyLayerClientOfGeometryChange();
-        GeckoApp.mAppContext.repositionPluginViews(false);
-        mView.requestRender();
-    }
-
-    /** Sets the current viewport. You must hold the monitor while calling this. */
-    public void setViewport(RectF viewport) {
-        mViewportMetrics.setViewport(viewport);
-        Log.d(LOGTAG, "setViewport: " + mViewportMetrics);
         notifyLayerClientOfGeometryChange();
         GeckoApp.mAppContext.repositionPluginViews(false);
         mView.requestRender();
@@ -230,13 +222,14 @@ public class LayerController {
     public void setViewportMetrics(ViewportMetrics viewport) {
         mViewportMetrics = new ViewportMetrics(viewport);
         Log.d(LOGTAG, "setViewportMetrics: " + mViewportMetrics);
-        GeckoApp.mAppContext.repositionPluginViews(false);
+        // this function may or may not be called on the UI thread,
+        // but repositionPluginViews must only be called on the UI thread.
+        GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+            public void run() {
+                GeckoApp.mAppContext.repositionPluginViews(false);
+            }
+        });
         mView.requestRender();
-    }
-
-    /** Scales the viewport. You must hold the monitor while calling this. */
-    public void scaleTo(float zoomFactor) {
-        scaleWithFocus(zoomFactor, new PointF(0,0));
     }
 
     /**
@@ -252,16 +245,6 @@ public class LayerController {
         notifyLayerClientOfGeometryChange();
         GeckoApp.mAppContext.repositionPluginViews(false);
         mView.requestRender();
-    }
-
-    /**
-     * Sets the viewport origin and scales in one operation. You must hold the monitor while
-     * calling this.
-     */
-    public void scaleWithOrigin(float zoomFactor, PointF origin) {
-        mViewportMetrics.setOrigin(origin);
-        Log.d(LOGTAG, "scaleWithOrigin: " + mViewportMetrics + "; zf=" + zoomFactor);
-        scaleTo(zoomFactor);
     }
 
     public boolean post(Runnable action) { return mView.post(action); }

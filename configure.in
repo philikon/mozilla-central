@@ -566,6 +566,11 @@ if test -n "$CROSS_COMPILE" -a "$target" != "$host"; then
     AC_DEFINE(CROSS_COMPILE)
 else
     AC_PROG_CC
+    case "$target" in
+    *-mingw*)
+      # Work around the conftest.exe access problem on Windows
+      sleep 1
+    esac
     AC_PROG_CXX
     AC_PROG_RANLIB
     MOZ_PATH_PROGS(AS, $AS as, $CC)
@@ -2536,7 +2541,7 @@ ia64*-hpux*)
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
-        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32"
+        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv"
         MOZ_FIX_LINK_PATHS=
         DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib -lxpcom -lxpcom_core -lmozalloc'
         XPCOM_FROZEN_LDOPTS='-L$(LIBXUL_DIST)/lib -lxpcom -lmozalloc'
@@ -4629,6 +4634,7 @@ USE_ARM_KUSER=
 BUILD_CTYPES=1
 MOZ_USE_NATIVE_POPUP_WINDOWS=
 MOZ_ANDROID_HISTORY=
+MOZ_WEBSMS_BACKEND=1
 MOZ_GRAPHITE=1
 
 case "${target}" in
@@ -4898,13 +4904,17 @@ cairo-uikit)
 
 cairo-android)
     AC_DEFINE(MOZ_WIDGET_ANDROID)
+    AC_DEFINE(MOZ_TOUCH)
     MOZ_WIDGET_TOOLKIT=android
     TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
     TK_LIBS='$(MOZ_CAIRO_LIBS)'
     MOZ_WEBGL=1
     MOZ_PDF_PRINTING=1
     MOZ_INSTRUMENT_EVENT_LOOP=1
-    MOZ_OLD_LINKER=1
+    if test "$MOZ_BUILD_APP" = "mobile/xul"; then
+        MOZ_OLD_LINKER=1
+    fi
+    MOZ_TOUCH=1
     ;;
 
 cairo-gonk)
@@ -5476,6 +5486,18 @@ if test -n "$MOZ_ANDROID_HISTORY"; then
      AC_DEFINE(MOZ_ANDROID_HISTORY)
 fi
 
+dnl ========================================================
+dnl = Disable WebSMS backend
+dnl ========================================================
+MOZ_ARG_DISABLE_BOOL(websms-backend,
+[  --disable-websms-backend
+                           Disable WebSMS backend],
+    MOZ_WEBSMS_BACKEND=,
+    MOZ_WEBSMS_BACKEND=1)
+
+if test $MOZ_WEBSMS_BACKEND -eq 1; then
+    AC_DEFINE(MOZ_WEBSMS_BACKEND)
+fi
 
 dnl ========================================================
 dnl = Build Personal Security Manager
@@ -7150,6 +7172,9 @@ else
     dnl And we need mozglue symbols to be exported.
     MOZ_GLUE_PROGRAM_LDFLAGS="$MOZ_GLUE_PROGRAM_LDFLAGS -rdynamic"
   fi
+  if test "$MOZ_LINKER" = 1; then
+    MOZ_GLUE_PROGRAM_LDFLAGS="$MOZ_GLUE_PROGRAM_LDFLAGS $ZLIB_LIBS"
+  fi
 fi
 
 if test -z "$MOZ_MEMORY"; then
@@ -8456,6 +8481,7 @@ AC_SUBST(MOZ_D3DX9_DLL)
 AC_SUBST(MOZ_D3DCOMPILER_DLL)
 
 AC_SUBST(MOZ_ANDROID_HISTORY)
+AC_SUBST(MOZ_WEBSMS_BACKEND)
 AC_SUBST(ENABLE_STRIP)
 AC_SUBST(PKG_SKIP_STRIP)
 AC_SUBST(USE_ELF_DYNSTR_GC)
@@ -9038,7 +9064,17 @@ if test -z "$MOZ_NATIVE_NSPR"; then
     if test -n "$USE_ARM_KUSER"; then
         ac_configure_args="$ac_configure_args --with-arm-kuser"
     fi
+    if test -n "$MOZ_LINKER" -a -z "$MOZ_OLD_LINKER" -a $ac_cv_func_dladdr = no ; then
+      # dladdr is supported by the new linker, even when the system linker doesn't
+      # support it. Trick nspr into using dladdr when it's not supported.
+      _SAVE_CPPFLAGS="$CPPFLAGS"
+      export CPPFLAGS="-include $_topsrcdir/mozglue/linker/dladdr.h $CPPFLAGS"
+    fi
     AC_OUTPUT_SUBDIRS(nsprpub)
+    if test -n "$MOZ_LINKER" -a -z "$MOZ_OLD_LINKER" -a $ac_cv_func_dladdr = no; then
+      unset CPPFLAGS
+      CPPFLAGS="$_SAVE_CFLAGS"
+    fi
     ac_configure_args="$_SUBDIR_CONFIG_ARGS"
 fi
 

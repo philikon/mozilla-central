@@ -398,6 +398,10 @@ pref("dom.screenBrightnessProperty.enabled", true);
 pref("marionette.server.enabled", true);
 pref("marionette.server.port", 2828);
 
+// Enable browser frame
+pref("dom.mozBrowserFramesEnabled", true);
+pref("dom.mozBrowserFramesWhitelist", "http://localhost:6666");
+
 // Temporary permission hack for WebSMS
 pref("dom.sms.enabled", true);
 pref("dom.sms.whitelist", "file://,http://localhost:6666");

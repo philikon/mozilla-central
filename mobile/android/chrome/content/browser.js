@@ -105,9 +105,6 @@ const kElementsReceivingInput = {
     video: true
 };
 
-const UA_MODE_MOBILE = "mobile";
-const UA_MODE_DESKTOP = "desktop";
-
 function dump(a) {
   Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService).logStringMessage(a);
 }
@@ -211,6 +208,7 @@ var BrowserApp = {
     Services.obs.addObserver(this, "Tab:Load", false);
     Services.obs.addObserver(this, "Tab:Select", false);
     Services.obs.addObserver(this, "Tab:Close", false);
+    Services.obs.addObserver(this, "Tab:Screenshot", false);
     Services.obs.addObserver(this, "Session:Back", false);
     Services.obs.addObserver(this, "Session:Forward", false);
     Services.obs.addObserver(this, "Session:Reload", false);
@@ -224,7 +222,6 @@ var BrowserApp = {
     Services.obs.addObserver(this, "PanZoom:PanZoom", false);
     Services.obs.addObserver(this, "FullScreen:Exit", false);
     Services.obs.addObserver(this, "Viewport:Change", false);
-    Services.obs.addObserver(this, "AgentMode:Change", false);
     Services.obs.addObserver(this, "SearchEngines:Get", false);
 
     function showFullScreenWarning() {
@@ -268,6 +265,10 @@ var BrowserApp = {
         url = window.arguments[0];
       if (window.arguments[1])
         restoreSession = window.arguments[1];
+      if (window.arguments[2])
+        gScreenWidth = window.arguments[2];
+      if (window.arguments[3])
+        gScreenHeight = window.arguments[3];
     }
 
     // XXX maybe we don't do this if the launch was kicked off from external
@@ -429,6 +430,12 @@ var BrowserApp = {
     let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
     let charset = "charset" in aParams ? aParams.charset : null;
 
+    if ("showProgress" in aParams) {
+      let tab = this.getTabForBrowser(aBrowser);
+      if (tab)
+        tab.showProgress = aParams.showProgress;
+    }
+
     try {
       aBrowser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
     } catch(e) {
@@ -472,6 +479,14 @@ var BrowserApp = {
 
     aTab.destroy();
     this._tabs.splice(this._tabs.indexOf(aTab), 1);
+  },
+
+  screenshotTab: function screenshotTab(aData) {
+      let json = JSON.parse(aData);
+      let tab = this.getTabForId(parseInt(json.tabID));
+      let width = parseInt(json.width);
+      let height =  parseInt(json.height);
+      tab.screenshot(width, height);
   },
 
   selectTab: function selectTab(aTab) {
@@ -547,7 +562,12 @@ var BrowserApp = {
     printSettings.headerStrLeft   = "";
     printSettings.headerStrRight  = "";
 
-    let webBrowserPrint = content.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIWebBrowserPrint);
+    // Create a valid mimeInfo for the PDF
+    let ms = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
+    let mimeInfo = ms.getFromTypeAndExtension("application/pdf", "pdf");
+
+    let webBrowserPrint = aBrowser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                                .getInterface(Ci.nsIWebBrowserPrint);
 
     let cancelable = {
       cancel: function (aReason) {
@@ -556,7 +576,7 @@ var BrowserApp = {
     }
     let download = dm.addDownload(Ci.nsIDownloadManager.DOWNLOAD_TYPE_DOWNLOAD,
                                   aBrowser.currentURI,
-                                  Services.io.newFileURI(file), "", null,
+                                  Services.io.newFileURI(file), "", mimeInfo,
                                   Date.now() * 1000, null, cancelable);
 
     webBrowserPrint.print(printSettings, download);
@@ -815,6 +835,11 @@ var BrowserApp = {
       };
 
       let url = this.getSearchOrFixupURI(data);
+
+      // Don't show progress throbber for about:home
+      if (url == "about:home")
+        params.showProgress = false;
+
       if (aTopic == "Tab:Add")
         this.addTab(url, params);
       else
@@ -823,6 +848,8 @@ var BrowserApp = {
       this.selectTab(this.getTabForId(parseInt(aData)));
     } else if (aTopic == "Tab:Close") {
       this.closeTab(this.getTabForId(parseInt(aData)));
+    } else if (aTopic == "Tab:Screenshot") {
+      this.screenshotTab(aData);
     } else if (aTopic == "Browser:Quit") {
       this.quit();
     } else if (aTopic == "SaveAs:PDF") {
@@ -831,11 +858,6 @@ var BrowserApp = {
       this.getPreferences(aData);
     } else if (aTopic == "Preferences:Set") {
       this.setPreferences(aData);
-    } else if (aTopic == "AgentMode:Change") {
-      let args = JSON.parse(aData);
-      let tab = this.getTabForId(args.tabId);
-      tab.setAgentMode(args.agent);
-      tab.browser.reload();
     } else if (aTopic == "ScrollTo:FocusedInput") {
       this.scrollToFocusedInput(browser);
     } else if (aTopic == "Sanitize:ClearAll") {
@@ -1290,8 +1312,7 @@ function Tab(aURL, aParams) {
   this.browser = null;
   this.vbox = null;
   this.id = 0;
-  this.agentMode = UA_MODE_MOBILE;
-  this.lastHost = null;
+  this.showProgress = true;
   this.create(aURL, aParams);
   this._viewport = { x: 0, y: 0, width: gScreenWidth, height: gScreenHeight, offsetX: 0, offsetY: 0,
                      pageWidth: gScreenWidth, pageHeight: gScreenHeight, zoom: 1.0 };
@@ -1355,7 +1376,6 @@ Tab.prototype = {
     this.browser.addEventListener("pagehide", this, true);
     this.browser.addEventListener("pageshow", this, true);
 
-    Services.obs.addObserver(this, "http-on-modify-request", false);
     Services.obs.addObserver(this, "document-shown", false);
 
     if (!aParams.delayLoad) {
@@ -1363,6 +1383,9 @@ Tab.prototype = {
       let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
       let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
       let charset = "charset" in aParams ? aParams.charset : null;
+
+      // This determines whether or not we show the progress throbber in the urlbar
+      this.showProgress = "showProgress" in aParams ? aParams.showProgress : true;
 
       try {
         this.browser.loadURIWithFlags(aURL, flags, referrerURI, charset, postData);
@@ -1378,29 +1401,6 @@ Tab.prototype = {
         sendMessageToJava(message);
         dump("Handled load error: " + e)
       }
-    }
-  },
-
-  setAgentMode: function(aMode) {
-    if (this.agentMode != aMode) {
-      this.agentMode = aMode;
-      sendMessageToJava({
-        gecko: {
-          type: "AgentMode:Changed",
-          agentMode: aMode,
-          tabId: this.id
-        }
-      });
-    }
-  },
-
-  setHostFromURL: function(aURL) {
-    let uri = Services.io.newURI(aURL, null, null);
-    let host = uri.asciiHost;
-    if (this.lastHost != host) {
-      this.lastHost = host;
-      // TODO: remember mobile/desktop selection for each host (bug 705840)
-      this.setAgentMode(UA_MODE_MOBILE);
     }
   },
 
@@ -1424,7 +1424,6 @@ Tab.prototype = {
     BrowserApp.deck.removeChild(this.vbox);
     BrowserApp.deck.selectedPanel = selectedPanel;
 
-    Services.obs.removeObserver(this, "http-on-modify-request", false);
     this.browser = null;
     this.vbox = null;
     this.documentIdForCurrentViewport = null;
@@ -1499,6 +1498,26 @@ Tab.prototype = {
       this.updateTransform();
   },
 
+  screenshot: function(aWidth, aHeight) {
+      if (!this.browser || !this.browser.contentWindow)
+          return;
+      let canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
+      canvas.setAttribute("width", aWidth);  
+      canvas.setAttribute("height", aHeight);
+      let ctx = canvas.getContext("2d");
+      ctx.drawWindow(this.browser.contentWindow, 0, 0, aWidth, aHeight, "rgb(255, 255, 255)");
+      let message = {
+        gecko: {
+          type: "Tab:ScreenshotData",
+          tabID: this.id,
+          width: aWidth,
+          height: aHeight,
+          data: canvas.toDataURL()
+        }
+      };
+      sendMessageToJava(message);
+  },
+
   updateTransform: function() {
     let hasZoom = (Math.abs(this._viewport.zoom - 1.0) >= 1e-6);
     let x = this._viewport.offsetX + Math.round(-this.viewportExcess.x * this._viewport.zoom);
@@ -1533,8 +1552,8 @@ Tab.prototype = {
       pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
 
       /* Transform the page width and height based on the zoom factor. */
-      pageWidth = Math.round(pageWidth * this._viewport.zoom);
-      pageHeight = Math.round(pageHeight * this._viewport.zoom);
+      pageWidth *= this._viewport.zoom;
+      pageHeight *= this._viewport.zoom;
 
       /*
        * Avoid sending page sizes of less than screen size before we hit DOMContentLoaded, because
@@ -1550,9 +1569,12 @@ Tab.prototype = {
     return this._viewport;
   },
 
-  updateViewport: function(aReset) {
+  updateViewport: function(aReset, aZoomLevel) {
+    if (!aZoomLevel)
+      aZoomLevel = this.getDefaultZoomLevel();
+
     let win = this.browser.contentWindow;
-    let zoom = (aReset ? this.getDefaultZoomLevel() : this._viewport.zoom);
+    let zoom = (aReset ? aZoomLevel : this._viewport.zoom);
     let xpos = ((aReset && win) ? win.scrollX * zoom : this._viewport.x);
     let ypos = ((aReset && win) ? win.scrollY * zoom : this._viewport.y);
 
@@ -1749,11 +1771,14 @@ Tab.prototype = {
           type: "Content:StateChange",
           tabID: this.id,
           uri: uri,
-          state: aStateFlags
+          state: aStateFlags,
+          showProgress: this.showProgress
         }
       };
-
       sendMessageToJava(message);
+
+      // Reset showProgress after state change
+      this.showProgress = true;
     }
   },
 
@@ -1927,7 +1952,23 @@ Tab.prototype = {
     let minScale = this.getPageZoomLevel(screenW);
     viewportH = Math.max(viewportH, screenH / minScale);
 
+    let oldBrowserWidth = parseInt(this.browser.style.width);
     this.setBrowserSize(viewportW, viewportH);
+
+    // Avoid having the scroll position jump around after device rotation.
+    let win = this.browser.contentWindow;
+    this.userScrollPos.x = win.scrollX;
+    this.userScrollPos.y = win.scrollY;
+
+    // If the browser width changes, we change the zoom proportionally. This ensures sensible
+    // behavior when rotating the device on pages with automatically-resizing viewports.
+
+    if (viewportW == oldBrowserWidth)
+      return;
+
+    let viewport = this.viewport;
+    let newZoom = oldBrowserWidth * viewport.zoom / viewportW;
+    this.updateViewport(true, newZoom);
   },
 
   getDefaultZoomLevel: function getDefaultZoomLevel() {
@@ -1978,22 +2019,6 @@ Tab.prototype = {
 
   observe: function(aSubject, aTopic, aData) {
     switch (aTopic) {
-      case "http-on-modify-request":
-        if (!(aSubject instanceof Ci.nsIHttpChannel))
-          return;
-
-        let channel = aSubject.QueryInterface(Ci.nsIHttpChannel);
-        if (!(channel.loadFlags & Ci.nsIChannel.LOAD_DOCUMENT_URI))
-          return;
-
-        let channelWindow = this.getWindowForRequest(channel);
-        if (channelWindow == this.browser.contentWindow) {
-          this.setHostFromURL(channel.URI.spec);
-          if (this.agentMode == UA_MODE_DESKTOP)
-            channel.setRequestHeader("User-Agent", "Mozilla/5.0 (X11; Linux x86_64; rv:7.0.1) Gecko/20100101 Firefox/7.0.1", false);
-        }
-        break;
-
       case "document-shown":
         // Is it on the top level?
         let contentDocument = aSubject;
@@ -2050,8 +2075,12 @@ var BrowserEventHandler = {
       }
 
       // Scroll the scrollable element
-      this._scrollElementBy(this._scrollableElement, data.x, data.y);
-      sendMessageToJava({ gecko: { type: "Gesture:ScrollAck" } });
+      if (this._elementCanScroll(this._scrollableElement, data.x, data.y)) {
+        this._scrollElementBy(this._scrollableElement, data.x, data.y);
+        sendMessageToJava({ gecko: { type: "Gesture:ScrollAck", scrolled: true } });
+      } else {
+        sendMessageToJava({ gecko: { type: "Gesture:ScrollAck", scrolled: false } });
+      }
     } else if (aTopic == "Gesture:CancelTouch") {
       this._cancelTapHighlight();
     } else if (aTopic == "Gesture:ShowPress") {
@@ -2077,15 +2106,19 @@ var BrowserEventHandler = {
     } else if (aTopic == "Gesture:SingleTap") {
       let element = this._highlightElement;
       if (element && !FormAssistant.handleClick(element)) {
-        let data = JSON.parse(aData);
-        [data.x, data.y] = ElementTouchHelper.toScreenCoords(element.ownerDocument.defaultView, data.x, data.y);
-
-        this._sendMouseEvent("mousemove", element, data.x, data.y);
-        this._sendMouseEvent("mousedown", element, data.x, data.y);
-        this._sendMouseEvent("mouseup",   element, data.x, data.y);
-
-        if (ElementTouchHelper.isElementClickable(element))
-          Haptic.performSimpleAction(Haptic.LongPress);
+        try {
+          let data = JSON.parse(aData);
+          [data.x, data.y] = ElementTouchHelper.toScreenCoords(element.ownerDocument.defaultView, data.x, data.y);
+  
+          this._sendMouseEvent("mousemove", element, data.x, data.y);
+          this._sendMouseEvent("mousedown", element, data.x, data.y);
+          this._sendMouseEvent("mouseup",   element, data.x, data.y);
+  
+          if (ElementTouchHelper.isElementClickable(element))
+            Haptic.performSimpleAction(Haptic.LongPress);
+        } catch(e) {
+          Cu.reportError(e);
+        }
       }
       this._cancelTapHighlight();
     } else if (aTopic == "Gesture:DoubleTap") {
@@ -2194,10 +2227,15 @@ var BrowserEventHandler = {
       }
     }
 
-    [aX, aY] = ElementTouchHelper.toBrowserCoords(aElement.ownerDocument.defaultView, aX, aY);
-    let cwu = aElement.ownerDocument.defaultView.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
-    aButton = aButton || 0;
-    cwu.sendMouseEventToWindow(aName, Math.round(aX), Math.round(aY), aButton, 1, 0, true);
+    let window = aElement.ownerDocument.defaultView;
+    try {
+      [aX, aY] = ElementTouchHelper.toBrowserCoords(window, aX, aY);
+      let cwu = window.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+      aButton = aButton || 0;
+      cwu.sendMouseEventToWindow(aName, Math.round(aX), Math.round(aY), aButton, 1, 0, true);
+    } catch(e) {
+      Cu.reportError(e);
+    }
   },
 
   _hasScrollableOverflow: function(elem) {
@@ -2299,24 +2337,36 @@ const kReferenceDpi = 240; // standard "pixel" size used in some preferences
 
 const ElementTouchHelper = {
   toBrowserCoords: function(aWindow, aX, aY) {
-    let tab = BrowserApp.selectedTab;
-    if (aWindow) {
-      let browser = BrowserApp.getBrowserForWindow(aWindow);
-      tab = BrowserApp.getTabForBrowser(browser);
-    }
+    if (!aWindow)
+      throw "Must provide a window";
+  
+    let browser = BrowserApp.getBrowserForWindow(aWindow.top);
+    if (!browser)
+      throw "Unable to find a browser";
+
+    let tab = BrowserApp.getTabForBrowser(browser);
+    if (!tab)
+      throw "Unable to find a tab";
+
     let viewport = tab.viewport;
     return [
-        ((aX-tab.viewportExcess.x)*viewport.zoom + viewport.offsetX),
-        ((aY-tab.viewportExcess.y)*viewport.zoom + viewport.offsetY)
+        ((aX - tab.viewportExcess.x) * viewport.zoom + viewport.offsetX),
+        ((aY - tab.viewportExcess.y) * viewport.zoom + viewport.offsetY)
     ];
   },
 
   toScreenCoords: function(aWindow, aX, aY) {
-    let tab = BrowserApp.selectedTab;
-    if (aWindow) {
-      let browser = BrowserApp.getBrowserForWindow(aWindow);
-      tab = BrowserApp.getTabForBrowser(browser);
-    }
+    if (!aWindow)
+      throw "Must provide a window";
+  
+    let browser = BrowserApp.getBrowserForWindow(aWindow.top);
+    if (!browser)
+      throw "Unable to find a browser";
+
+    let tab = BrowserApp.getTabForBrowser(browser);
+    if (!tab)
+      throw "Unable to find a tab";
+
     let viewport = tab.viewport;
     return [
         (aX - viewport.offsetX)/viewport.zoom + tab.viewportExcess.x,
@@ -2678,7 +2728,7 @@ var FormAssistant = {
   handleClick: function(aTarget) {
     let target = aTarget;
     while (target) {
-      if (this._isSelectElement(target)) {
+      if (this._isSelectElement(target) && !target.disabled) {
         target.focus();
         let list = this.getListForElement(target);
         this.show(list, target);
@@ -2842,7 +2892,7 @@ var XPInstallObserver = {
       needsRestart = true;
 
     if (needsRestart) {
-      buttons = [{
+      let buttons = [{
         label: Strings.browser.GetStringFromName("notificationRestart.button"),
         callback: function() {
           // Notify all windows that an application quit has been requested
@@ -3685,10 +3735,16 @@ var PermissionsHelper = {
         // Keep track of permissions, so we know which ones to clear
         this._currentPermissions = permissions; 
 
+        let host;
+        try {
+          host = uri.host;
+        } catch(e) {
+          host = uri.spec;
+        }
         sendMessageToJava({
           gecko: {
             type: "Permissions:Data",
-            host: uri.host,
+            host: host,
             permissions: permissions
           }
         });

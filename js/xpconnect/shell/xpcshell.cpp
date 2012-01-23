@@ -50,7 +50,6 @@
 #include "mozilla/Util.h"
 
 #include "jsapi.h"
-#include "jscntxt.h"
 #include "jsdbgapi.h"
 #include "jsfriendapi.h"
 #include "jsprf.h"
@@ -555,7 +554,7 @@ GC(JSContext *cx, uintN argc, jsval *vp)
 {
     JS_GC(cx);
 #ifdef JS_GCMETER
-    js_DumpGCStats(cx->runtime, stdout);
+    js_DumpGCStats(JS_GetRuntime(cx), stdout);
 #endif
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return true;

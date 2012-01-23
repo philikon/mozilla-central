@@ -59,7 +59,7 @@
  *
  * NB: the capacity and length of a dense array are entirely unrelated!  The
  * length may be greater than, less than, or equal to the capacity. The first
- * case may occur when the user writes "new Array(100), in which case the
+ * case may occur when the user writes "new Array(100)", in which case the
  * length is 100 while the capacity remains 0 (indices below length and above
  * capacity must be treated as holes). See array_length_setter for another
  * explanation of how the first case may occur.
@@ -2579,19 +2579,6 @@ CanOptimizeForDenseStorage(JSObject *arr, uint32_t startingIndex, uint32_t count
     /* Now just watch out for getters and setters along the prototype chain. */
     return !js_PrototypeHasIndexedProperties(cx, arr) &&
            startingIndex + count <= arr->getDenseArrayInitializedLength();
-}
-
-static inline bool
-CopyArrayElement(JSContext *cx, JSObject *source, uint32_t sourceIndex,
-                 JSObject *target, uint32_t targetIndex)
-{
-    if (!JS_CHECK_OPERATION_LIMIT(cx))
-        return false;
-
-    JSBool hole;
-    Value fromValue;
-    return GetElement(cx, source, sourceIndex, &hole, &fromValue) &&
-           SetOrDeleteArrayElement(cx, target, targetIndex, hole, fromValue);
 }
 
 /* ES5 15.4.4.12. */
