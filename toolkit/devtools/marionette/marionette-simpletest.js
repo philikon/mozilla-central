@@ -65,6 +65,8 @@ var Marionette = {
   },
 
   returnFunc: function Marionette__returnFunc(value, status) {
+    if (value == undefined)
+      value = null;
     if (status == 0 || status == undefined) {
       Marionette.__conn.send({from: Marionette.__actorID, value: value, status: status});
     }
