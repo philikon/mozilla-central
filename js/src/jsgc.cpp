@@ -1787,7 +1787,7 @@ GCMarker::GCMarker(JSContext *cx)
     unmarkedArenaStackTop(NULL),
     stack(cx->runtime->gcMarkStackArray)
 {
-    JS_TRACER_INIT(this, cx, NULL);
+    JS_TracerInit(this, cx, NULL);
     markLaterArenas = 0;
 #ifdef JS_DUMP_CONSERVATIVE_GC_ROOTS
     conservativeDumpFileName = getenv("JS_DUMP_CONSERVATIVE_GC_ROOTS");
@@ -1885,7 +1885,7 @@ gc_root_traversal(JSTracer *trc, const RootEntry &entry)
          * that mark callbacks are not in place during compartment GCs.
          */
         JSTracer checker;
-        JS_TRACER_INIT(&checker, trc->context, EmptyMarkCallback);
+        JS_TracerInit(&checker, trc->context, EmptyMarkCallback);
         ConservativeGCTest test = MarkIfGCThingWord(&checker, reinterpret_cast<uintptr_t>(ptr));
         if (test != CGCT_VALID && entry.value.name) {
             fprintf(stderr,
@@ -2103,7 +2103,7 @@ MarkRuntime(JSTracer *trc)
 {
     JSRuntime *rt = trc->runtime;
 
-    if (rt->state != JSRTS_LANDING)
+    if (rt->hasContexts())
         MarkConservativeStackRoots(trc);
 
     for (RootRange r = rt->gcRootsHash.all(); !r.empty(); r.popFront())
@@ -2659,7 +2659,7 @@ SweepCompartments(JSContext *cx, JSGCInvocationKind gckind)
         JSCompartment *compartment = *read++;
 
         if (!compartment->hold &&
-            (compartment->arenas.arenaListsAreEmpty() || gckind == GC_LAST_CONTEXT))
+            (compartment->arenas.arenaListsAreEmpty() || !rt->hasContexts()))
         {
             compartment->arenas.checkEmptyFreeLists();
             if (callback)
@@ -3050,7 +3050,6 @@ GCCycle(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind)
 {
     JSRuntime *rt = cx->runtime;
 
-    JS_ASSERT_IF(comp, gckind != GC_LAST_CONTEXT);
     JS_ASSERT_IF(comp, comp != rt->atomsCompartment);
     JS_ASSERT_IF(comp, rt->gcMode == JSGC_MODE_COMPARTMENT);
 
@@ -3077,10 +3076,8 @@ GCCycle(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind)
      * is either the current thread or waits for the GC to complete on this
      * thread.
      */
-    if (rt->inOOMReport) {
-        JS_ASSERT(gckind != GC_LAST_CONTEXT);
+    if (rt->inOOMReport)
         return;
-    }
 
     /*
      * We should not be depending on cx->compartment in the GC, so set it to
@@ -3102,10 +3099,8 @@ GCCycle(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind)
      */
     JS_ASSERT(!cx->gcBackgroundFree);
     rt->gcHelperThread.waitBackgroundSweepOrAllocEnd();
-    if (gckind != GC_LAST_CONTEXT && rt->state != JSRTS_LANDING) {
-        if (rt->gcHelperThread.prepareForBackgroundSweep())
-            cx->gcBackgroundFree = &rt->gcHelperThread;
-    }
+    if (rt->hasContexts() && rt->gcHelperThread.prepareForBackgroundSweep())
+        cx->gcBackgroundFree = &rt->gcHelperThread;
 #endif
 
     MarkAndSweep(cx, gckind);
@@ -3135,15 +3130,6 @@ js_GC(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, gcstats::Re
     JSRuntime *rt = cx->runtime;
     JS_AbortIfWrongThread(rt);
 
-    /*
-     * Don't collect garbage if the runtime isn't up, and cx is not the last
-     * context in the runtime.  The last context must force a GC, and nothing
-     * should suppress that final collection or there may be shutdown leaks,
-     * or runtime bloat until the next context is created.
-     */
-    if (rt->state != JSRTS_UP && gckind != GC_LAST_CONTEXT)
-        return;
-
 #ifdef JS_GC_ZEAL
     struct AutoVerifyBarriers {
         JSContext *cx;
@@ -3167,7 +3153,7 @@ js_GC(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, gcstats::Re
          * on another thread.
          */
         if (JSGCCallback callback = rt->gcCallback) {
-            if (!callback(cx, JSGC_BEGIN) && gckind != GC_LAST_CONTEXT)
+            if (!callback(cx, JSGC_BEGIN) && rt->hasContexts())
                 return;
         }
 
@@ -3186,7 +3172,7 @@ js_GC(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, gcstats::Re
          * On shutdown, iterate until finalizers or the JSGC_END callback
          * stop creating garbage.
          */
-    } while (gckind == GC_LAST_CONTEXT && rt->gcPoke);
+    } while (!rt->hasContexts() && rt->gcPoke);
 
     rt->gcNextFullGCTime = PRMJ_Now() + GC_IDLE_FULL_SPAN;
 
@@ -3707,7 +3693,7 @@ StartVerifyBarriers(JSContext *cx)
     trc->number = rt->gcNumber;
     trc->count = 0;
 
-    JS_TRACER_INIT(trc, cx, AccumulateEdge);
+    JS_TracerInit(trc, cx, AccumulateEdge);
 
     const size_t size = 64 * 1024 * 1024;
     trc->root = (VerifyNode *)js_malloc(size);
@@ -3821,7 +3807,7 @@ EndVerifyBarriers(JSContext *cx)
     rt->gcVerifyData = NULL;
     rt->gcIncrementalTracer = NULL;
 
-    JS_TRACER_INIT(trc, cx, CheckAutorooter);
+    JS_TracerInit(trc, cx, CheckAutorooter);
 
     JSContext *iter = NULL;
     while (JSContext *acx = js_ContextIterator(rt, JS_TRUE, &iter)) {
@@ -3829,7 +3815,7 @@ EndVerifyBarriers(JSContext *cx)
             acx->autoGCRooters->traceAll(trc);
     }
 
-    JS_TRACER_INIT(trc, cx, CheckEdge);
+    JS_TracerInit(trc, cx, CheckEdge);
 
     /* Start after the roots. */
     VerifyNode *node = NextNode(trc->root);

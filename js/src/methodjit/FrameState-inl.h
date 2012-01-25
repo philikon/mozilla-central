@@ -1282,7 +1282,7 @@ FrameState::getCallee()
 }
 
 inline void
-FrameState::unpinKilledReg(RegisterID reg)
+FrameState::unpinKilledReg(AnyRegisterID reg)
 {
     regstate(reg).unpinUnsafe();
     freeRegs.putReg(reg);
@@ -1361,6 +1361,8 @@ FrameState::pushLocal(uint32_t n)
         if (fe->isTracked() && n < a->script->nfixed)
             JS_ASSERT(fe->data.inMemory());
 #endif
+        if (n >= a->script->nfixed)
+            syncFe(fe);
         JSValueType type = fe->isTypeKnown() ? fe->getKnownType() : JSVAL_TYPE_UNKNOWN;
         push(addressOf(fe), type);
     }

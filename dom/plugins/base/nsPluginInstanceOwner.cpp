@@ -621,8 +621,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRect(NPRect *invalidRect)
   if (mWidget) {
     mWidget->Invalidate(nsIntRect(invalidRect->left, invalidRect->top,
                                   invalidRect->right - invalidRect->left,
-                                  invalidRect->bottom - invalidRect->top),
-                        false);
+                                  invalidRect->bottom - invalidRect->top));
     return NS_OK;
   }
 #endif
@@ -654,12 +653,6 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRegion(NPRegion invalidRegion)
 
 NS_IMETHODIMP nsPluginInstanceOwner::ForceRedraw()
 {
-  NS_ENSURE_TRUE(mObjectFrame, NS_ERROR_NULL_POINTER);
-  nsIView* view = mObjectFrame->GetView();
-  if (view) {
-    return view->GetViewManager()->Composite();
-  }
-
   return NS_OK;
 }
 
@@ -1690,6 +1683,28 @@ bool nsPluginInstanceOwner::AddPluginView(const gfxRect& aRect)
 
   JNIEnv* env = GetJNIForThread();
   jclass cls = env->FindClass("org/mozilla/gecko/GeckoAppShell");
+
+#ifdef MOZ_JAVA_COMPOSITOR
+  nsAutoString metadata;
+  nsCOMPtr<nsIAndroidDrawMetadataProvider> metadataProvider =
+      AndroidBridge::Bridge()->GetDrawMetadataProvider();
+  metadataProvider->GetDrawMetadata(metadata);
+
+  jstring jMetadata = env->NewString(nsPromiseFlatString(metadata).get(), metadata.Length());
+
+  jmethodID method = env->GetStaticMethodID(cls,
+                                            "addPluginView",
+                                            "(Landroid/view/View;IIIILjava/lang/String;)V");
+
+  env->CallStaticVoidMethod(cls,
+                            method,
+                            javaSurface,
+                            (int)aRect.x,
+                            (int)aRect.y,
+                            (int)aRect.width,
+                            (int)aRect.height,
+                            jMetadata);
+#else
   jmethodID method = env->GetStaticMethodID(cls,
                                             "addPluginView",
                                             "(Landroid/view/View;DDDD)V");
@@ -1701,6 +1716,7 @@ bool nsPluginInstanceOwner::AddPluginView(const gfxRect& aRect)
                             aRect.y,
                             aRect.width,
                             aRect.height);
+#endif
 
   if (!mPluginViewAdded) {
     ANPEvent event;
@@ -2875,8 +2891,7 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
   if (!mInstance || !mObjectFrame)
     return;
 
-  PRInt32 model;
-  mInstance->GetDrawingModel(&model);
+  PRInt32 model = mInstance->GetANPDrawingModel();
 
   if (model == kSurface_ANPDrawingModel) {
     if (!AddPluginView(aFrameRect)) {

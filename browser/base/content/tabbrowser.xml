@@ -2847,11 +2847,9 @@
 
           goSetCommandEnabled("cmd_ToggleTabsOnTop", visible);
 
-          if (window.TabsOnTop)
-            TabsOnTop.syncUI();
+          TabsOnTop.syncUI();
 
-          if (window.TabsInTitlebar)
-            TabsInTitlebar.allowedBy("tabs-visible", visible);
+          TabsInTitlebar.allowedBy("tabs-visible", visible);
         ]]></body>
       </method>
 
@@ -3813,48 +3811,33 @@
   <binding id="tabbrowser-alltabs-popup"
            extends="chrome://global/content/bindings/popup.xml#popup">
     <implementation implements="nsIDOMEventListener">
-      <method name="_menuItemOnCommand">
-        <parameter name="aEvent"/>
-        <body><![CDATA[
-          gBrowser.selectedTab = aEvent.target.tab;
-        ]]></body>
-      </method>
-
       <method name="_tabOnAttrModified">
         <parameter name="aEvent"/>
         <body><![CDATA[
           var tab = aEvent.target;
-          this._setMenuitemAttributes(tab.mCorrespondingMenuitem, tab);
+          if (tab.mCorrespondingMenuitem)
+            this._setMenuitemAttributes(tab.mCorrespondingMenuitem, tab);
         ]]></body>
       </method>
 
       <method name="_tabOnTabClose">
         <parameter name="aEvent"/>
         <body><![CDATA[
-          var menuItem = aEvent.target.mCorrespondingMenuitem;
-          if (menuItem)
-            this.removeChild(menuItem);
+          var tab = aEvent.target;
+          if (tab.mCorrespondingMenuitem)
+            this.removeChild(tab.mCorrespondingMenuitem);
         ]]></body>
       </method>
 
       <method name="handleEvent">
         <parameter name="aEvent"/>
         <body><![CDATA[
-          if (!aEvent.isTrusted)
-            return;
-
           switch (aEvent.type) {
-            case "command":
-              this._menuItemOnCommand(aEvent);
-              break;
             case "TabAttrModified":
               this._tabOnAttrModified(aEvent);
               break;
             case "TabClose":
               this._tabOnTabClose(aEvent);
-              break;
-            case "TabOpen":
-              this._createTabMenuItem(aEvent.originalTarget);
               break;
             case "scroll":
               this._updateTabsVisibilityStatus();
@@ -3876,8 +3859,6 @@
             if (!curTab) // "Tab Groups" menuitem and its menuseparator
               continue;
             let curTabBO = curTab.boxObject;
-            if (!curTabBO) // "Tabs From Other Computers" menuitem
-              continue;
             if (curTabBO.screenX >= tabstripBO.screenX &&
                 curTabBO.screenX + curTabBO.width <= tabstripBO.screenX + tabstripBO.width)
               this.childNodes[i].setAttribute("tabIsVisible", "true");
@@ -3898,14 +3879,10 @@
 
           this._setMenuitemAttributes(menuItem, aTab);
 
-          // Keep some attributes of the menuitem in sync with its
-          // corresponding tab (e.g. the tab label)
           aTab.mCorrespondingMenuitem = menuItem;
           menuItem.tab = aTab;
-          menuItem.addEventListener("command", this, false);
 
           this.appendChild(menuItem);
-          return menuItem;
         ]]></body>
       </method>
 
@@ -3940,18 +3917,17 @@
     <handlers>
       <handler event="popupshowing">
       <![CDATA[
-        // set up the menu popup
         var tabcontainer = gBrowser.tabContainer;
-        let tabs = gBrowser.visibleTabs;
 
         // Listen for changes in the tab bar.
-        tabcontainer.addEventListener("TabOpen", this, false);
         tabcontainer.addEventListener("TabAttrModified", this, false);
         tabcontainer.addEventListener("TabClose", this, false);
         tabcontainer.mTabstrip.addEventListener("scroll", this, false);
 
+        let tabs = gBrowser.visibleTabs;
         for (var i = 0; i < tabs.length; i++) {
-          this._createTabMenuItem(tabs[i]);
+          if (!tabs[i].pinned)
+            this._createTabMenuItem(tabs[i]);
         }
         this._updateTabsVisibilityStatus();
       ]]></handler>
@@ -3962,14 +3938,12 @@
         for (let i = this.childNodes.length - 1; i > 0; i--) {
           let menuItem = this.childNodes[i];
           if (menuItem.tab) {
-            menuItem.removeEventListener("command", this, false);
             menuItem.tab.mCorrespondingMenuitem = null;
             this.removeChild(menuItem);
           }
         }
         var tabcontainer = gBrowser.tabContainer;
         tabcontainer.mTabstrip.removeEventListener("scroll", this, false);
-        tabcontainer.removeEventListener("TabOpen", this, false);
         tabcontainer.removeEventListener("TabAttrModified", this, false);
         tabcontainer.removeEventListener("TabClose", this, false);
       ]]></handler>
@@ -3990,6 +3964,11 @@
         XULBrowserWindow.setOverLink("", null);
       ]]></handler>
 
+      <handler event="command"><![CDATA[
+        if (event.target.tab)
+          gBrowser.selectedTab = event.target.tab;
+      ]]></handler>
+
     </handlers>
   </binding>
 
@@ -4007,10 +3986,13 @@
     <implementation implements="nsIDOMEventListener">
       <constructor><![CDATA[
         window.addEventListener("findbaropen", this, false);
+        window.addEventListener("resize", this, false);
       ]]></constructor>
 
       <destructor><![CDATA[
         window.removeEventListener("findbaropen", this, false);
+        window.removeEventListener("resize", this, false);
+        MousePosTracker.removeListener(this);
       ]]></destructor>
 
       <property name="label">
@@ -4029,8 +4011,11 @@
           if (val) {
             this.setAttribute("label", val);
             this.removeAttribute("inactive");
+            this._calcMouseTargetRect();
+            MousePosTracker.addListener(this);
           } else {
             this.setAttribute("inactive", "true");
+            MousePosTracker.removeListener(this);
           }
 
           return val;
@@ -4040,12 +4025,56 @@
         </getter>
       </property>
 
+      <method name="getMouseTargetRect">
+        <body><![CDATA[
+          return this._mouseTargetRect;
+        ]]></body>
+      </method>
+
+      <method name="onMouseEnter">
+        <body>
+          this._mirror();
+        </body>
+      </method>
+
+      <method name="onMouseLeave">
+        <body>
+          this._mirror();
+        </body>
+      </method>
+
       <method name="handleEvent">
         <parameter name="event"/>
         <body><![CDATA[
-          if (event.type == "findbaropen" &&
-              this.label)
-            this.setAttribute("mirror", "true");
+          if (!this.label)
+            return;
+
+          switch (event.type) {
+            case "findbaropen":
+              this.setAttribute("mirror", "true");
+              this._calcMouseTargetRect();
+              break;
+            case "resize":
+              this._calcMouseTargetRect();
+              break;
+          }
+        ]]></body>
+      </method>
+
+      <method name="_calcMouseTargetRect">
+        <body><![CDATA[
+          let alignRight = (window.gFindBarInitialized && !window.gFindBar.hidden);
+
+          if (getComputedStyle(document.documentElement).direction == "rtl")
+            alighRight = !alignRight;
+
+          let rect = this.getBoundingClientRect();
+          this._mouseTargetRect = {
+            top:    rect.top,
+            bottom: rect.bottom,
+            left:   alignRight ? window.innerWidth - rect.width : 0,
+            right:  alignRight ? window.innerWidth : rect.width
+          };
         ]]></body>
       </method>
 
@@ -4058,11 +4087,6 @@
         </body>
       </method>
     </implementation>
-
-    <handlers>
-      <handler event="mouseover" action="this._mirror();"/>
-      <handler event="dragover" action="this._mirror();"/>
-    </handlers>
   </binding>
 
 </bindings>

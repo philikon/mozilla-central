@@ -37,7 +37,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "jscntxt.h"
 #include "nsJSEnvironment.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -109,6 +108,7 @@
 
 #include "mozilla/FunctionTimer.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Telemetry.h"
 
 #include "sampler.h"
 
@@ -146,6 +146,8 @@ static PRLogModuleInfo* gJSDiagnostics;
 static nsITimer *sGCTimer;
 static nsITimer *sShrinkGCBuffersTimer;
 static nsITimer *sCCTimer;
+
+static PRTime sLastCCEndTime;
 
 static bool sGCHasRun;
 
@@ -712,8 +714,7 @@ nsJSContext::DOMOperationCallback(JSContext *cx)
 
   // Check if we should offer the option to debug
   JSStackFrame* fp = ::JS_GetScriptedCaller(cx, NULL);
-  bool debugPossible = (fp != nsnull && cx->debugHooks &&
-                          cx->debugHooks->debuggerHandler != nsnull);
+  bool debugPossible = fp && js::CanCallContextDebugHandler(cx);
 #ifdef MOZ_JSDEBUGGER
   // Get the debugger service if necessary.
   if (debugPossible) {
@@ -842,10 +843,7 @@ nsJSContext::DOMOperationCallback(JSContext *cx)
   else if ((buttonPressed == 2) && debugPossible) {
     // Debug the script
     jsval rval;
-    switch(cx->debugHooks->debuggerHandler(cx, script, ::JS_GetFramePC(cx, fp),
-                                           &rval,
-                                           cx->debugHooks->
-                                           debuggerHandlerData)) {
+    switch (js::CallContextDebugHandler(cx, script, JS_GetFramePC(cx, fp), &rval)) {
       case JSTRAP_RETURN:
         JS_SetFrameReturnValue(cx, fp, rval);
         return JS_TRUE;
@@ -1131,7 +1129,7 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsJSContext)
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsJSContext)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsJSContext)
-  NS_ASSERTION(!tmp->mContext || tmp->mContext->outstandingRequests == 0,
+  NS_ASSERTION(!tmp->mContext || js::GetContextOutstandingRequests(tmp->mContext) == 0,
                "Trying to unlink a context with outstanding requests.");
   tmp->mIsInitialized = false;
   tmp->mGCOnDestruction = false;
@@ -1161,7 +1159,7 @@ nsJSContext::GetCCRefcnt()
 {
   nsrefcnt refcnt = mRefCnt.get();
   if (NS_LIKELY(mContext))
-    refcnt += mContext->outstandingRequests;
+    refcnt += js::GetContextOutstandingRequests(mContext);
   return refcnt;
 }
 
@@ -3281,8 +3279,15 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener)
     PokeGC();
   }
 
+  PRTime now = PR_Now();
+
+  if (sLastCCEndTime) {
+    PRUint32 timeBetween = (PRUint32)(start - sLastCCEndTime) / PR_USEC_PER_SEC;
+    Telemetry::Accumulate(Telemetry::CYCLE_COLLECTOR_TIME_BETWEEN, timeBetween);
+  }
+  sLastCCEndTime = now;
+
   if (sPostGCEventsToConsole) {
-    PRTime now = PR_Now();
     PRTime delta = 0;
     if (sFirstCollectionTime) {
       delta = now - sFirstCollectionTime;
@@ -3620,6 +3625,7 @@ nsJSRuntime::Startup()
   // initialize all our statics, so that we can restart XPCOM
   sGCTimer = sCCTimer = nsnull;
   sGCHasRun = false;
+  sLastCCEndTime = 0;
   sPendingLoadCount = 0;
   sLoadingInProgress = false;
   sCCollectedWaitingForGC = 0;

@@ -224,6 +224,7 @@
 
 #include "nsDOMNavigationTiming.h"
 #include "nsITimedChannel.h"
+#include "mozilla/StartupTimeline.h"
 
 static NS_DEFINE_CID(kDOMScriptObjectFactoryCID,
                      NS_DOM_SCRIPT_OBJECT_FACTORY_CID);
@@ -1223,6 +1224,11 @@ nsDocShell::LoadURI(nsIURI * aURI,
     PRUint32 loadType = MAKE_LOAD_TYPE(LOAD_NORMAL, aLoadFlags);    
 
     NS_ENSURE_ARG(aURI);
+
+    if (!StartupTimeline::HasRecord(StartupTimeline::FIRST_LOAD_URI) &&
+        mItemType == typeContent && !NS_IsAboutBlank(aURI)) {
+        StartupTimeline::RecordOnce(StartupTimeline::FIRST_LOAD_URI);
+    }
 
     // Extract the info from the DocShellLoadInfo struct...
     if (aLoadInfo) {
@@ -4732,8 +4738,7 @@ nsDocShell::Repaint(bool aForce)
     nsIViewManager* viewManager = presShell->GetViewManager();
     NS_ENSURE_TRUE(viewManager, NS_ERROR_FAILURE);
 
-    // what about aForce ?
-    NS_ENSURE_SUCCESS(viewManager->UpdateAllViews(0), NS_ERROR_FAILURE);
+    NS_ENSURE_SUCCESS(viewManager->InvalidateAllViews(), NS_ERROR_FAILURE);
     return NS_OK;
 }
 
@@ -7324,7 +7329,7 @@ nsDocShell::RestoreFromHistory()
             // call Thaw. So we issue the invalidate here.
             newRootView = newVM->GetRootView();
             if (newRootView) {
-                newVM->UpdateView(newRootView, NS_VMREFRESH_NO_SYNC);
+                newVM->InvalidateView(newRootView);
             }
         }
     }

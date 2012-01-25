@@ -103,8 +103,6 @@ static AndroidDirectTexture* sDirectTexture = new AndroidDirectTexture(2048, 204
         AndroidGraphicBuffer::UsageSoftwareWrite | AndroidGraphicBuffer::UsageTexture,
         gfxASurface::ImageFormatRGB16_565);
 
-static bool sHasDirectTexture = true;
-
 #endif
 
 
@@ -590,17 +588,10 @@ nsWindow::IsEnabled(bool *aState)
 }
 
 NS_IMETHODIMP
-nsWindow::Invalidate(const nsIntRect &aRect,
-                     bool aIsSynchronous)
+nsWindow::Invalidate(const nsIntRect &aRect)
 {
     AndroidGeckoEvent *event = new AndroidGeckoEvent(AndroidGeckoEvent::DRAW, aRect);
     nsAppShell::gAppShell->PostEvent(event);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsWindow::Update()
-{
     return NS_OK;
 }
 
@@ -835,36 +826,49 @@ nsWindow::BindToTexture()
 bool
 nsWindow::HasDirectTexture()
 {
+  static bool sTestedDirectTexture = false;
+  static bool sHasDirectTexture = false;
+
   // If we already tested, return early
-  if (!sHasDirectTexture)
-    return false;
+  if (sTestedDirectTexture)
+    return sHasDirectTexture;
 
-  AndroidGraphicBuffer* buffer = new AndroidGraphicBuffer(512, 512,
-      AndroidGraphicBuffer::UsageSoftwareWrite | AndroidGraphicBuffer::UsageTexture,
-      gfxASurface::ImageFormatRGB16_565);
+  sTestedDirectTexture = true;
 
+  nsAutoString board;
+  AndroidGraphicBuffer* buffer = NULL;
   unsigned char* bits = NULL;
-  if (!buffer->Lock(AndroidGraphicBuffer::UsageSoftwareWrite, &bits) || !bits) {
-    ALOG("failed to lock graphic buffer");
-    buffer->Unlock();
-    sHasDirectTexture = false;
+
+  if (AndroidGraphicBuffer::IsBlacklisted()) {
+    ALOG("device is blacklisted for direct texture");
     goto cleanup;
   }
 
-  if (!buffer->Unlock()) {
+  buffer = new AndroidGraphicBuffer(512, 512,
+      AndroidGraphicBuffer::UsageSoftwareWrite | AndroidGraphicBuffer::UsageTexture,
+      gfxASurface::ImageFormatRGB16_565);
+
+  if (buffer->Lock(AndroidGraphicBuffer::UsageSoftwareWrite, &bits) != 0 || !bits) {
+    ALOG("failed to lock graphic buffer");
+    buffer->Unlock();
+    goto cleanup;
+  }
+
+  if (buffer->Unlock() != 0) {
     ALOG("failed to unlock graphic buffer");
-    sHasDirectTexture = false;
     goto cleanup;
   }
 
   if (!buffer->Reallocate(1024, 1024, gfxASurface::ImageFormatRGB16_565)) {
     ALOG("failed to reallocate graphic buffer");
-    sHasDirectTexture = false;
     goto cleanup;
   }
 
+  sHasDirectTexture = true;
+
 cleanup:
-  delete buffer;
+  if (buffer)
+    delete buffer;
 
   return sHasDirectTexture;
 }
@@ -1195,15 +1199,17 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
         AndroidBridge::Bridge()->GetSoftwareLayerClient();
     client.BeginDrawing(gAndroidBounds.width, gAndroidBounds.height);
 
+    nsIntRect dirtyRect = ae->Rect().Intersect(nsIntRect(0, 0, gAndroidBounds.width, gAndroidBounds.height));
+
     nsAutoString metadata;
     unsigned char *bits = NULL;
-    if (sHasDirectTexture) {
+    if (HasDirectTexture()) {
       if (sDirectTexture->Width() != gAndroidBounds.width ||
           sDirectTexture->Height() != gAndroidBounds.height) {
         sDirectTexture->Reallocate(gAndroidBounds.width, gAndroidBounds.height);
       }
 
-      sDirectTexture->Lock(AndroidGraphicBuffer::UsageSoftwareWrite, ae->Rect(), &bits);
+      sDirectTexture->Lock(AndroidGraphicBuffer::UsageSoftwareWrite, dirtyRect, &bits);
     } else {
       bits = client.LockBufferBits();
     }
@@ -1236,7 +1242,7 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
                     break;
                 } else {
                     targetSurface->SetDeviceOffset(gfxPoint(-x, -y));
-                    DrawTo(targetSurface, ae->Rect());
+                    DrawTo(targetSurface, dirtyRect);
                 }
             }
         }
@@ -1247,13 +1253,13 @@ nsWindow::OnDraw(AndroidGeckoEvent *ae)
         }
     }
 
-    if (sHasDirectTexture) {
+    if (HasDirectTexture()) {
         sDirectTexture->Unlock();
     } else {
         client.UnlockBuffer();
     }
 
-    client.EndDrawing(ae->Rect(), metadata);
+    client.EndDrawing(dirtyRect, metadata, HasDirectTexture());
     return;
 #endif
 

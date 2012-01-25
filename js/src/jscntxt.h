@@ -64,7 +64,7 @@
 #include "gc/Statistics.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
-#include "vm/StackSpace.h"
+#include "vm/Stack.h"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -325,24 +325,13 @@ typedef enum JSDestroyContextMode {
     JSDCM_NEW_FAILED
 } JSDestroyContextMode;
 
-typedef enum JSRuntimeState {
-    JSRTS_DOWN,
-    JSRTS_LAUNCHING,
-    JSRTS_UP,
-    JSRTS_LANDING
-} JSRuntimeState;
-
 typedef struct JSPropertyTreeEntry {
     JSDHashEntryHdr     hdr;
     js::Shape           *child;
 } JSPropertyTreeEntry;
 
-typedef void
-(* JSActivityCallback)(void *arg, JSBool active);
-
 namespace js {
 
-typedef Vector<JSCompartment *, 0, SystemAllocPolicy> CompartmentVector;
 typedef Vector<ScriptOpcodeCountsPair, 0, SystemAllocPolicy> ScriptOpcodeCountsVector;
 
 }
@@ -354,9 +343,6 @@ struct JSRuntime
 
     /* List of compartments (protected by the GC lock). */
     js::CompartmentVector compartments;
-
-    /* Runtime state, synchronized by the stateChange/gcLock condvar/lock. */
-    JSRuntimeState      state;
 
     /* See comment for JS_AbortIfWrongThread in jsapi.h. */
 #ifdef JS_THREADSAFE
@@ -378,18 +364,7 @@ struct JSRuntime
     /* Compartment create/destroy callback. */
     JSCompartmentCallback compartmentCallback;
 
-    /*
-     * Sets a callback that is run whenever the runtime goes idle - the
-     * last active request ceases - and begins activity - when it was
-     * idle and a request begins. Note: The callback is called under the
-     * GC lock.
-     */
-    void setActivityCallback(JSActivityCallback cb, void *arg) {
-        activityCallback = cb;
-        activityCallbackArg = arg;
-    }
-
-    JSActivityCallback    activityCallback;
+    js::ActivityCallback  activityCallback;
     void                 *activityCallbackArg;
 
     /* Garbage collector state, used by jsgc.c. */
@@ -547,6 +522,10 @@ struct JSRuntime
     /* List of active contexts sharing this runtime; protected by gcLock. */
     JSCList             contextList;
 
+    bool hasContexts() const {
+        return !JS_CLIST_IS_EMPTY(&contextList);
+    }
+    
     /* Per runtime debug hooks -- see jsprvtd.h and jsdbgapi.h. */
     JSDebugHooks        globalDebugHooks;
 
@@ -577,15 +556,6 @@ struct JSRuntime
     JSThread            *gcThread;
 
     js::GCHelperThread  gcHelperThread;
-
-    /* Lock and owning thread pointer for JS_LOCK_RUNTIME. */
-    PRLock              *rtLock;
-#ifdef DEBUG
-    void *              rtLockOwner;
-#endif
-
-    /* Used to synchronize down/up state change; protected by gcLock. */
-    PRCondVar           *stateChange;
 
     /*
      * Mapping from NSPR thread identifiers to JSThreads.
@@ -846,15 +816,6 @@ VersionShouldParseXML(JSVersion version)
     return VersionHasXML(version) || VersionNumber(version) >= JSVERSION_1_6;
 }
 
-static inline void
-VersionSetXML(JSVersion *version, bool enable)
-{
-    if (enable)
-        *version = JSVersion(uint32_t(*version) | VersionFlags::HAS_XML);
-    else
-        *version = JSVersion(uint32_t(*version) & ~VersionFlags::HAS_XML);
-}
-
 static inline JSVersion
 VersionExtractFlags(JSVersion version)
 {
@@ -884,8 +845,7 @@ VersionFlagsToOptions(JSVersion version)
 static inline JSVersion
 OptionFlagsToVersion(uintN options, JSVersion version)
 {
-    VersionSetXML(&version, OptionsHasXML(options));
-    return version;
+    return VersionSetXML(version, OptionsHasXML(options));
 }
 
 static inline bool
@@ -961,11 +921,11 @@ struct JSContext
     js::ContextStack    stack;
 
     /* ContextStack convenience functions */
-    inline bool hasfp() const;
-    inline js::StackFrame* fp() const;
-    inline js::StackFrame* maybefp() const;
-    inline js::FrameRegs& regs() const;
-    inline js::FrameRegs* maybeRegs() const;
+    inline bool hasfp() const               { return stack.hasfp(); }
+    inline js::StackFrame* fp() const       { return stack.fp(); }
+    inline js::StackFrame* maybefp() const  { return stack.maybefp(); }
+    inline js::FrameRegs& regs() const      { return stack.regs(); }
+    inline js::FrameRegs* maybeRegs() const { return stack.maybeRegs(); }
 
     /* Set cx->compartment based on the current scope chain. */
     void resetCompartment();
@@ -1346,257 +1306,6 @@ struct AutoResolving {
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
-/*
- * Moving GC Stack Rooting
- *
- * A moving GC may change the physical location of GC allocated things, even
- * when they are rooted, updating all pointers to the thing to refer to its new
- * location. The GC must therefore know about all live pointers to a thing,
- * not just one of them, in order to behave correctly.
- *
- * The classes below are used to root stack locations whose value may be held
- * live across a call that can trigger GC (i.e. a call which might allocate any
- * GC things). For a code fragment such as:
- *
- * Foo();
- * ... = obj->lastProperty();
- *
- * If Foo() can trigger a GC, the stack location of obj must be rooted to
- * ensure that the GC does not move the JSObject referred to by obj without
- * updating obj's location itself. This rooting must happen regardless of
- * whether there are other roots which ensure that the object itself will not
- * be collected.
- *
- * If Foo() cannot trigger a GC, and the same holds for all other calls made
- * between obj's definitions and its last uses, then no rooting is required.
- *
- * Several classes are available for rooting stack locations. All are templated
- * on the type T of the value being rooted, for which RootMethods<T> must
- * have an instantiation.
- *
- * - Root<T> roots an existing stack allocated variable or other location of
- *   type T. This is typically used either when a variable only needs to be
- *   rooted on certain rare paths, or when a function takes a bare GC thing
- *   pointer as an argument and needs to root it. In the latter case a
- *   Handle<T> is generally preferred, see below.
- *
- * - RootedVar<T> declares a variable of type T, whose value is always rooted.
- *
- * - Handle<T> is a const reference to a Root<T> or RootedVar<T>. Handles are
- *   coerced automatically from such a Root<T> or RootedVar<T>. Functions which
- *   take GC things or values as arguments and need to root those arguments
- *   should generally replace those arguments with handles and avoid any
- *   explicit rooting. This has two benefits. First, when several such
- *   functions call each other then redundant rooting of multiple copies of the
- *   GC thing can be avoided. Second, if the caller does not pass a rooted
- *   value a compile error will be generated, which is quicker and easier to
- *   fix than when relying on a separate rooting analysis.
- */
-
-template <> struct RootMethods<const jsid>
-{
-    static jsid initial() { return JSID_VOID; }
-    static ThingRootKind kind() { return THING_ROOT_ID; }
-    static bool poisoned(jsid id) { return IsPoisonedId(id); }
-};
-
-template <> struct RootMethods<jsid>
-{
-    static jsid initial() { return JSID_VOID; }
-    static ThingRootKind kind() { return THING_ROOT_ID; }
-    static bool poisoned(jsid id) { return IsPoisonedId(id); }
-};
-
-template <> struct RootMethods<const Value>
-{
-    static Value initial() { return UndefinedValue(); }
-    static ThingRootKind kind() { return THING_ROOT_VALUE; }
-    static bool poisoned(const Value &v) { return IsPoisonedValue(v); }
-};
-
-template <> struct RootMethods<Value>
-{
-    static Value initial() { return UndefinedValue(); }
-    static ThingRootKind kind() { return THING_ROOT_VALUE; }
-    static bool poisoned(const Value &v) { return IsPoisonedValue(v); }
-};
-
-template <typename T>
-struct RootMethods<T *>
-{
-    static T *initial() { return NULL; }
-    static ThingRootKind kind() { return T::rootKind(); }
-    static bool poisoned(T *v) { return IsPoisonedPtr(v); }
-};
-
-/*
- * Root a stack location holding a GC thing. This takes a stack pointer
- * and ensures that throughout its lifetime the referenced variable
- * will remain pinned against a moving GC.
- *
- * It is important to ensure that the location referenced by a Root is
- * initialized, as otherwise the GC may try to use the the uninitialized value.
- * It is generally preferable to use either RootedVar for local variables, or
- * Handle for arguments.
- */
-template <typename T>
-class Root
-{
-  public:
-    Root(JSContext *cx, const T *ptr
-         JS_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-#ifdef JSGC_ROOT_ANALYSIS
-        ThingRootKind kind = RootMethods<T>::kind();
-        this->stack = reinterpret_cast<Root<T>**>(&cx->thingGCRooters[kind]);
-        this->prev = *stack;
-        *stack = this;
-#endif
-
-        JS_ASSERT(!RootMethods<T>::poisoned(*ptr));
-
-        this->ptr = ptr;
-
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    ~Root()
-    {
-#ifdef JSGC_ROOT_ANALYSIS
-        JS_ASSERT(*stack == this);
-        *stack = prev;
-#endif
-    }
-
-#ifdef JSGC_ROOT_ANALYSIS
-    Root<T> *previous() { return prev; }
-#endif
-
-    const T *address() const { return ptr; }
-
-  private:
-
-#ifdef JSGC_ROOT_ANALYSIS
-    Root<T> **stack, *prev;
-#endif
-    const T *ptr;
-
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
-template<typename T> template <typename S>
-inline
-Handle<T>::Handle(const Root<S> &root)
-{
-    testAssign<S>();
-    ptr = reinterpret_cast<const T *>(root.address());
-}
-
-typedef Root<JSObject*>          RootObject;
-typedef Root<JSFunction*>        RootFunction;
-typedef Root<Shape*>             RootShape;
-typedef Root<BaseShape*>         RootBaseShape;
-typedef Root<types::TypeObject*> RootTypeObject;
-typedef Root<JSString*>          RootString;
-typedef Root<JSAtom*>            RootAtom;
-typedef Root<jsid>               RootId;
-typedef Root<Value>              RootValue;
-
-/* Mark a stack location as a root for a rooting analysis. */
-class CheckRoot
-{
-#if defined(DEBUG) && defined(JSGC_ROOT_ANALYSIS)
-
-    CheckRoot **stack, *prev;
-    const uint8_t *ptr;
-
-  public:
-    template <typename T>
-    CheckRoot(JSContext *cx, const T *ptr
-              JS_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-        this->stack = &cx->checkGCRooters;
-        this->prev = *stack;
-        *stack = this;
-        this->ptr = static_cast<const uint8_t*>(ptr);
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    ~CheckRoot()
-    {
-        JS_ASSERT(*stack == this);
-        *stack = prev;
-    }
-
-    CheckRoot *previous() { return prev; }
-
-    bool contains(const uint8_t *v, size_t len) {
-        return ptr >= v && ptr < v + len;
-    }
-
-#else /* DEBUG && JSGC_ROOT_ANALYSIS */
-
-  public:
-    template <typename T>
-    CheckRoot(JSContext *cx, const T *ptr
-              JS_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-#endif /* DEBUG && JSGC_ROOT_ANALYSIS */
-
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
-/* Make a local variable which stays rooted throughout its lifetime. */
-template <typename T>
-class RootedVar
-{
-  public:
-    RootedVar(JSContext *cx)
-        : ptr(RootMethods<T>::initial()), root(cx, &ptr)
-    {}
-
-    RootedVar(JSContext *cx, T initial)
-        : ptr(initial), root(cx, &ptr)
-    {}
-
-    operator T () { return ptr; }
-    T operator ->() { return ptr; }
-    T * address() { return &ptr; }
-    const T * address() const { return &ptr; }
-    T raw() { return ptr; }
-
-    T & operator =(T value)
-    {
-        JS_ASSERT(!RootMethods<T>::poisoned(value));
-        ptr = value;
-        return ptr;
-    }
-
-  private:
-    T ptr;
-    Root<T> root;
-};
-
-template <typename T> template <typename S>
-inline
-Handle<T>::Handle(const RootedVar<S> &root)
-{
-    ptr = reinterpret_cast<const T *>(root.address());
-}
-
-typedef RootedVar<JSObject*>          RootedVarObject;
-typedef RootedVar<JSFunction*>        RootedVarFunction;
-typedef RootedVar<Shape*>             RootedVarShape;
-typedef RootedVar<BaseShape*>         RootedVarBaseShape;
-typedef RootedVar<types::TypeObject*> RootedVarTypeObject;
-typedef RootedVar<JSString*>          RootedVarString;
-typedef RootedVar<JSAtom*>            RootedVarAtom;
-typedef RootedVar<jsid>               RootedVarId;
-typedef RootedVar<Value>              RootedVarValue;
-
 #ifdef JS_HAS_XML_SUPPORT
 class AutoXMLRooter : private AutoGCRooter {
   public:
@@ -1616,38 +1325,6 @@ class AutoXMLRooter : private AutoGCRooter {
     JS_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 #endif /* JS_HAS_XML_SUPPORT */
-
-class AutoLockGC {
-  public:
-    explicit AutoLockGC(JSRuntime *rt = NULL
-                        JS_GUARD_OBJECT_NOTIFIER_PARAM)
-      : runtime(rt)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-        if (rt)
-            JS_LOCK_GC(rt);
-    }
-
-    bool locked() const {
-        return !!runtime;
-    }
-
-    void lock(JSRuntime *rt) {
-        JS_ASSERT(rt);
-        JS_ASSERT(!runtime);
-        runtime = rt;
-        JS_LOCK_GC(rt);
-    }
-
-    ~AutoLockGC() {
-        if (runtime)
-            JS_UNLOCK_GC(runtime);
-    }
-
-  private:
-    JSRuntime *runtime;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
 
 class AutoUnlockGC {
   private:
@@ -1915,21 +1592,6 @@ js_ContextIterator(JSRuntime *rt, JSBool unlocked, JSContext **iterp);
 extern JS_FRIEND_API(JSContext *)
 js_NextActiveContext(JSRuntime *, JSContext *);
 
-/*
- * Report an exception, which is currently realized as a printf-style format
- * string and its arguments.
- */
-typedef enum JSErrNum {
-#define MSG_DEF(name, number, count, exception, format) \
-    name = number,
-#include "js.msg"
-#undef MSG_DEF
-    JSErr_Limit
-} JSErrNum;
-
-extern JS_FRIEND_API(const JSErrorFormatString *)
-js_GetErrorMessage(void *userRef, const char *locale, const uintN errorNumber);
-
 #ifdef va_start
 extern JSBool
 js_ReportErrorVA(JSContext *cx, uintN flags, const char *format, va_list ap);
@@ -1949,22 +1611,8 @@ js_ExpandErrorArguments(JSContext *cx, JSErrorCallback callback,
 extern void
 js_ReportOutOfMemory(JSContext *cx);
 
-/* JS_CHECK_RECURSION is used outside JS, so JS_FRIEND_API. */
-JS_FRIEND_API(void)
-js_ReportOverRecursed(JSContext *maybecx);
-
 extern JS_FRIEND_API(void)
 js_ReportAllocationOverflow(JSContext *cx);
-
-#define JS_CHECK_RECURSION(cx, onerror)                                       \
-    JS_BEGIN_MACRO                                                            \
-        int stackDummy_;                                                      \
-                                                                              \
-        if (!JS_CHECK_STACK_SIZE(cx->stackLimit, &stackDummy_)) {             \
-            js_ReportOverRecursed(cx);                                        \
-            onerror;                                                          \
-        }                                                                     \
-    JS_END_MACRO
 
 /*
  * Report an exception using a previously composed JSErrorReport.
@@ -2040,7 +1688,7 @@ namespace js {
 
 /* These must be called with GC lock taken. */
 
-JS_FRIEND_API(void)
+void
 TriggerOperationCallback(JSContext *cx);
 
 void
@@ -2145,110 +1793,12 @@ SetValueRangeToNull(Value *vec, size_t len)
     SetValueRangeToNull(vec, vec + len);
 }
 
-template<class T>
-class AutoVectorRooter : protected AutoGCRooter
-{
-  public:
-    explicit AutoVectorRooter(JSContext *cx, ptrdiff_t tag
-                              JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoGCRooter(cx, tag), vector(cx)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    size_t length() const { return vector.length(); }
-
-    bool append(const T &v) { return vector.append(v); }
-
-    /* For use when space has already been reserved. */
-    void infallibleAppend(const T &v) { vector.infallibleAppend(v); }
-
-    void popBack() { vector.popBack(); }
-    T popCopy() { return vector.popCopy(); }
-
-    bool growBy(size_t inc) {
-        size_t oldLength = vector.length();
-        if (!vector.growByUninitialized(inc))
-            return false;
-        MakeRangeGCSafe(vector.begin() + oldLength, vector.end());
-        return true;
-    }
-
-    bool resize(size_t newLength) {
-        size_t oldLength = vector.length();
-        if (newLength <= oldLength) {
-            vector.shrinkBy(oldLength - newLength);
-            return true;
-        }
-        if (!vector.growByUninitialized(newLength - oldLength))
-            return false;
-        MakeRangeGCSafe(vector.begin() + oldLength, vector.end());
-        return true;
-    }
-
-    void clear() { vector.clear(); }
-
-    bool reserve(size_t newLength) {
-        return vector.reserve(newLength);
-    }
-
-    T &operator[](size_t i) { return vector[i]; }
-    const T &operator[](size_t i) const { return vector[i]; }
-
-    const T *begin() const { return vector.begin(); }
-    T *begin() { return vector.begin(); }
-
-    const T *end() const { return vector.end(); }
-    T *end() { return vector.end(); }
-
-    const T &back() const { return vector.back(); }
-
-    friend void AutoGCRooter::trace(JSTracer *trc);
-
-  private:
-    typedef Vector<T, 8> VectorImpl;
-    VectorImpl vector;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
-class AutoValueVector : public AutoVectorRooter<Value>
-{
-  public:
-    explicit AutoValueVector(JSContext *cx
-                             JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<Value>(cx, VALVECTOR)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    const jsval *jsval_begin() const { return begin(); }
-    jsval *jsval_begin() { return begin(); }
-
-    const jsval *jsval_end() const { return end(); }
-    jsval *jsval_end() { return end(); }
-
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
 class AutoObjectVector : public AutoVectorRooter<JSObject *>
 {
   public:
     explicit AutoObjectVector(JSContext *cx
                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
         : AutoVectorRooter<JSObject *>(cx, OBJVECTOR)
-    {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
-class AutoIdVector : public AutoVectorRooter<jsid>
-{
-  public:
-    explicit AutoIdVector(JSContext *cx
-                          JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : AutoVectorRooter<jsid>(cx, IDVECTOR)
     {
         JS_GUARD_OBJECT_NOTIFIER_INIT;
     }

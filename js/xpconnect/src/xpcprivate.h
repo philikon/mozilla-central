@@ -597,6 +597,13 @@ private:
     PRUint16                 mDefaultSecurityManagerFlags;
     JSBool                   mShuttingDown;
     JSBool                   mNeedGCBeforeCC;
+
+    // nsIThreadInternal doesn't remember which observers it called
+    // OnProcessNextEvent on when it gets around to calling AfterProcessNextEvent.
+    // So if XPConnect gets initialized mid-event (which can happen), we'll get
+    // an 'after' notification without getting an 'on' notification. If we don't
+    // watch out for this, we'll do an unmatched |pop| on the context stack.
+    PRUint16                   mEventDepth;
 #ifdef DEBUG_CC
     PLDHashTable             mJSRoots;
 #endif
@@ -1647,10 +1654,10 @@ private:
     // default parent for the XPCWrappedNatives that have us as the scope,
     // unless a PreCreate hook overrides it.  Note that this _may_ be null (see
     // constructor).
-    JS::HeapPtrObject                mGlobalJSObject;
+    js::ObjectPtr                    mGlobalJSObject;
 
     // Cached value of Object.prototype
-    JS::HeapPtrObject                mPrototypeJSObject;
+    js::ObjectPtr                    mPrototypeJSObject;
     // Prototype to use for wrappers with no helper.
     JSObject*                        mPrototypeNoHelper;
 
@@ -2299,6 +2306,12 @@ public:
             mScriptableInfo->Mark();
     }
 
+    void WriteBarrierPre(JSRuntime* rt)
+    {
+        if (js::IsIncrementalBarrierNeeded(rt) && mJSProtoObject)
+            mJSProtoObject.writeBarrierPre(rt);
+    }
+
     // NOP. This is just here to make the AutoMarkingPtr code compile.
     inline void AutoTrace(JSTracer* trc) {}
 
@@ -2341,7 +2354,7 @@ private:
     }
 
     XPCWrappedNativeScope*   mScope;
-    JS::HeapPtrObject        mJSProtoObject;
+    js::ObjectPtr            mJSProtoObject;
     nsCOMPtr<nsIClassInfo>   mClassInfo;
     PRUint32                 mClassInfoFlags;
     XPCNativeSet*            mSet;
@@ -2730,8 +2743,9 @@ public:
     }
     void SetWrapper(JSObject *obj)
     {
+        js::IncrementalReferenceBarrier(GetWrapperPreserveColor());
         PRWord newval = PRWord(obj) | (mWrapperWord & FLAG_MASK);
-        JS_ModifyReference((void **)&mWrapperWord, (void *)newval);
+        mWrapperWord = newval;
     }
 
     void NoteTearoffs(nsCycleCollectionTraversalCallback& cb);
@@ -3644,6 +3658,12 @@ public:
     // Get the instance of this object for the current thread
     static inline XPCPerThreadData* GetData(JSContext *cx)
     {
+        // Do a release-mode assert that we're not doing anything significant in
+        // XPConnect off the main thread. If you're an extension developer hitting
+        // this, you need to change your code. See bug 716167.
+        if (!NS_LIKELY(NS_IsMainThread() || NS_IsCycleCollectorThread()))
+            JS_Assert("NS_IsMainThread()", __FILE__, __LINE__);
+
         if (cx) {
             NS_ASSERTION(js::GetContextThread(cx), "Uh, JS context w/o a thread?");
 

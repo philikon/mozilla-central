@@ -64,6 +64,8 @@
 
 #include "gfxCrashReporterUtils.h"
 
+#include "sampler.h"
+
 namespace mozilla {
 namespace layers {
 
@@ -119,6 +121,10 @@ LayerManagerOGL::CleanupResources()
 {
   if (!mGLContext)
     return;
+
+  if (mRoot) {
+    RootLayer()->CleanupResources();
+  }
 
   nsRefPtr<GLContext> ctx = mGLContext->GetSharedContext();
   if (!ctx) {
@@ -317,6 +323,12 @@ LayerManagerOGL::Initialize(nsRefPtr<GLContext> aContext)
      */
     if (!mGLContext->IsExtensionSupported(gl::GLContext::ARB_texture_rectangle))
       return false;
+  }
+
+  // If we're double-buffered, we don't need this fbo anymore.
+  if (mGLContext->IsDoubleBuffered()) {
+    mGLContext->fDeleteFramebuffers(1, &mBackBufferFBO);
+    mBackBufferFBO = 0;
   }
 
   // back to default framebuffer, to avoid confusion
@@ -748,6 +760,7 @@ LayerManagerOGL::BindAndDrawQuadWithTextureRect(LayerProgram *aProg,
 void
 LayerManagerOGL::Render()
 {
+  SAMPLE_LABEL("LayerManagerOGL", "Render");
   if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return;
@@ -804,8 +817,8 @@ LayerManagerOGL::Render()
   // Render our layers.
   RootLayer()->RenderLayer(mGLContext->IsDoubleBuffered() ? 0 : mBackBufferFBO,
                            nsIntPoint(0, 0));
-                           
-  mWidget->DrawOver(this, rect);
+
+  mWidget->DrawWindowOverlay(this, rect);
 
   if (mTarget) {
     CopyToTarget();

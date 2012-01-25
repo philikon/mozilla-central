@@ -83,6 +83,7 @@
 #include "jstypedarray.h"
 
 #include "ds/LifoAlloc.h"
+#include "builtin/MapObject.h"
 #include "builtin/RegExp.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/BytecodeEmitter.h"
@@ -216,7 +217,7 @@ JS_GetEmptyStringValue(JSContext *cx)
 JS_PUBLIC_API(JSString *)
 JS_GetEmptyString(JSRuntime *rt)
 {
-    JS_ASSERT(rt->state == JSRTS_UP);
+    JS_ASSERT(rt->hasContexts());
     return rt->emptyString;
 }
 
@@ -680,7 +681,6 @@ static JSBool js_NewRuntimeWasCalled = JS_FALSE;
 
 JSRuntime::JSRuntime()
   : atomsCompartment(NULL),
-    state(),
     cxCallback(NULL),
     compartmentCallback(NULL),
     activityCallback(NULL),
@@ -739,11 +739,6 @@ JSRuntime::JSRuntime()
     requestCount(0),
     gcThread(NULL),
     gcHelperThread(thisFromCtor()),
-    rtLock(NULL),
-# ifdef DEBUG
-    rtLockOwner(0),
-# endif
-    stateChange(NULL),
 #endif
     debuggerMutations(0),
     securityCallbacks(NULL),
@@ -811,12 +806,6 @@ JSRuntime::init(uint32_t maxbytes)
     /* this is asymmetric with JS_ShutDown: */
     if (!js_SetupLocks(8, 16))
         return false;
-    rtLock = JS_NEW_LOCK();
-    if (!rtLock)
-        return false;
-    stateChange = JS_NEW_CONDVAR(gcLock);
-    if (!stateChange)
-        return false;
 #endif
 
     debugMode = false;
@@ -859,10 +848,6 @@ JSRuntime::~JSRuntime()
         JS_DESTROY_CONDVAR(gcDone);
     if (requestDone)
         JS_DESTROY_CONDVAR(requestDone);
-    if (rtLock)
-        JS_DESTROY_LOCK(rtLock);
-    if (stateChange)
-        JS_DESTROY_CONDVAR(stateChange);
 #endif
 }
 
@@ -1135,18 +1120,6 @@ JS_IsInRequest(JSContext *cx)
 #else
     return false;
 #endif
-}
-
-JS_PUBLIC_API(void)
-JS_Lock(JSRuntime *rt)
-{
-    JS_LOCK_RUNTIME(rt);
-}
-
-JS_PUBLIC_API(void)
-JS_Unlock(JSRuntime *rt)
-{
-    JS_UNLOCK_RUNTIME(rt);
 }
 
 JS_PUBLIC_API(JSContextCallback)
@@ -1817,6 +1790,8 @@ static JSStdName standard_class_atoms[] = {
     {js_InitJSONClass,                  EAGER_ATOM_AND_CLASP(JSON)},
     {js_InitTypedArrayClasses,          EAGER_CLASS_ATOM(ArrayBuffer), &js::ArrayBuffer::slowClass},
     {js_InitWeakMapClass,               EAGER_CLASS_ATOM(WeakMap), &js::WeakMapClass},
+    {js_InitMapClass,                   EAGER_CLASS_ATOM(Map), &js::MapObject::class_},
+    {js_InitSetClass,                   EAGER_CLASS_ATOM(Set), &js::SetObject::class_},
     {NULL,                              0, NULL, NULL}
 };
 
@@ -1879,6 +1854,7 @@ static JSStdName standard_class_names[] = {
     {js_InitTypedArrayClasses,  EAGER_CLASS_ATOM(Uint8ClampedArray),
                                 TYPED_ARRAY_CLASP(TYPE_UINT8_CLAMPED)},
 
+    {js_InitWeakMapClass,       EAGER_ATOM_AND_CLASP(WeakMap)},
     {js_InitProxyClass,         EAGER_ATOM_AND_CLASP(Proxy)},
 
     {NULL,                      0, NULL, NULL}
@@ -1927,8 +1903,7 @@ JS_ResolveStandardClass(JSContext *cx, JSObject *obj, jsid id, JSBool *resolved)
     *resolved = JS_FALSE;
 
     rt = cx->runtime;
-    JS_ASSERT(rt->state != JSRTS_DOWN);
-    if (rt->state == JSRTS_LANDING || !JSID_IS_ATOM(id))
+    if (!rt->hasContexts() || !JSID_IS_ATOM(id))
         return JS_TRUE;
 
     idstr = JSID_TO_STRING(id);
@@ -2233,15 +2208,12 @@ JS_updateMallocCounter(JSContext *cx, size_t nbytes)
 JS_PUBLIC_API(char *)
 JS_strdup(JSContext *cx, const char *s)
 {
-    size_t n;
-    void *p;
-
     AssertNoGC(cx);
-    n = strlen(s) + 1;
-    p = cx->malloc_(n);
+    size_t n = strlen(s) + 1;
+    void *p = cx->malloc_(n);
     if (!p)
         return NULL;
-    return (char *)memcpy(p, s, n);
+    return (char *)js_memcpy(p, s, n);
 }
 
 JS_PUBLIC_API(JSBool)
@@ -2431,6 +2403,18 @@ JS_SetExtraGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data)
 }
 
 JS_PUBLIC_API(void)
+JS_TracerInit(JSTracer *trc, JSContext *cx, JSTraceCallback callback)
+{
+    trc->runtime = cx->runtime;
+    trc->context = cx;
+    trc->callback = callback;
+    trc->debugPrinter = NULL;
+    trc->debugPrintArg = NULL;
+    trc->debugPrintIndex = size_t(-1);
+    trc->eagerlyTraceWeakMaps = true;
+}
+
+JS_PUBLIC_API(void)
 JS_TraceRuntime(JSTracer *trc)
 {
     AssertNoGC(trc->runtime);
@@ -2517,7 +2501,7 @@ JS_PrintTraceThingInfo(char *buf, size_t bufsize, JSTracer *trc, void *thing,
     n = strlen(name);
     if (n > bufsize - 1)
         n = bufsize - 1;
-    memcpy(buf, name, n + 1);
+    js_memcpy(buf, name, n + 1);
     buf += n;
     bufsize -= n;
 
@@ -2631,9 +2615,6 @@ DumpNotify(JSTracer *trc, void *thing, JSGCTraceKind kind)
     JSDumpingTracer *dtrc;
     JSContext *cx;
     JSDHashEntryStub *entry;
-    JSHeapDumpNode *node;
-    const char *edgeName;
-    size_t edgeNameSize;
 
     JS_ASSERT(trc->callback == DumpNotify);
     dtrc = (JSDumpingTracer *)trc;
@@ -2672,10 +2653,10 @@ DumpNotify(JSTracer *trc, void *thing, JSGCTraceKind kind)
         entry->key = thing;
     }
 
-    edgeName = JS_GetTraceEdgeName(&dtrc->base, dtrc->buffer, sizeof(dtrc->buffer));
-    edgeNameSize = strlen(edgeName) + 1;
+    const char *edgeName = JS_GetTraceEdgeName(&dtrc->base, dtrc->buffer, sizeof(dtrc->buffer));
+    size_t edgeNameSize = strlen(edgeName) + 1;
     size_t bytes = offsetof(JSHeapDumpNode, edgeName) + edgeNameSize;
-    node = (JSHeapDumpNode *) OffTheBooks::malloc_(bytes);
+    JSHeapDumpNode *node = (JSHeapDumpNode *) OffTheBooks::malloc_(bytes);
     if (!node) {
         dtrc->ok = JS_FALSE;
         return;
@@ -2685,7 +2666,7 @@ DumpNotify(JSTracer *trc, void *thing, JSGCTraceKind kind)
     node->kind = kind;
     node->next = NULL;
     node->parent = dtrc->parentNode;
-    memcpy(node->edgeName, edgeName, edgeNameSize);
+    js_memcpy(node->edgeName, edgeName, edgeNameSize);
 
     JS_ASSERT(!*dtrc->lastNodep);
     *dtrc->lastNodep = node;
@@ -2770,7 +2751,7 @@ JS_DumpHeap(JSContext *cx, FILE *fp, void* startThing, JSGCTraceKind startKind,
     if (maxDepth == 0)
         return JS_TRUE;
 
-    JS_TRACER_INIT(&dtrc.base, cx, DumpNotify);
+    JS_TracerInit(&dtrc.base, cx, DumpNotify);
     if (!JS_DHashTableInit(&dtrc.visited, JS_DHashGetStubOps(),
                            NULL, sizeof(JSDHashEntryStub),
                            JS_DHASH_DEFAULT_CAPACITY(100))) {
@@ -5501,7 +5482,7 @@ JS_New(JSContext *cx, JSObject *ctor, uintN argc, jsval *argv)
 
     args.calleev().setObject(*ctor);
     args.thisv().setNull();
-    memcpy(args.array(), argv, argc * sizeof(jsval));
+    PodCopy(args.array(), argv, argc);
 
     if (!InvokeConstructor(cx, args))
         return NULL;
@@ -5619,7 +5600,7 @@ JS_NewStringCopyZ(JSContext *cx, const char *s)
 
     AssertNoGC(cx);
     CHECK_REQUEST(cx);
-    if (!s)
+    if (!s || !*s)
         return cx->runtime->emptyString;
     n = strlen(s);
     js = InflateString(cx, s, &n);
@@ -6066,7 +6047,7 @@ JSAutoStructuredCloneBuffer::copy(const uint64_t *srcData, size_t nbytes, uint32
     if (!newData)
         return false;
 
-    memcpy(newData, srcData, nbytes);
+    js_memcpy(newData, srcData, nbytes);
 
     clear();
     data_ = newData;
@@ -6279,6 +6260,12 @@ JS_PUBLIC_API(void)
 JS_ReportAllocationOverflow(JSContext *cx)
 {
     js_ReportAllocationOverflow(cx);
+}
+
+JS_PUBLIC_API(JSErrorReporter)
+JS_GetErrorReporter(JSContext *cx)
+{
+    return cx->errorReporter;
 }
 
 JS_PUBLIC_API(JSErrorReporter)
@@ -6723,79 +6710,6 @@ JS_FRIEND_API(void *)
 js_GetCompartmentPrivate(JSCompartment *compartment)
 {
     return compartment->data;
-}
-
-/************************************************************************/
-
-JS_PUBLIC_API(void)
-JS_RegisterReference(void **ref)
-{
-}
-
-JS_PUBLIC_API(void)
-JS_ModifyReference(void **ref, void *newval)
-{
-    // XPConnect uses the lower bits of its JSObject refs for evil purposes,
-    // so we need to fix this.
-    void *thing = *ref;
-    *ref = newval;
-    thing = (void *)((uintptr_t)thing & ~7);
-    if (!thing)
-        return;
-    JS_ASSERT(!static_cast<gc::Cell *>(thing)->compartment()->rt->gcRunning);
-    uint32_t kind = GetGCThingTraceKind(thing);
-    if (kind == JSTRACE_OBJECT)
-        JSObject::writeBarrierPre((JSObject *) thing);
-    else if (kind == JSTRACE_STRING)
-        JSString::writeBarrierPre((JSString *) thing);
-    else
-        JS_NOT_REACHED("invalid trace kind");
-}
-
-JS_PUBLIC_API(void)
-JS_UnregisterReference(void **ref)
-{
-    // For now we just want to trigger a write barrier.
-    JS_ModifyReference(ref, NULL);
-}
-
-JS_PUBLIC_API(void)
-JS_UnregisterReferenceRT(JSRuntime *rt, void **ref)
-{
-    // For now we just want to trigger a write barrier.
-    if (!rt->gcRunning)
-        JS_ModifyReference(ref, NULL);
-}
-
-JS_PUBLIC_API(void)
-JS_RegisterValue(jsval *val)
-{
-}
-
-JS_PUBLIC_API(void)
-JS_ModifyValue(jsval *val, jsval newval)
-{
-    HeapValue::writeBarrierPre(*val);
-    *val = newval;
-}
-
-JS_PUBLIC_API(void)
-JS_UnregisterValue(jsval *val)
-{
-    JS_ModifyValue(val, JSVAL_VOID);
-}
-
-JS_PUBLIC_API(void)
-JS_UnregisterValueRT(JSRuntime *rt, jsval *val)
-{
-    if (!rt->gcRunning)
-        JS_ModifyValue(val, JSVAL_VOID);
-}
-
-JS_PUBLIC_API(JSTracer *)
-JS_GetIncrementalGCTracer(JSRuntime *rt)
-{
-    return rt->gcIncrementalTracer;
 }
 
 /************************************************************************/

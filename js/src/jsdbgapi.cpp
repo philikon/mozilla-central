@@ -448,7 +448,8 @@ JS_GetFunctionLocalNameArray(JSContext *cx, JSFunction *fun, void **markp)
         return NULL;
     }
 
-    memcpy(names, localNames.begin(), localNames.length() * sizeof(uintptr_t));
+    JS_ASSERT(sizeof(*names) == sizeof(*localNames.begin()));
+    js_memcpy(names, localNames.begin(), localNames.length() * sizeof(*names));
     return names;
 }
 
@@ -1619,13 +1620,13 @@ JS_PUBLIC_API(void)
 JS_DumpBytecode(JSContext *cx, JSScript *script)
 {
 #if defined(DEBUG)
-    LifoAlloc lifoAlloc(1024);
-    Sprinter sprinter;
-    INIT_SPRINTER(cx, &sprinter, &lifoAlloc, 0);
+    Sprinter sprinter(cx);
+    if (!sprinter.init())
+        return;
 
     fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename, script->lineno);
     js_Disassemble(cx, script, true, &sprinter);
-    fputs(sprinter.base, stdout);
+    fputs(sprinter.string(), stdout);
     fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename, script->lineno);
 #endif
 }
@@ -1636,13 +1637,13 @@ JS_DumpPCCounts(JSContext *cx, JSScript *script)
 #if defined(DEBUG)
     JS_ASSERT(script->pcCounters);
 
-    LifoAlloc lifoAlloc(1024);
-    Sprinter sprinter;
-    INIT_SPRINTER(cx, &sprinter, &lifoAlloc, 0);
+    Sprinter sprinter(cx);
+    if (!sprinter.init())
+        return;
 
     fprintf(stdout, "--- SCRIPT %s:%d ---\n", script->filename, script->lineno);
     js_DumpPCCounts(cx, script, &sprinter);
-    fputs(sprinter.base, stdout);
+    fputs(sprinter.string(), stdout);
     fprintf(stdout, "--- END SCRIPT %s:%d ---\n", script->filename, script->lineno);
 #endif
 }

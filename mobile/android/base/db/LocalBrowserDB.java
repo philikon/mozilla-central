@@ -38,7 +38,6 @@
 package org.mozilla.gecko.db;
 
 import java.io.ByteArrayOutputStream;
-import java.util.Date;
 
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.History;
@@ -81,13 +80,9 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         return uri.buildUpon().appendQueryParameter(BrowserContract.PARAM_PROFILE, mProfile).build();
     }
 
-    public Cursor filter(ContentResolver cr, CharSequence constraint, int limit, CharSequence urlFilter) {
+    private Cursor filterAllSites(ContentResolver cr, String[] projection, CharSequence constraint, int limit, CharSequence urlFilter) {
         Cursor c = cr.query(appendProfileAndLimit(History.CONTENT_URI, limit),
-                            new String[] { History._ID,
-                                           History.URL,
-                                           History.TITLE,
-                                           History.FAVICON,
-                                           History.THUMBNAIL },
+                            projection,
                             (urlFilter != null ? "(" + History.URL + " NOT LIKE ? ) AND " : "" ) + 
                             "(" + History.URL + " LIKE ? OR " + History.TITLE + " LIKE ?)",
                             urlFilter == null ? new String[] {"%" + constraint.toString() + "%", "%" + constraint.toString() + "%"} :
@@ -96,9 +91,31 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                             // was accessed with a site accessed today getting 120 and a site accessed 119 or more
                             // days ago getting 1
                             History.VISITS + " * MAX(1, (" +
-                            History.DATE_LAST_VISITED + " - " + new Date().getTime() + ") / 86400000 + 120) DESC");
+                            History.DATE_LAST_VISITED + " - " + System.currentTimeMillis() + ") / 86400000 + 120) DESC");
 
         return new LocalDBCursor(c);
+    }
+
+    public Cursor filter(ContentResolver cr, CharSequence constraint, int limit) {
+        return filterAllSites(cr,
+                              new String[] { History._ID,
+                                             History.URL,
+                                             History.TITLE,
+                                             History.FAVICON },
+                              constraint,
+                              limit,
+                              null);
+    }
+
+    public Cursor getTopSites(ContentResolver cr, int limit) {
+        return filterAllSites(cr,
+                              new String[] { History._ID,
+                                             History.URL,
+                                             History.TITLE,
+                                             History.THUMBNAIL },
+                              "",
+                              limit,
+                              BrowserDB.ABOUT_PAGES_URL_FILTER);
     }
 
     private void truncateHistory(ContentResolver cr) {

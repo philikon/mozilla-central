@@ -69,6 +69,7 @@
 #include "mozilla/Telemetry.h"
 #include "nsDOMError.h"
 #include "nsAlgorithm.h"
+#include "sampler.h"
 
 using namespace mozilla;
 
@@ -327,9 +328,6 @@ nsHttpChannel::Connect(bool firstTime)
         }
         return NS_ERROR_DOCUMENT_NOT_CACHED;
     }
-
-    // check to see if authorization headers should be included
-    mAuthProvider->AddAuthorizationHeaders();
 
     if (mLoadFlags & LOAD_NO_NETWORK_IO) {
         return NS_ERROR_DOCUMENT_NOT_CACHED;
@@ -3742,6 +3740,9 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
     }
 
     AddCookiesToRequest();
+ 
+    // check to see if authorization headers should be included
+    mAuthProvider->AddAuthorizationHeaders();
 
     // notify "http-on-modify-request" observers
     gHttpHandler->OnModifyRequest(this);
@@ -4213,6 +4214,7 @@ nsHttpChannel::ContinueOnStartRequest3(nsresult result)
 NS_IMETHODIMP
 nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult status)
 {
+    SAMPLE_LABEL("network", "nsHttpChannel::OnStopRequest");
     LOG(("nsHttpChannel::OnStopRequest [this=%p request=%p status=%x]\n",
         this, request, status));
 
@@ -4388,6 +4390,7 @@ nsHttpChannel::OnDataAvailable(nsIRequest *request, nsISupports *ctxt,
                                nsIInputStream *input,
                                PRUint32 offset, PRUint32 count)
 {
+    SAMPLE_LABEL("network", "nsHttpChannel::OnDataAvailable");
     LOG(("nsHttpChannel::OnDataAvailable [this=%p request=%p offset=%u count=%u]\n",
         this, request, offset, count));
 

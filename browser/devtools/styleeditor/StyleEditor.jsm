@@ -59,6 +59,23 @@ const UPDATE_STYLESHEET_THROTTLE_DELAY = 500;
 // @see StyleEditor._persistExpando
 const STYLESHEET_EXPANDO = "-moz-styleeditor-stylesheet-";
 
+const TRANSITIONS_PREF = "devtools.styleeditor.transitions";
+
+const TRANSITION_CLASS = "moz-styleeditor-transitioning";
+const TRANSITION_DURATION_MS = 500;
+const TRANSITION_RULE = "\
+:root.moz-styleeditor-transitioning, :root.moz-styleeditor-transitioning * {\
+-moz-transition-duration: " + TRANSITION_DURATION_MS + "ms !important; \
+-moz-transition-delay: 0ms !important;\
+-moz-transition-timing-function: ease-out !important;\
+-moz-transition-property: all !important;\
+}";
+
+/**
+ * Style Editor module-global preferences
+ */
+const TRANSITIONS_ENABLED = Services.prefs.getBoolPref(TRANSITIONS_PREF);
+
 
 /**
  * StyleEditor constructor.
@@ -107,6 +124,9 @@ function StyleEditor(aDocument, aStyleSheet)
 
   // this is to perform pending updates before editor closing
   this._onWindowUnloadBinding = this._onWindowUnload.bind(this);
+
+  this._transitionRefCount = 0;
+
   this._focusOnSourceEditorReady = false;
 }
 
@@ -405,8 +425,13 @@ StyleEditor.prototype = {
    *                           Arguments: (StyleEditor editor)
    *                           @see inputElement
    *
-   *   onCommit:               Called when changes have been committed/applied
-   *                           to the live DOM style sheet.
+   *   onUpdate:               Called when changes are being applied to the live
+   *                           DOM style sheet but might not be complete from
+   *                           a WYSIWYG perspective (eg. transitioned update).
+   *                           Arguments: (StyleEditor editor)
+   *
+   *   onCommit:               Called when changes have been completely committed
+   *                           /applied to the live DOM style sheet.
    *                           Arguments: (StyleEditor editor)
    * }
    *
@@ -640,14 +665,49 @@ StyleEditor.prototype = {
     let source = this._state.text;
     let oldNode = this.styleSheet.ownerNode;
     let oldIndex = this.styleSheetIndex;
-
-    let newNode = this.contentDocument.createElement("style");
+    let content = this.contentDocument;
+    let newNode = content.createElement("style");
     newNode.setAttribute("type", "text/css");
-    newNode.appendChild(this.contentDocument.createTextNode(source));
+    newNode.appendChild(content.createTextNode(source));
     oldNode.parentNode.replaceChild(newNode, oldNode);
 
-    this._styleSheet = this.contentDocument.styleSheets[oldIndex];
+    this._styleSheet = content.styleSheets[oldIndex];
     this._persistExpando();
+
+    if (!TRANSITIONS_ENABLED) {
+      this._triggerAction("Update");
+      this._triggerAction("Commit");
+      return;
+    }
+
+    // Insert the global transition rule
+    // Use a ref count to make sure we do not add it multiple times.. and remove
+    // it only when all pending StyleEditor-generated transitions ended.
+    if (!this._transitionRefCount) {
+      this._styleSheet.insertRule(TRANSITION_RULE, 0);
+      content.documentElement.classList.add(TRANSITION_CLASS);
+    }
+
+    this._transitionRefCount++;
+
+    // Set up clean up and commit after transition duration (+10% buffer)
+    // @see _onTransitionEnd
+    content.defaultView.setTimeout(this._onTransitionEnd.bind(this),
+                                   Math.floor(TRANSITION_DURATION_MS * 1.1));
+
+    this._triggerAction("Update");
+  },
+
+  /**
+    * This cleans up class and rule added for transition effect and then trigger
+    * Commit as the changes have been completed.
+    */
+  _onTransitionEnd: function SE__onTransitionEnd()
+  {
+    if (--this._transitionRefCount == 0) {
+      this.contentDocument.documentElement.classList.remove(TRANSITION_CLASS);
+      this.styleSheet.deleteRule(0);
+    }
 
     this._triggerAction("Commit");
   },
@@ -751,70 +811,28 @@ StyleEditor.prototype = {
    */
   _loadSourceFromCache: function SE__loadSourceFromCache(aHref)
   {
-    try {
-      let cacheService = Cc["@mozilla.org/network/cache-service;1"]
-                           .getService(Ci.nsICacheService);
-      let session = cacheService.createSession("HTTP", Ci.nsICache.STORE_ANYWHERE, true);
-      session.doomEntriesIfExpired = false;
-      session.asyncOpenCacheEntry(aHref, Ci.nsICache.ACCESS_READ, {
-        onCacheEntryAvailable: this._onCacheEntryAvailable.bind(this)
-      });
-    } catch (ex) {
-      this._signalError(LOAD_ERROR);
-    }
-  },
-
-   /**
-    * The nsICacheListener.onCacheEntryAvailable method implementation used when
-    * the style sheet source is loaded from the browser cache.
-    *
-    * @param nsICacheEntryDescriptor aEntry
-    * @param nsCacheAccessMode aMode
-    * @param integer aStatus
-    */
-  _onCacheEntryAvailable: function SE__onCacheEntryAvailable(aEntry, aMode, aStatus)
-  {
-    if (!Components.isSuccessCode(aStatus)) {
-      return this._signalError(LOAD_ERROR);
-    }
-
-    let stream = aEntry.openInputStream(0);
+    let channel = Services.io.newChannel(aHref, null, null);
     let chunks = [];
     let streamListener = { // nsIStreamListener inherits nsIRequestObserver
       onStartRequest: function (aRequest, aContext, aStatusCode) {
-      },
+        if (!Components.isSuccessCode(aStatusCode)) {
+          return this._signalError(LOAD_ERROR);
+        }
+      }.bind(this),
       onDataAvailable: function (aRequest, aContext, aStream, aOffset, aCount) {
         chunks.push(NetUtil.readInputStreamToString(aStream, aCount));
       },
       onStopRequest: function (aRequest, aContext, aStatusCode) {
+        if (!Components.isSuccessCode(aStatusCode)) {
+          return this._signalError(LOAD_ERROR);
+        }
+
         this._onSourceLoad(chunks.join(""));
-      }.bind(this),
+      }.bind(this)
     };
 
-    let head = aEntry.getMetaDataElement("response-head");
-    if (/^Content-Encoding:\s*gzip/mi.test(head)) {
-      let converter = Cc["@mozilla.org/streamconv;1?from=gzip&to=uncompressed"]
-                        .createInstance(Ci.nsIStreamConverter);
-      converter.asyncConvertData("gzip", "uncompressed", streamListener, null);
-      streamListener = converter; // proxy original listener via converter
-    }
-
-    try {
-      streamListener.onStartRequest(null, null);
-      while (stream.available()) {
-        streamListener.onDataAvailable(null, null, stream, 0, stream.available());
-      }
-      streamListener.onStopRequest(null, null, 0);
-    } catch (ex) {
-      this._signalError(LOAD_ERROR);
-    } finally {
-      try {
-        stream.close();
-      } catch (ex) {
-        // swallow (some stream implementations can auto-close at eos)
-      }
-      aEntry.close();
-    }
+    channel.loadFlags = channel.LOAD_FROM_CACHE;
+    channel.asyncOpen(streamListener, null);
   },
 
   /**

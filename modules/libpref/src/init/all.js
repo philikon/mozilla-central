@@ -96,7 +96,8 @@ pref("offline-apps.quota.warn",        51200);
 // 0 => disable compression
 // 1 => best speed
 // 9 => best compression
-pref("browser.cache.compression_level", 5);
+// cache compression turned off for now - see bug #715198
+pref("browser.cache.compression_level", 0);
 
 // Whether or not indexedDB is enabled.
 pref("dom.indexedDB.enabled", true);
@@ -230,6 +231,10 @@ pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 
 #ifdef XP_WIN
 pref("gfx.canvas.azure.enabled", true);
+#else
+#ifdef XP_MACOSX
+pref("gfx.canvas.azure.enabled", true);
+#endif
 #endif
 
 pref("accessibility.browsewithcaret", false);
@@ -258,6 +263,8 @@ pref("ui.scrollToClick", 0);
 // Only on mac tabfocus is expected to handle UI widgets as well as web content
 pref("accessibility.tabfocus_applies_to_xul", true);
 #endif
+
+pref("focusmanager.testmode", false);
 
 pref("accessibility.usetexttospeech", "");
 pref("accessibility.usebrailledisplay", "");
@@ -3407,6 +3414,9 @@ pref("profiler.enabled", false);
 pref("profiler.interval", 10);
 pref("profiler.entries", 100000);
 
+// Network API
+pref("dom.network.enabled", true);
+pref("dom.network.metered", false);
 #ifdef XP_WIN
 // On 32-bit Windows, fire a low-memory notification if we have less than this
 // many mb of virtual address space available.

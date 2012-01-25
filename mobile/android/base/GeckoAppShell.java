@@ -112,6 +112,7 @@ public class GeckoAppShell
     static private int sFreeSpace = -1;
     static File sHomeDir = null;
     static private int sDensityDpi = 0;
+    private static Boolean sSQLiteLibsLoaded = false;
 
     private static HashMap<String, ArrayList<GeckoEventListener>> mEventListeners;
 
@@ -129,9 +130,21 @@ public class GeckoAppShell
     public static native void onLowMemory();
     public static native void callObserver(String observerKey, String topic, String data);
     public static native void removeObserver(String observerKey);
-    public static native void loadLibs(String apkName, boolean shouldExtract);
+    public static native void loadGeckoLibsNative(String apkName);
+    public static native void loadSQLiteLibsNative(String apkName, boolean shouldExtract);
     public static native void onChangeNetworkLinkStatus(String status);
-    public static native void reportJavaCrash(String stack);
+
+    public static void reportJavaCrash(Throwable e) {
+        Log.e(LOGTAG, "top level exception", e);
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        e.printStackTrace(pw);
+        pw.flush();
+        reportJavaCrash(sw.toString());
+    }
+
+    private static native void reportJavaCrash(String stackTrace);
+
     public static void notifyUriVisited(String uri) {
         sendEventToGecko(new GeckoEvent(GeckoEvent.VISTITED, uri));
     }
@@ -141,10 +154,22 @@ public class GeckoAppShell
     public static native void notifyBatteryChange(double aLevel, boolean aCharging, double aRemainingTime);
 
     public static native void notifySmsReceived(String aSender, String aBody, long aTimestamp);
+    public static native int  saveMessageInSentbox(String aReceiver, String aBody, long aTimestamp);
+    public static native void notifySmsSent(int aId, String aReceiver, String aBody, long aTimestamp, int aRequestId, long aProcessId);
+    public static native void notifySmsDelivered(int aId, String aReceiver, String aBody, long aTimestamp);
+    public static native void notifySmsSendFailed(int aError, int aRequestId, long aProcessId);
+    public static native void notifyGetSms(int aId, String aReceiver, String aSender, String aBody, long aTimestamp, int aRequestId, long aProcessId);
+    public static native void notifyGetSmsFailed(int aError, int aRequestId, long aProcessId);
+    public static native void notifySmsDeleted(boolean aDeleted, int aRequestId, long aProcessId);
+    public static native void notifySmsDeleteFailed(int aError, int aRequestId, long aProcessId);
+    public static native void notifyNoMessageInList(int aRequestId, long aProcessId);
+    public static native void notifyListCreated(int aListId, int aMessageId, String aReceiver, String aSender, String aBody, long aTimestamp, int aRequestId, long aProcessId);
+    public static native void notifyGotNextMessage(int aMessageId, String aReceiver, String aSender, String aBody, long aTimestamp, int aRequestId, long aProcessId);
+    public static native void notifyReadingMessageListFailed(int aError, int aRequestId, long aProcessId);
+
     public static native ByteBuffer allocateDirectBuffer(long size);
     public static native void freeDirectBuffer(ByteBuffer buf);
     public static native void bindWidgetTexture();
-    public static native boolean testDirectTexture();
 
     // A looper thread, accessed by GeckoAppShell.getHandler
     private static class LooperThread extends Thread {
@@ -298,7 +323,7 @@ public class GeckoAppShell
     }
 
     // java-side stuff
-    public static void loadGeckoLibs(String apkName) {
+    public static boolean loadLibsSetup(String apkName) {
         // The package data lib directory isn't placed in ld.so's
         // search path, so we have to manually load libraries that
         // libxul will depend on.  Not ideal.
@@ -403,7 +428,23 @@ public class GeckoAppShell
                 }
             }
         }
-        loadLibs(apkName, extractLibs);
+        return extractLibs;
+    }
+
+    public static void ensureSQLiteLibsLoaded(String apkName) {
+        if (sSQLiteLibsLoaded)
+            return;
+        synchronized(sSQLiteLibsLoaded) {
+            if (sSQLiteLibsLoaded)
+                return;
+            loadSQLiteLibsNative(apkName, loadLibsSetup(apkName));
+            sSQLiteLibsLoaded = true;
+        }
+    }
+
+    public static void loadGeckoLibs(String apkName) {
+        boolean extractLibs = loadLibsSetup(apkName);
+        loadGeckoLibsNative(apkName);
     }
 
     private static void putLocaleEnv() {
@@ -425,14 +466,6 @@ public class GeckoAppShell
 
         Log.i(LOGTAG, "post native init");
 
-        // If we have direct texture available, use it
-        if (GeckoAppShell.testDirectTexture()) {
-            Log.i(LOGTAG, "Using direct texture for widget layer");
-            GeckoApp.mAppContext.getSoftwareLayerClient().installWidgetLayer();
-        } else {
-            Log.i(LOGTAG, "Falling back to traditional texture upload");
-        }
-
         // Tell Gecko where the target byte buffer is for rendering
         GeckoAppShell.setSoftwareLayerClient(GeckoApp.mAppContext.getSoftwareLayerClient());
 
@@ -446,6 +479,10 @@ public class GeckoAppShell
             combinedArgs += " -remote " + url;
         if (restoreSession)
             combinedArgs += " -restoresession";
+
+        DisplayMetrics metrics = new DisplayMetrics();
+        GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        combinedArgs += " -width " + metrics.widthPixels + " -height " + metrics.heightPixels;
 
         GeckoApp.mAppContext.runOnUiThread(new Runnable() {
                 public void run() {
@@ -573,9 +610,8 @@ public class GeckoAppShell
                         GeckoApp.mAppContext.getSystemService(Context.LOCATION_SERVICE);
 
                     if (enable) {
-                        Criteria crit = new Criteria();
-                        crit.setAccuracy(Criteria.ACCURACY_FINE);
-                        String provider = lm.getBestProvider(crit, true);
+                        Criteria criteria = new Criteria();
+                        String provider = lm.getBestProvider(criteria, true);
                         if (provider == null)
                             return;
 
@@ -1328,11 +1364,12 @@ public class GeckoAppShell
     }
 
     public static void addPluginView(View view,
-                                     double x, double y,
-                                     double w, double h)
+                                     int x, int y,
+                                     int w, int h,
+                                     String metadata)
     {
-        Log.i(LOGTAG, "addPluginView:" + view + " @ x:" + x + " y:" + y + " w:" + w + " h:" + h ) ;
-        GeckoApp.mAppContext.addPluginView(view, x, y, w, h);
+        Log.i(LOGTAG, "addPluginView:" + view + " @ x:" + x + " y:" + y + " w:" + w + " h:" + h + " metadata: " + metadata);
+        GeckoApp.mAppContext.addPluginView(view, x, y, w, h, metadata);
     }
 
     public static void removePluginView(View view) {
@@ -1632,11 +1669,67 @@ public class GeckoAppShell
      * WebSMS related methods.
      */
     public static int getNumberOfMessagesForText(String aText) {
-        return GeckoSmsManager.getNumberOfMessagesForText(aText);
+        if (SmsManager.getInstance() == null) {
+            return 0;
+        }
+
+        return SmsManager.getInstance().getNumberOfMessagesForText(aText);
     }
 
-    public static void sendMessage(String aNumber, String aMessage) {
-        GeckoSmsManager.send(aNumber, aMessage);
+    public static void sendMessage(String aNumber, String aMessage, int aRequestId, long aProcessId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().send(aNumber, aMessage, aRequestId, aProcessId);
+    }
+
+    public static int saveSentMessage(String aRecipient, String aBody, long aDate) {
+        if (SmsManager.getInstance() == null) {
+            return -1;
+        }
+
+        return SmsManager.getInstance().saveSentMessage(aRecipient, aBody, aDate);
+    }
+
+    public static void getMessage(int aMessageId, int aRequestId, long aProcessId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().getMessage(aMessageId, aRequestId, aProcessId);
+    }
+
+    public static void deleteMessage(int aMessageId, int aRequestId, long aProcessId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().deleteMessage(aMessageId, aRequestId, aProcessId);
+    }
+
+    public static void createMessageList(long aStartDate, long aEndDate, String[] aNumbers, int aNumbersCount, int aDeliveryState, boolean aReverse, int aRequestId, long aProcessId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().createMessageList(aStartDate, aEndDate, aNumbers, aNumbersCount, aDeliveryState, aReverse, aRequestId, aProcessId);
+    }
+
+    public static void getNextMessageInList(int aListId, int aRequestId, long aProcessId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().getNextMessageInList(aListId, aRequestId, aProcessId);
+    }
+
+    public static void clearMessageList(int aListId) {
+        if (SmsManager.getInstance() == null) {
+            return;
+        }
+
+        SmsManager.getInstance().clearMessageList(aListId);
     }
 
     public static boolean isTablet() {
@@ -1678,5 +1771,17 @@ public class GeckoAppShell
         if (mInputConnection != null && mInputConnection.isIMEEnabled()) {
             sendEventToGecko(new GeckoEvent("ScrollTo:FocusedInput", ""));
         }
+    }
+
+    public static double[] getCurrentNetworkInformation() {
+        return GeckoNetworkManager.getInstance().getCurrentInformation();
+    }
+
+    public static void enableNetworkNotifications() {
+        GeckoNetworkManager.getInstance().enableNotifications();
+    }
+
+    public static void disableNetworkNotifications() {
+        GeckoNetworkManager.getInstance().disableNotifications();
     }
 }

@@ -54,10 +54,8 @@
  *
  *  updatev2.manifest
  *  -----------------
- *  method   = "add" | "add-cc" | "add-if" | "patch" | "patch-if" | "remove" |
+ *  method   = "add" | "add-if" | "patch" | "patch-if" | "remove" |
  *             "rmdir" | "rmrfdir" | type
- *
- * 'add-cc' is an add action to perform on channel change.
  *
  *  'type' is the update type (e.g. complete or partial) and when present MUST
  *  be the first entry in the update manifest. The type is used to support
@@ -65,9 +63,7 @@
  *
  *  precomplete
  *  -----------
- *  method   = "remove" | "rmdir" | "remove-cc"
- *
- * 'remove-cc' is a remove action to perform on channel change.
+ *  method   = "remove" | "rmdir"
  */
 #include "bspatch.h"
 #include "progressui.h"
@@ -953,7 +949,7 @@ AddFile::Execute()
   if (!WideCharToMultiByte(CP_UTF8, 0, mFile, -1, sourcefile, MAXPATHLEN,
                            NULL, NULL)) {
     LOG(("error converting wchar to utf8: %d\n", GetLastError()));
-    return MEM_ERROR;
+    return STRING_CONVERSION_ERROR;
   }
 
   rv = gArchiveReader.ExtractFile(sourcefile, mFile);
@@ -1033,13 +1029,14 @@ PatchFile::LoadSourceFile(FILE* ofile)
 
   buf = (unsigned char *) malloc(header.slen);
   if (!buf)
-    return MEM_ERROR;
+    return UPDATER_MEM_ERROR;
 
   size_t r = header.slen;
   unsigned char *rb = buf;
   while (r) {
-    size_t c = fread(rb, 1, r, ofile);
-    if (c < 0) {
+    const size_t count = mmin(SSIZE_MAX, r);
+    size_t c = fread(rb, 1, count, ofile);
+    if (c != count) {
       LOG(("LoadSourceFile: error reading destination file: " LOG_S "\n",
            mFile));
       return READ_ERROR;
@@ -1047,11 +1044,6 @@ PatchFile::LoadSourceFile(FILE* ofile)
 
     r -= c;
     rb += c;
-
-    if (c == 0 && r) {
-      LOG(("LoadSourceFile: expected %d more bytes in destination file\n", r));
-      return UNEXPECTED_ERROR;
-    }
   }
 
   // Verify that the contents of the source file correspond to what we expect.
@@ -1111,7 +1103,7 @@ PatchFile::Prepare()
   if (!WideCharToMultiByte(CP_UTF8, 0, mPatchFile, -1, sourcefile, MAXPATHLEN,
                            NULL, NULL)) {
     LOG(("error converting wchar to utf8: %d\n", GetLastError()));
-    return MEM_ERROR;
+    return STRING_CONVERSION_ERROR;
   }
 
   int rv = gArchiveReader.ExtractFileToStream(sourcefile, fp);
@@ -1599,10 +1591,6 @@ int NS_main(int argc, NS_tchar **argv)
   gSourcePath = argv[1];
 
 #ifdef XP_WIN
-  // Disable every privilege we don't need. Processes started using
-  // CreateProcess will use the same token as this process.
-  UACHelper::DisablePrivileges(NULL);
-
   bool useService = false;
   bool testOnlyFallbackKeyExists = false;
   bool noServiceFallback = getenv("MOZ_NO_SERVICE_FALLBACK") != NULL;
@@ -1721,6 +1709,23 @@ int NS_main(int argc, NS_tchar **argv)
     NS_tsnprintf(elevatedLockFilePath,
                  sizeof(elevatedLockFilePath)/sizeof(elevatedLockFilePath[0]),
                  NS_T("%s/update_elevated.lock"), argv[1]);
+
+
+    // Even if a file has no sharing access, you can still get its attributes
+    bool startedFromUnelevatedUpdater =
+      GetFileAttributesW(elevatedLockFilePath) != INVALID_FILE_ATTRIBUTES;
+    
+    // If we're running from the service, then we were started with the same
+    // token as the service so the permissions are already dropped.  If we're
+    // running from an elevated updater that was started from an unelevated 
+    // updater, then we drop the permissions here. We do not drop the 
+    // permissions on the originally called updater because we use its token
+    // to start the callback application.
+    if(startedFromUnelevatedUpdater) {
+      // Disable every privilege we don't need. Processes started using
+      // CreateProcess will use the same token as this process.
+      UACHelper::DisablePrivileges(NULL);
+    }
 
     if (updateLockFileHandle == INVALID_HANDLE_VALUE || 
         (useService && testOnlyFallbackKeyExists && noServiceFallback)) {
@@ -1972,7 +1977,8 @@ int NS_main(int argc, NS_tchar **argv)
     // Since the process may be signaled as exited by WaitForSingleObject before
     // the release of the executable image try to lock the main executable file
     // multiple times before giving up.
-    int retries = 5;
+    const int max_retries = 10;
+    int retries = 1;
     do {
       // By opening a file handle wihout FILE_SHARE_READ to the callback
       // executable, the OS will prevent launching the process while it is
@@ -1985,8 +1991,13 @@ int NS_main(int argc, NS_tchar **argv)
       if (callbackFile != INVALID_HANDLE_VALUE)
         break;
 
-      Sleep(50);
-    } while (--retries);
+      DWORD lastError = GetLastError();
+      LOG(("NS_main: callback app open attempt %d failed. " \
+           "File: " LOG_S ". Last error: %d\n", retries, 
+           argv[callbackIndex], lastError));
+
+      Sleep(100);
+    } while (++retries <= max_retries);
 
     // CreateFileW will fail if the callback executable is already in use. Since
     // it isn't possible to update write the status file and return.
@@ -2315,7 +2326,7 @@ int add_dir_entries(const NS_tchar *dirpath, ActionList *list)
                      NS_T("%s"), ftsdirEntry->fts_accpath);
         quotedpath = get_quoted_path(foundpath);
         if (!quotedpath) {
-          rv = MEM_ERROR;
+          rv = UPDATER_QUOTED_PATH_MEM_ERROR;
           break;
         }
         action = new RemoveFile();
@@ -2332,7 +2343,7 @@ int add_dir_entries(const NS_tchar *dirpath, ActionList *list)
                      NS_T("%s/"), ftsdirEntry->fts_accpath);
         quotedpath = get_quoted_path(foundpath);
         if (!quotedpath) {
-          rv = MEM_ERROR;
+          rv = UPDATER_QUOTED_PATH_MEM_ERROR;
           break;
         }
 
@@ -2405,17 +2416,15 @@ GetManifestContents(const NS_tchar *manifest)
   size_t r = ms.st_size;
   char *rb = mbuf;
   while (r) {
-    size_t c = fread(rb, 1, mmin(SSIZE_MAX, r), mfile);
-    if (c < 0) {
+    const size_t count = mmin(SSIZE_MAX, r);
+    size_t c = fread(rb, 1, count, mfile);
+    if (c != count) {
       LOG(("GetManifestContents: error reading manifest file: " LOG_S "\n", manifest));
       return NULL;
     }
 
     r -= c;
     rb += c;
-
-    if (c == 0 && r)
-      return NULL;
   }
   mbuf[ms.st_size] = '\0';
   rb = mbuf;
@@ -2440,13 +2449,12 @@ GetManifestContents(const NS_tchar *manifest)
 #endif
 }
 
-int AddPreCompleteActions(ActionList *list, bool &isChannelChange)
+int AddPreCompleteActions(ActionList *list)
 {
   NS_tchar *rb = GetManifestContents(NS_T("precomplete"));
   if (rb == NULL) {
     LOG(("AddPreCompleteActions: error getting contents of precomplete " \
          "manifest\n"));
-    isChannelChange = false;
     // Applications aren't required to have a precomplete manifest yet.
     return OK;
   }
@@ -2468,11 +2476,8 @@ int AddPreCompleteActions(ActionList *list, bool &isChannelChange)
     if (NS_tstrcmp(token, NS_T("remove")) == 0) { // rm file
       action = new RemoveFile();
     }
-    else if (NS_tstrcmp(token, NS_T("remove-cc")) == 0) { // rm file
-      if (!isChannelChange)
-        continue;
-
-      action = new RemoveFile();
+    else if (NS_tstrcmp(token, NS_T("remove-cc")) == 0) { // no longer supported
+      continue;
     }
     else if (NS_tstrcmp(token, NS_T("rmdir")) == 0) { // rmdir if  empty
       action = new RemoveDir();
@@ -2483,7 +2488,7 @@ int AddPreCompleteActions(ActionList *list, bool &isChannelChange)
     }
 
     if (!action)
-      return MEM_ERROR;
+      return BAD_ACTION_ERROR;
 
     rv = action->Parse(line);
     if (rv)
@@ -2497,15 +2502,6 @@ int AddPreCompleteActions(ActionList *list, bool &isChannelChange)
 
 int DoUpdate()
 {
-  bool isChannelChange = false;
-  NS_tchar ccfile[MAXPATHLEN];
-  NS_tsnprintf(ccfile, sizeof(ccfile)/sizeof(ccfile[0]),
-               NS_T("%s/channelchange"), gSourcePath);
-  if (!NS_taccess(ccfile, F_OK)) {
-    LOG(("DoUpdate: changing update channel\n"));
-    isChannelChange = true;
-  }
-
   NS_tchar manifest[MAXPATHLEN];
   NS_tsnprintf(manifest, sizeof(manifest)/sizeof(manifest[0]),
                NS_T("%s/update.manifest"), gSourcePath);
@@ -2513,8 +2509,6 @@ int DoUpdate()
   // extract the manifest
   int rv = gArchiveReader.ExtractFile("updatev2.manifest", manifest);
   if (rv) {
-    // Don't allow changing the channel without a version 2 update manifest.
-    isChannelChange = false;
     rv = gArchiveReader.ExtractFile("update.manifest", manifest);
     if (rv) {
       LOG(("DoUpdate: error extracting manifest file\n"));
@@ -2550,13 +2544,9 @@ int DoUpdate()
       LOG(("UPDATE TYPE " LOG_S "\n", type));
       if (NS_tstrcmp(type, NS_T("complete")) == 0) {
         isComplete = true;
-        rv = AddPreCompleteActions(&list, isChannelChange);
+        rv = AddPreCompleteActions(&list);
         if (rv)
           return rv;
-      }
-      else if (isChannelChange) {
-        LOG(("DoUpdate: unable to change channel with a partial update\n"));
-        isChannelChange = false;
       }
       isFirstAction = false;
       continue;
@@ -2597,19 +2587,8 @@ int DoUpdate()
     else if (NS_tstrcmp(token, NS_T("patch-if")) == 0) { // Patch if exists
       action = new PatchIfFile();
     }
-    else if (NS_tstrcmp(token, NS_T("add-cc")) == 0) { // Add if channel change
-      // The channel should only be changed with a complete update and when the
-      // user requests a channel change to avoid overwriting the update channel
-      // when testing RC's.
-
-      // add-cc instructions should only be in complete update manifests.
-      if (!isComplete)
-        return PARSE_ERROR;
-      
-      if (!isChannelChange)
-        continue;
-
-      action = new AddFile();
+    else if (NS_tstrcmp(token, NS_T("add-cc")) == 0) { // no longer supported
+      continue;
     }
     else {
       LOG(("DoUpdate: unknown token: " LOG_S "\n", token));
@@ -2617,7 +2596,7 @@ int DoUpdate()
     }
 
     if (!action)
-      return MEM_ERROR;
+      return BAD_ACTION_ERROR;
 
     rv = action->Parse(line);
     if (rv)

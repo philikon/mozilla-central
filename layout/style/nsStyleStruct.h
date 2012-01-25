@@ -1277,6 +1277,7 @@ struct nsStyleText {
   static bool ForceCompare() { return false; }
 
   PRUint8 mTextAlign;                   // [inherited] see nsStyleConsts.h
+  PRUint8 mTextAlignLast;               // [inherited] see nsStyleConsts.h
   PRUint8 mTextTransform;               // [inherited] see nsStyleConsts.h
   PRUint8 mWhiteSpace;                  // [inherited] see nsStyleConsts.h
   PRUint8 mWordWrap;                    // [inherited] see nsStyleConsts.h
@@ -1638,14 +1639,6 @@ struct nsStyleDisplay {
     // NS_STYLE_OVERFLOW_VISIBLE or NS_STYLE_OVERFLOW_CLIP.
     return mOverflowX != NS_STYLE_OVERFLOW_VISIBLE &&
            mOverflowX != NS_STYLE_OVERFLOW_CLIP;
-  }
-
-  // For table elements that don't support scroll frame creation, we
-  // support 'overflow: hidden' to mean 'overflow: -moz-hidden-unscrollable'.
-  bool IsTableClip() const {
-    return mOverflowX == NS_STYLE_OVERFLOW_CLIP ||
-           (mOverflowX == NS_STYLE_OVERFLOW_HIDDEN &&
-            mOverflowY == NS_STYLE_OVERFLOW_HIDDEN);
   }
 
   /* Returns whether the element has the -moz-transform property. */

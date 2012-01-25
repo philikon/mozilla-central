@@ -260,7 +260,6 @@ PRUint32 nsContentUtils::sDOMNodeRemovedSuppressCount = 0;
 #endif
 nsTArray< nsCOMPtr<nsIRunnable> >* nsContentUtils::sBlockedScriptRunners = nsnull;
 PRUint32 nsContentUtils::sRunnersCountAtFirstBlocker = 0;
-PRUint32 nsContentUtils::sScriptBlockerCountWhereRunnersPrevented = 0;
 nsIInterfaceRequestor* nsContentUtils::sSameOriginChecker = nsnull;
 
 bool nsContentUtils::sIsHandlingKeyBoardEvent = false;
@@ -279,7 +278,7 @@ bool nsContentUtils::sFullScreenKeyInputRestricted = true;
 
 PRUint32 nsContentUtils::sHandlingInputTimeout = 1000;
 
-nsHtml5Parser* nsContentUtils::sHTMLFragmentParser = nsnull;
+nsHtml5StringParser* nsContentUtils::sHTMLFragmentParser = nsnull;
 nsIParser* nsContentUtils::sXMLFragmentParser = nsnull;
 nsIFragmentContentSink* nsContentUtils::sXMLFragmentSink = nsnull;
 bool nsContentUtils::sFragmentParsingActive = false;
@@ -3663,18 +3662,37 @@ nsContentUtils::ParseFragmentHTML(const nsAString& aSourceBuffer,
   mozilla::AutoRestore<bool> guard(nsContentUtils::sFragmentParsingActive);
   nsContentUtils::sFragmentParsingActive = true;
   if (!sHTMLFragmentParser) {
-    sHTMLFragmentParser =
-      static_cast<nsHtml5Parser*>(nsHtml5Module::NewHtml5Parser().get());
+    NS_ADDREF(sHTMLFragmentParser = new nsHtml5StringParser());
     // Now sHTMLFragmentParser owns the object
   }
   nsresult rv =
-    sHTMLFragmentParser->ParseHtml5Fragment(aSourceBuffer,
-                                            aTargetNode,
-                                            aContextLocalName,
-                                            aContextNamespace,
-                                            aQuirks,
-                                            aPreventScriptExecution);
-  sHTMLFragmentParser->Reset();
+    sHTMLFragmentParser->ParseFragment(aSourceBuffer,
+                                       aTargetNode,
+                                       aContextLocalName,
+                                       aContextNamespace,
+                                       aQuirks,
+                                       aPreventScriptExecution);
+  return rv;
+}
+
+/* static */
+nsresult
+nsContentUtils::ParseDocumentHTML(const nsAString& aSourceBuffer,
+                                  nsIDocument* aTargetDocument)
+{
+  if (nsContentUtils::sFragmentParsingActive) {
+    NS_NOTREACHED("Re-entrant fragment parsing attempted.");
+    return NS_ERROR_DOM_INVALID_STATE_ERR;
+  }
+  mozilla::AutoRestore<bool> guard(nsContentUtils::sFragmentParsingActive);
+  nsContentUtils::sFragmentParsingActive = true;
+  if (!sHTMLFragmentParser) {
+    NS_ADDREF(sHTMLFragmentParser = new nsHtml5StringParser());
+    // Now sHTMLFragmentParser owns the object
+  }
+  nsresult rv =
+    sHTMLFragmentParser->ParseDocument(aSourceBuffer,
+                                       aTargetDocument);
   return rv;
 }
 
@@ -4400,23 +4418,10 @@ nsContentUtils::AddScriptBlocker()
 
 /* static */
 void
-nsContentUtils::AddScriptBlockerAndPreventAddingRunners()
-{
-  AddScriptBlocker();
-  if (sScriptBlockerCountWhereRunnersPrevented == 0) {
-    sScriptBlockerCountWhereRunnersPrevented = sScriptBlockerCount;
-  }
-}
-
-/* static */
-void
 nsContentUtils::RemoveScriptBlocker()
 {
   NS_ASSERTION(sScriptBlockerCount != 0, "Negative script blockers");
   --sScriptBlockerCount;
-  if (sScriptBlockerCount < sScriptBlockerCountWhereRunnersPrevented) {
-    sScriptBlockerCountWhereRunnersPrevented = 0;
-  }
   if (sScriptBlockerCount) {
     return;
   }
@@ -4450,10 +4455,6 @@ nsContentUtils::AddScriptRunner(nsIRunnable* aRunnable)
   }
 
   if (sScriptBlockerCount) {
-    if (sScriptBlockerCountWhereRunnersPrevented > 0) {
-      NS_ERROR("Adding a script runner when that is prevented!");
-      return false;
-    }
     return sBlockedScriptRunners->AppendElement(aRunnable) != nsnull;
   }
   
