@@ -440,7 +440,7 @@ function executeWithCallback(msg, timeout) {
   sandbox.ok = Marionette.ok;
   sandbox.finish = Marionette.finish;
   try {
-   Cu.evalInSandbox(scriptSrc, sandbox);
+   Cu.evalInSandbox(scriptSrc, sandbox, "1.8");
   } catch (e) {
     // 17 = JavascriptException
     sendError(e.name + ': ' + e.message, 17, e.stack);

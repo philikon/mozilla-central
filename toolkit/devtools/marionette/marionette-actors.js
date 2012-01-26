@@ -304,7 +304,7 @@ MarionetteDriverActor.prototype = {
                   + '__marionetteFunc.apply(null, __marionetteParams);'
                   + timeoutScript;
         }
-        Cu.evalInSandbox(script, _chromeSandbox);
+        Cu.evalInSandbox(script, _chromeSandbox, "1.8");
       } catch (e) {
         this.sendError(e.name + ": " + e.message, 17, e.stack);
       }
