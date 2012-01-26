@@ -74,7 +74,6 @@ function createRootActor(aConnection)
 
 function MarionetteRootActor(aConnection)
 {
-  MarionetteLogger.write('MDAS: marionette-actors.js has a new root actor');
   this.conn = aConnection;
   /* will only ever be one marionette actor */
   this._marionetteActor = new MarionetteDriverActor(this.conn);
@@ -83,7 +82,6 @@ function MarionetteRootActor(aConnection)
   this._marionetteActorPool = new ActorPool(this.conn);
   this._marionetteActorPool.addActor(this._marionetteActor);
   this.conn.addActorPool(this._marionetteActorPool);
-  MarionetteLogger.write('MDAS: done creating root actor');
 }
 
 MarionetteRootActor.prototype = {
@@ -111,7 +109,6 @@ MarionetteRootActor.prototype.requestTypes = {
 
 function MarionetteDriverActor(aConnection)
 {
-  MarionetteLogger.write('MDAS: creating driver actor');
   this.conn = aConnection;
   this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                              getService(Ci.nsIChromeFrameMessageManager);
@@ -120,7 +117,7 @@ function MarionetteDriverActor(aConnection)
   this.messageManager.addMessageListener("Marionette:error", this);
   this.messageManager.addMessageListener("Marionette:log", this);
   this.messageManager.addMessageListener("Marionette:register", this);
-  this.messageManager.addMessageListener("Marionette:sendSession", this);
+  this.messageManager.addMessageListener("Marionette:goUrl", this);
   this.windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].getService(Ci.nsIWindowMediator);
   this.currentChromeWindow = null; //TODO ADD chrome window support
   this.browser = null;
@@ -129,7 +126,6 @@ function MarionetteDriverActor(aConnection)
   this.scriptTimeout = null;
   this.seenItems = {};
   this.timer = null;
-  MarionetteLogger.write('MDAS: done creating driver actor');
 }
 
 MarionetteDriverActor.prototype = {
@@ -137,8 +133,6 @@ MarionetteDriverActor.prototype = {
   actorPrefix: "marionette",
 
   sendAsync: function (name, values) {
-    MarionetteLogger.write("MDAS: sending" + values + " message to:" + name);
-    MarionetteLogger.write("MDAS: curframeid: " + this.browser.curFrameId);
     this.messageManager.sendAsyncMessage("Marionette:" + name + this.browser.curFrameId, values);
   },
 
@@ -169,16 +163,13 @@ MarionetteDriverActor.prototype = {
   //If no browser is running (ie: in B2G) start one up
   newSession: function MDA_newSession(aRequest) {
     //TODO: check if session exists before creating it
-    MarionetteLogger.write("MDAS: in new session in chrome");
     if (!prefs.getBoolPref("marionette.contentListener")) {
-      MarionetteLogger.write("MDAS: creating new session");
       this.browser = new BrowserObj(this.getCurrentWindow());
       this.browser.startSession();
       this.browser.loadFrameScript("resource:///modules/marionette-listener.js", this.getCurrentWindow());
       this.tab = this.browser.tab;
     }
     else if (isB2G && (this.browser == null)) {
-      MarionetteLogger.write("MDAS: previous session exists. retrieving");
       this.browser = new BrowserObj(this.getCurrentWindow());
       this.browser.startSession();
       this.messageManager.sendAsyncMessage("Marionette:restart", {});
@@ -213,7 +204,7 @@ MarionetteDriverActor.prototype = {
         _chromeSandbox.Marionette = Marionette;
         if (directInject) {
           //run the given script directly
-          var res = Cu.evalInSandbox(aRequest.value, _chromeSandbox);
+          var res = Cu.evalInSandbox(aRequest.value, _chromeSandbox, "1.8");
           if (res == undefined || res.passed == undefined) {
             this.sendError("Marionette.finish() not called", 17, null);
           }
@@ -224,7 +215,7 @@ MarionetteDriverActor.prototype = {
         else {
           _chromeSandbox.__marionetteParams = params;
           var script = "var func = function() {" + aRequest.value + "}; func.apply(null, __marionetteParams);";
-          var res = Cu.evalInSandbox(script, _chromeSandbox);
+          var res = Cu.evalInSandbox(script, _chromeSandbox, "1.8");
           this.sendResponse(res);
         }
       }
@@ -315,7 +306,7 @@ MarionetteDriverActor.prototype = {
   },
 
   goUrl: function MDA_goUrl(aRequest) {
-    this.browser.loadURI(aRequest.value, this);
+    this.sendAsync("goUrl", aRequest);
   },
 
   getUrl: function MDA_getUrl(aRequest) {
@@ -334,18 +325,32 @@ MarionetteDriverActor.prototype = {
     this.sendAsync("refresh", {});
   },
 
+  getWindow: function MDA_getWindow(aRequest) {
+    var curWin = this.getCurrentWindow();
+    var winId = curWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).outerWindowID;
+    var winId = winId + (isB2G ? '-b2g' : '');
+    if (this.seenItems[winId] == undefined) {
+      this.seenItems[winId] = curWin;
+    }
+    this.sendResponse(winId);
+  },
+
   getWindows: function MDA_getWindows(aRequest) {
     if (this.context == "chrome") {
       this.sendError("not yet supported", 17, null);
     }
     else {
-      // this.sendResponse(this.browser.knownFrames); //TODO: should I not include iframe windows?
       var res = [];
       var winEn = this.windowMediator.getEnumerator("navigator:browser"); 
       while(winEn.hasMoreElements()) {
-        res.push(winEn.getNext().location.href);
+        var foundWin = winEn.getNext();
+        var winId = foundWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).outerWindowID;
+        var winId = winId + (isB2G ? '-b2g' : '');
+        if (this.seenItems[winId] == undefined) {
+          this.seenItems[winId] = foundWin;
+        }
+        res.push(winId)
       }
-      dump("MDAS: got windows:" + res.toString());
       this.sendResponse(res);
     }
   },
@@ -370,7 +375,6 @@ MarionetteDriverActor.prototype = {
   },
 
   deleteSession: function MDA_deleteSession(aRequest) {
-    MarionetteLogger.write("MDAS: in delete session in chrome");
     if (this.browser != null) {
       this.tab = null;
       if (isB2G) {
@@ -386,7 +390,6 @@ MarionetteDriverActor.prototype = {
       }
       //don't set this pref for B2G since the framescript can be safely reused
       var winEnum = this.browser.getWinEnumerator();
-      MarionetteLogger.write("MDAS: removing delayed scripts");
       while (winEnum.hasMoreElements()) {
         winEnum.getNext().messageManager.removeDelayedFrameScript("resource:///modules/marionette-listener.js"); 
       }
@@ -397,6 +400,7 @@ MarionetteDriverActor.prototype = {
     this.messageManager.removeMessageListener("Marionette:error", this);
     this.messageManager.removeMessageListener("Marionette:log", this);
     this.messageManager.removeMessageListener("Marionette:register", this);
+    this.messageManager.removeMessageListener("Marionette:goUrl", this);
     this.browser = null;
   },
 
@@ -406,7 +410,6 @@ MarionetteDriverActor.prototype = {
       this.messageManager.removeMessageListener("DOMContentLoaded", this, true);
     }
     else if (message.name == "Marionette:done") {
-      MarionetteLogger.write("MDAS: in marionette:done with: " + message.json.value);
       this.sendResponse(message.json.value);
     }
     else if (message.name == "Marionette:ok") {
@@ -419,7 +422,6 @@ MarionetteDriverActor.prototype = {
       MarionetteLogger.write(message.json.message);
     }
     else if (message.name == "Marionette:register") {
-      MarionetteLogger.write("MDAS: in register");
       var nullPrevious= (this.browser.curFrameId == null);
       var curWin = this.getCurrentWindow();
       var frameObject = curWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).getOuterWindowWithId(message.json.value);
@@ -427,11 +429,13 @@ MarionetteDriverActor.prototype = {
       if (reg) {
         this.seenItems[reg] = frameObject; //add to seenItems
         if (nullPrevious && (this.browser.curFrameId != null)) {
-          MarionetteLogger.write("MDAS: sending newSession");
           this.sendAsync("newSession", {B2G: isB2G});
         }
       }
       return reg;
+    }
+    else if (message.name == "Marionette:goUrl") {
+      this.browser.loadURI(message.json.value, this);
     }
   },
   /* for non-e10s eventListening */
@@ -458,6 +462,7 @@ MarionetteDriverActor.prototype.requestTypes = {
   "goBack": MarionetteDriverActor.prototype.goBack,
   "goForward": MarionetteDriverActor.prototype.goForward,
   "refresh":  MarionetteDriverActor.prototype.refresh,
+  "getWindow":  MarionetteDriverActor.prototype.getWindow,
   "getWindows":  MarionetteDriverActor.prototype.getWindows,
   "switchToFrame": MarionetteDriverActor.prototype.switchToFrame,
   "switchToWindow": MarionetteDriverActor.prototype.switchToWindow,
@@ -537,24 +542,12 @@ BrowserObj.prototype = {
   },
   loadFrameScript: function BO_loadFrameScript(script, frame) {
     if (!prefs.getBoolPref("marionette.contentListener")) {
-      /* we only need one instance of each listener running in content space */
       frame.window.messageManager.loadFrameScript(script, true);
-      /*
-      if (this.type == this.B2G) {
-        this.messageManager.loadFrameScript(script, true); //TODO:load into window.messageManager instead so frames get included.
-      }
-      else {
-        this.browser_mm.loadFrameScript(script, true);
-      }
-      */
       prefs.setBoolPref("marionette.contentListener", true);
     }
   },
   register: function BO_register(id, href) {
-    MarionetteLogger.write("MDAS: in browser's register with id:" + id);
-    MarionetteLogger.write("MDAS: in browser's register with href:" + href);
     var uid = id + (this.type == this.B2G ? '-b2g' : '');
-    //I should return a UUID, and use that in knownframes. is knownframes still needed?
     if (this.curFrameId == null) {
       if (href.indexOf(this.startPage) > -1) {
         this.curFrameId = uid;
@@ -562,7 +555,6 @@ BrowserObj.prototype = {
       }
     }
     this.knownFrames.push(uid); //used to deletesessions
-    MarionetteLogger.write("MDAS: returning uid: " + uid);
     return uid;
   },
   getWinEnumerator: function BO_winEnum() {

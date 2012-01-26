@@ -68,16 +68,11 @@ var activeFrame = null;
 var win = content;
 
 function registerSelf() {
-  dump("MDAS: this page is registering: " + content.location.href + "\n");
-  dump("MDAS: listener is registering with:" + winUtil.outerWindowID + "\n");
   var register = sendSyncMessage("Marionette:register", {value: winUtil.outerWindowID, href: content.location.href});
-  dump("MDAS: register called. got: " + register);
-  dump("MDAS: register called. got[0]: " + register[0]);
   
   if (register[0]) {
     listenerId = register[0];
     startListeners();
-    dump("MDAS: listener registered.");
   }
 }
 
@@ -88,6 +83,7 @@ function startListeners() {
   addMessageListener("Marionette:executeAsyncScript" + listenerId, executeAsyncScript);
   addMessageListener("Marionette:executeJSScript" + listenerId, executeJSScript);
   addMessageListener("Marionette:setSearchTimeout" + listenerId, setSearchTimeout);
+  addMessageListener("Marionette:goUrl" + listenerId, goUrl);
   addMessageListener("Marionette:getUrl" + listenerId, getUrl);
   addMessageListener("Marionette:goBack" + listenerId, goBack);
   addMessageListener("Marionette:goForward" + listenerId, goForward);
@@ -100,10 +96,8 @@ function startListeners() {
 }
  
 function newSession(msg) {
-  dump("MDAS: in newSEssion in listener\n");
   isB2G = msg.json.B2G;
   resetValues();
-  dump("MDAS:sending session info\n");
   sendResponse({value: listenerId});
 }
 
@@ -124,6 +118,7 @@ function deleteSession(msg) {
   removeMessageListener("Marionette:executeAsyncScript" + listenerId, executeAsyncScript);
   removeMessageListener("Marionette:executeJSScript" + listenerId, executeJSScript);
   removeMessageListener("Marionette:setSearchTimeout" + listenerId, setSearchTimeout);
+  removeMessageListener("Marionette:goUrl" + listenerId, goUrl);
   removeMessageListener("Marionette:getUrl" + listenerId, getUrl);
   removeMessageListener("Marionette:goBack" + listenerId, goBack);
   removeMessageListener("Marionette:goForward" + listenerId, goForward);
@@ -349,7 +344,7 @@ function executeScript(msg, directInject) {
   sandbox.Marionette = Marionette;
   try {
     if (directInject) {
-      var res = Cu.evalInSandbox(script, sandbox);
+      var res = Cu.evalInSandbox(script, sandbox, "1.8");
       if (res == undefined || res.passed == undefined) {
         sendError("Marionette.finish() not called", 17, null);
       }
@@ -360,7 +355,7 @@ function executeScript(msg, directInject) {
     else {
       var scriptSrc = "var __marionetteFunc = function(){" + script +
                     "};  __marionetteFunc.apply(null, __marionetteParams);";
-      var res = Cu.evalInSandbox(scriptSrc, sandbox);
+      var res = Cu.evalInSandbox(scriptSrc, sandbox, "1.8");
       sendResponse({value: wrapValue(res)});
     }
   }
@@ -454,6 +449,26 @@ function setSearchTimeout(msg) {
   }
   else {
     sendOk();
+  }
+}
+
+function goUrl(msg) {
+  if (activeFrame != null) {
+    win.document.location = msg.json.value;
+    //TODO: replace this with event firing when Bug 720714 is resolved
+    var checkTimer = Components.classes["@mozilla.org/timer;1"].createInstance(Components.interfaces.nsITimer);
+    var checkLoad = function () { 
+                      if (win.document.readyState == "complete") { 
+                        sendOk();
+                      } 
+                      else { 
+                        checkTimer.initWithCallback(checkLoad, 100, Components.interfaces.nsITimer.TYPE_ONE_SHOT);
+                      }
+                    };
+    checkLoad();
+  }
+  else {
+    sendAsyncMessage("Marionette:goUrl", {value: msg.json.value});
   }
 }
 
@@ -586,5 +601,4 @@ function switchToFrame(msg) {
   }
 }
 
-dump("MDAS: in listener, calling registerSelf()\n");
 registerSelf();
