@@ -963,11 +963,6 @@ mjit::CanMethodJIT(JSContext *cx, JSScript *script, jsbytecode *pc,
         return Compile_Skipped;
     }
 
-#if JS_HAS_SHARP_VARS
-    if (script->hasSharps)
-        return Compile_Abort;
-#endif
-
     if (!cx->compartment->ensureJaegerCompartmentExists(cx))
         return Compile_Error;
 
@@ -1339,7 +1334,7 @@ mjit::Compiler::finishThisUp()
             nNmapLive++;
     }
 
-    /* Please keep in sync with JITChunk::scriptDataSize! */
+    /* Please keep in sync with JITChunk::sizeOfIncludingThis! */
     size_t dataSize = sizeof(JITChunk) +
                       sizeof(NativeMapEntry) * nNmapLive +
                       sizeof(InlineFrame) * inlineFrames.length() +
@@ -1731,8 +1726,8 @@ mjit::Compiler::finishThisUp()
 #endif
 
     JS_ASSERT(size_t(cursor - (uint8_t*)chunk) == dataSize);
-    /* Pass in NULL here -- we don't want slop bytes to be counted. */
-    JS_ASSERT(chunk->scriptDataSize(NULL) == dataSize);
+    /* Use the computed size here -- we don't want slop bytes to be counted. */
+    JS_ASSERT(chunk->computedSizeOfIncludingThis() == dataSize);
 
     /* Link fast and slow paths together. */
     stubcc.fixCrossJumps(result, masm.size(), masm.size() + stubcc.size());
@@ -2971,11 +2966,7 @@ mjit::Compiler::generateMethod()
 
           BEGIN_CASE(JSOP_IN)
           {
-            prepareStubCall(Uses(2));
-            INLINE_STUBCALL(stubs::In, REJOIN_PUSH_BOOLEAN);
-            frame.popn(2);
-            frame.takeReg(Registers::ReturnReg);
-            frame.pushTypedPayload(JSVAL_TYPE_BOOLEAN, Registers::ReturnReg);
+            jsop_in();
           }
           END_CASE(JSOP_IN)
 
@@ -3933,19 +3924,7 @@ mjit::Compiler::interruptCheckHelper()
         /* For barrier verification, always take the interrupt so we can verify. */
         jump = masm.jump();
     } else {
-        /*
-         * Bake in and test the address of the interrupt counter for the runtime.
-         * This is faster than doing two additional loads for the context's
-         * thread data, but will cause this thread to run slower if there are
-         * pending interrupts on some other thread.  For non-JS_THREADSAFE builds
-         * we can skip this, as there is only one flag to poll.
-         */
-#ifdef JS_THREADSAFE
-        void *interrupt = (void*) &cx->runtime->interruptCounter;
-#else
-        void *interrupt = (void*) &JS_THREAD_DATA(cx)->interruptFlags;
-#endif
-
+        void *interrupt = (void*) &cx->runtime->interrupt;
 #if defined(JS_CPU_X86) || defined(JS_CPU_ARM) || defined(JS_CPU_MIPS)
         jump = masm.branch32(Assembler::NotEqual, AbsoluteAddress(interrupt), Imm32(0));
 #else
@@ -7463,6 +7442,76 @@ mjit::Compiler::jsop_toid()
     pushSyncedEntry(0);
 
     stubcc.rejoin(Changes(1));
+}
+
+void
+mjit::Compiler::jsop_in()
+{
+    FrameEntry *obj = frame.peek(-1);
+    FrameEntry *id = frame.peek(-2);
+
+    if (cx->typeInferenceEnabled() && id->isType(JSVAL_TYPE_INT32)) {
+        types::TypeSet *types = analysis->poppedTypes(PC, 0);
+
+        if (obj->mightBeType(JSVAL_TYPE_OBJECT) &&
+            !types->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY) &&
+            !types::ArrayPrototypeHasIndexedProperty(cx, outerScript))
+        {
+            bool isPacked = !types->hasObjectFlags(cx, types::OBJECT_FLAG_NON_PACKED_ARRAY);
+
+            if (!obj->isTypeKnown()) {
+                Jump guard = frame.testObject(Assembler::NotEqual, obj);
+                stubcc.linkExit(guard, Uses(2));
+            }
+
+            RegisterID dataReg = frame.copyDataIntoReg(obj);
+
+            Int32Key key = id->isConstant()
+                         ? Int32Key::FromConstant(id->getValue().toInt32())
+                         : Int32Key::FromRegister(frame.tempRegForData(id));
+
+            masm.loadPtr(Address(dataReg, JSObject::offsetOfElements()), dataReg);
+
+            // Guard on the array's initialized length.
+            Jump initlenGuard = masm.guardArrayExtent(ObjectElements::offsetOfInitializedLength(),
+                                                      dataReg, key, Assembler::BelowOrEqual);
+
+            // Guard to make sure we don't have a hole. Skip it if the array is packed.
+            MaybeJump holeCheck;
+            if (!isPacked)
+                holeCheck = masm.guardElementNotHole(dataReg, key);
+
+            masm.move(Imm32(1), dataReg);
+            Jump done = masm.jump();
+
+            Label falseBranch = masm.label();
+            initlenGuard.linkTo(falseBranch, &masm);
+            if (!isPacked)
+                holeCheck.getJump().linkTo(falseBranch, &masm);
+            masm.move(Imm32(0), dataReg);
+
+            done.linkTo(masm.label(), &masm);
+
+            stubcc.leave();
+            OOL_STUBCALL_USES(stubs::In, REJOIN_PUSH_BOOLEAN, Uses(2));
+
+            frame.popn(2);
+            if (dataReg != Registers::ReturnReg)
+                stubcc.masm.move(Registers::ReturnReg, dataReg);
+
+            frame.pushTypedPayload(JSVAL_TYPE_BOOLEAN, dataReg);
+
+            stubcc.rejoin(Changes(2));
+
+            return;
+        }
+    }
+
+    prepareStubCall(Uses(2));
+    INLINE_STUBCALL(stubs::In, REJOIN_PUSH_BOOLEAN);
+    frame.popn(2);
+    frame.takeReg(Registers::ReturnReg);
+    frame.pushTypedPayload(JSVAL_TYPE_BOOLEAN, Registers::ReturnReg);
 }
 
 /*
