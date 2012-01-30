@@ -207,8 +207,8 @@ var BrowserApp = {
 
     Services.obs.addObserver(this, "Tab:Add", false);
     Services.obs.addObserver(this, "Tab:Load", false);
-    Services.obs.addObserver(this, "Tab:Select", false);
-    Services.obs.addObserver(this, "Tab:Close", false);
+    Services.obs.addObserver(this, "Tab:Selected", false);
+    Services.obs.addObserver(this, "Tab:Closed", false);
     Services.obs.addObserver(this, "Tab:Screenshot", false);
     Services.obs.addObserver(this, "Session:Back", false);
     Services.obs.addObserver(this, "Session:Forward", false);
@@ -235,8 +235,16 @@ var BrowserApp = {
           type: window.fullScreen ? "ToggleChrome:Show" : "ToggleChrome:Hide"
         }
       });
+    }, false);
 
-      if (!window.fullScreen)
+    window.addEventListener("mozfullscreenchange", function() {
+      sendMessageToJava({
+        gecko: {
+          type: document.mozFullScreen ? "DOMFullScreen:Start" : "DOMFullScreen:Stop"
+        }
+      });
+
+      if (document.mozFullScreen)
         showFullScreenWarning();
     }, false);
 
@@ -472,7 +480,27 @@ var BrowserApp = {
     return newTab;
   },
 
+  // Use this method to close a tab from JS. This method sends a message
+  // to Java to close the tab in the Java UI (we'll get a Tab:Closed message
+  // back from Java when that happens).
   closeTab: function closeTab(aTab) {
+    if (!aTab) {
+      Cu.reportError("Error trying to close tab (tab doesn't exist)");
+      return;
+    }
+
+    let message = {
+      gecko: {
+        type: "Tab:Close",
+        tabID: aTab.id
+      }
+    };
+    sendMessageToJava(message);
+  },
+
+  // Calling this will update the state in BrowserApp after a tab has been
+  // closed in the Java UI.
+  _handleTabClosed: function _handleTabClosed(aTab) {
     if (aTab == this.selectedTab)
       this.selectedTab = null;
 
@@ -484,31 +512,71 @@ var BrowserApp = {
     this._tabs.splice(this._tabs.indexOf(aTab), 1);
   },
 
+  screenshotQueue: null,
+
   screenshotTab: function screenshotTab(aData) {
-      let json = JSON.parse(aData);
-      let tab = this.getTabForId(parseInt(json.tabID));
-      let width = parseInt(json.width);
-      let height =  parseInt(json.height);
-      tab.screenshot(width, height);
+      if (this.screenshotQueue == null) {
+          this.screenShotQueue = [];
+          this.doScreenshotTab(aData);
+      } else {
+          this.screenshotQueue.push(aData);
+      }
   },
 
+  doNextScreenshot: function() {
+      if (this.screenshotQueue == null || this.screenshotQueue.length == 0) {
+          this.screenshotQueue = null;
+          return;
+      }
+      let data = this.screenshotQueue.pop();
+      if (data == null) {
+          this.screenshotQueue = null;
+          return;
+      }
+      this.doScreenshotTab(data);
+  },
+
+  doScreenshotTab: function doScreenshotTab(aData) {
+      let json = JSON.parse(aData);
+      let tab = this.getTabForId(parseInt(json.tabID));
+      tab.screenshot(json.source, json.destination);
+  },
+
+  // Use this method to select a tab from JS. This method sends a message
+  // to Java to select the tab in the Java UI (we'll get a Tab:Selected message
+  // back from Java when that happens).
   selectTab: function selectTab(aTab) {
-    if (aTab != null) {
+    if (!aTab) {
+      Cu.reportError("Error trying to select tab (tab doesn't exist)");
+      return;
+    }
+
+    let message = {
+      gecko: {
+        type: "Tab:Select",
+        tabID: aTab.id
+      }
+    };
+    sendMessageToJava(message);
+  },
+
+  // This method updates the state in BrowserApp after a tab has been selected
+  // in the Java UI.
+  _handleTabSelected: function _handleTabSelected(aTab) {
       this.selectedTab = aTab;
       aTab.active = true;
-      let message = {
-        gecko: {
-          type: "Tab:Selected",
-          tabID: aTab.id
-        }
-      };
 
       let evt = document.createEvent("UIEvents");
       evt.initUIEvent("TabSelect", true, false, window, null);
       aTab.browser.dispatchEvent(evt);
 
-      sendMessageToJava(message);
-    }
+    let message = {
+      gecko: {
+        type: "Tab:Selected:Done",
+        tabID: aTab.id
+      }
+    };
+    sendMessageToJava(message);
   },
 
   quit: function quit() {
@@ -537,7 +605,7 @@ var BrowserApp = {
 
   saveAsPDF: function saveAsPDF(aBrowser) {
     // Create the final destination file location
-    let fileName = ContentAreaUtils.getDefaultFileName(aBrowser.contentTitle, aBrowser.documentURI, null, null);
+    let fileName = ContentAreaUtils.getDefaultFileName(aBrowser.contentTitle, aBrowser.currentURI, null, null);
     fileName = fileName.trim() + ".pdf";
 
     let dm = Cc["@mozilla.org/download-manager;1"].getService(Ci.nsIDownloadManager);
@@ -720,9 +788,9 @@ var BrowserApp = {
     let uri;
     if (aParams.engine) {
       let engine;
-      if (aParams.engine == "__default__")
-        engine = Services.search.currentEngine || Services.search.defaultEngine;
-      else
+      // If the default engine was requested, we just pass the URL through
+      // and let the third-party fixup send it to the default search.
+      if (aParams.engine != "__default__")
         engine = Services.search.getEngineByName(aParams.engine);
 
       if (engine)
@@ -744,7 +812,7 @@ var BrowserApp = {
 
       // tell gecko to scroll the field into view. this will scroll any nested scrollable elements
       // as well as the browser's content window, and modify the scrollX and scrollY on the content window.
-      focused.scrollIntoView(true);
+      focused.scrollIntoView(false);
 
       // update userScrollPos so that we don't send a duplicate viewport update by triggering
       // our scroll listener
@@ -802,7 +870,22 @@ var BrowserApp = {
   },
 
   getDrawMetadata: function getDrawMetadata() {
-    return JSON.stringify(this.selectedTab.viewport);
+    let viewport = this.selectedTab.viewport;
+
+    // Sample the background color of the page and pass it along. (This is used to draw the
+    // checkerboard.)
+    try {
+      let browser = this.selectedBrowser;
+      if (browser) {
+        let { contentDocument, contentWindow } = browser;
+        let computedStyle = contentWindow.getComputedStyle(contentDocument.body);
+        viewport.backgroundColor = computedStyle.backgroundColor;
+      }
+    } catch (e) {
+      // Ignore. Catching and ignoring exceptions here ensures that Talos succeeds.
+    }
+
+    return JSON.stringify(viewport);
   },
 
   observe: function(aSubject, aTopic, aData) {
@@ -827,6 +910,7 @@ var BrowserApp = {
         selected: true,
         parentId: ("parentId" in data) ? data.parentId : -1,
         flags: Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_OWNER
+             | Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP
       };
 
       let url = this.getSearchOrFixupURI(data);
@@ -839,12 +923,14 @@ var BrowserApp = {
         this.addTab(url, params);
       else
         this.loadURI(url, browser, params);
-    } else if (aTopic == "Tab:Select") {
-      this.selectTab(this.getTabForId(parseInt(aData)));
-    } else if (aTopic == "Tab:Close") {
-      this.closeTab(this.getTabForId(parseInt(aData)));
+    } else if (aTopic == "Tab:Selected") {
+      this._handleTabSelected(this.getTabForId(parseInt(aData)));
+    } else if (aTopic == "Tab:Closed") {
+      this._handleTabClosed(this.getTabForId(parseInt(aData)));
     } else if (aTopic == "Tab:Screenshot") {
       this.screenshotTab(aData);
+    } else if (aTopic == "Tab:Screenshot:Cancel") {
+      this.screenshotQueue = null;
     } else if (aTopic == "Browser:Quit") {
       this.quit();
     } else if (aTopic == "SaveAs:PDF") {
@@ -1422,14 +1508,6 @@ Tab.prototype = {
     this.browser = null;
     this.vbox = null;
     this.documentIdForCurrentViewport = null;
-    let message = {
-      gecko: {
-        type: "Tab:Closed",
-        tabID: this.id
-      }
-    };
-
-    sendMessageToJava(message);
   },
 
   set active(aActive) {
@@ -1493,24 +1571,27 @@ Tab.prototype = {
       this.updateTransform();
   },
 
-  screenshot: function(aWidth, aHeight) {
+  screenshot: function(aSrc, aDst) {
       if (!this.browser || !this.browser.contentWindow)
           return;
       let canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
-      canvas.setAttribute("width", aWidth);  
-      canvas.setAttribute("height", aHeight);
+      canvas.setAttribute("width", aDst.width);  
+      canvas.setAttribute("height", aDst.height);
       let ctx = canvas.getContext("2d");
-      ctx.drawWindow(this.browser.contentWindow, 0, 0, aWidth, aHeight, "rgb(255, 255, 255)");
+      ctx.drawWindow(this.browser.contentWindow, 0, 0, aSrc.width, aSrc.height, "rgb(255, 255, 255)");
       let message = {
         gecko: {
           type: "Tab:ScreenshotData",
           tabID: this.id,
-          width: aWidth,
-          height: aHeight,
+          width: aDst.width,
+          height: aDst.height,
           data: canvas.toDataURL()
         }
       };
       sendMessageToJava(message);
+      Services.tm.mainThread.dispatch(function() {
+	  BrowserApp.doNextScreenshot()
+      }, Ci.nsIThread.DISPATCH_NORMAL);
   },
 
   updateTransform: function() {
@@ -1541,10 +1622,20 @@ Tab.prototype = {
     let doc = this.browser.contentDocument;
     if (doc != null) {
       let pageWidth = this._viewport.width, pageHeight = this._viewport.height;
-      let body = doc.body || { scrollWidth: pageWidth, scrollHeight: pageHeight };
-      let html = doc.documentElement || { scrollWidth: pageWidth, scrollHeight: pageHeight };
-      pageWidth = Math.max(body.scrollWidth, html.scrollWidth);
-      pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
+      if (doc instanceof SVGDocument) {
+        let rect = doc.rootElement.getBoundingClientRect();
+        // we need to add rect.left and rect.top twice so that the SVG is drawn
+        // centered on the page; if we add it only once then the SVG will be
+        // on the bottom-right of the page and if we don't add it at all then
+        // we end up with a cropped SVG (see bug 712065)
+        pageWidth = Math.ceil(rect.left + rect.width + rect.left);
+        pageHeight = Math.ceil(rect.top + rect.height + rect.top);
+      } else {
+        let body = doc.body || { scrollWidth: pageWidth, scrollHeight: pageHeight };
+        let html = doc.documentElement || { scrollWidth: pageWidth, scrollHeight: pageHeight };
+        pageWidth = Math.max(body.scrollWidth, html.scrollWidth);
+        pageHeight = Math.max(body.scrollHeight, html.scrollHeight);
+      }
 
       /* Transform the page width and height based on the zoom factor. */
       pageWidth *= this._viewport.zoom;
@@ -2018,6 +2109,7 @@ Tab.prototype = {
         // Is it on the top level?
         let contentDocument = aSubject;
         if (contentDocument == this.browser.contentDocument) {
+          sendMessageToJava({ gecko: { type: "Document:Shown" } });
           ViewportHandler.updateMetadata(this);
           this.documentIdForCurrentViewport = ViewportHandler.getIdForDocument(contentDocument);
         }
@@ -2040,6 +2132,7 @@ var BrowserEventHandler = {
     Services.obs.addObserver(this, "Gesture:CancelTouch", false);
     Services.obs.addObserver(this, "Gesture:DoubleTap", false);
     Services.obs.addObserver(this, "Gesture:Scroll", false);
+    Services.obs.addObserver(this, "dom-touch-listener-added", false);
 
     BrowserApp.deck.addEventListener("DOMUpdatePageReport", PopupBlockerObserver.onUpdatePageReport, false);
   },
@@ -2119,6 +2212,21 @@ var BrowserEventHandler = {
     } else if (aTopic == "Gesture:DoubleTap") {
       this._cancelTapHighlight();
       this.onDoubleTap(aData);
+    } else if (aTopic == "dom-touch-listener-added") {
+      let browser = BrowserApp.getBrowserForWindow(aSubject);
+      if (!browser)
+        return;
+
+      let tab = BrowserApp.getTabForBrowser(browser);
+      if (!tab)
+        return;
+
+      sendMessageToJava({
+        gecko: {
+          type: "Tab:HasTouchListener",
+          tabID: tab.id
+        }
+      });
     }
   },
  
@@ -2617,6 +2725,7 @@ var FormAssistant = {
   // Used to keep track of the element that corresponds to the current
   // autocomplete suggestions
   _currentInputElement: null,
+  _uiBusy: false,
 
   init: function() {
     Services.obs.addObserver(this, "FormAssist:AutoComplete", false);
@@ -2707,9 +2816,12 @@ var FormAssistant = {
   show: function(aList, aElement) {
     let data = JSON.parse(sendMessageToJava({ gecko: aList }));
     let selected = data.button;
+    if (selected == -1)
+        return;
+
     if (!(selected instanceof Array)) {
       let temp = [];
-      for (let i = 0;  i < aList.listitems.length; i++) {
+      for (let i = 0; i < aList.listitems.length; i++) {
         temp[i] = (i == selected);
       }
       selected = temp;
@@ -2721,13 +2833,20 @@ var FormAssistant = {
   },
 
   handleClick: function(aTarget) {
+    // if we're busy looking at a select we want to eat any clicks that
+    // come to us, but not to process them
+    if (this._uiBusy)
+        return true;
+
     let target = aTarget;
     while (target) {
       if (this._isSelectElement(target) && !target.disabled) {
+        this._uiBusy = true;
         target.focus();
         let list = this.getListForElement(target);
         this.show(list, target);
         target = null;
+        this._uiBusy = false;
         return true;
       }
       if (target)
@@ -2773,13 +2892,17 @@ var FormAssistant = {
     }
 
     this.forOptions(aElement, function(aNode, aIndex) {
-      result.listitems[aIndex] = {
+      let item = {
         label: aNode.text || aNode.label,
         isGroup: this._isOptionGroupElement(aNode),
         inGroup: this._isOptionGroupElement(aNode.parentNode),
         disabled: aNode.disabled,
         id: aIndex
       }
+      if (item.inGroup)
+        item.disabled = item.disabled || aNode.parentNode.disabled;
+
+      result.listitems[aIndex] = item;
       result.selected[aIndex] = aNode.selected;
     });
     return result;

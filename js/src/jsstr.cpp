@@ -54,7 +54,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include "jstypes.h"
-#include "jsstdint.h"
 #include "jsutil.h"
 #include "jshash.h"
 #include "jsprf.h"
@@ -3378,7 +3377,7 @@ js_ValueToSource(JSContext *cx, const Value &v)
 namespace js {
 
 bool
-EqualStrings(JSContext *cx, JSString *str1, JSString *str2, JSBool *result)
+EqualStrings(JSContext *cx, JSString *str1, JSString *str2, bool *result)
 {
     if (str1 == str2) {
         *result = true;
