@@ -94,13 +94,12 @@ function startListeners() {
   addMessageListener("Marionette:deleteSession" + listenerId, deleteSession);
   addMessageListener("Marionette:sleepSession" + listenerId, sleepSession);
 }
- 
+
 function newSession(msg) {
   isB2G = msg.json.B2G;
   resetValues();
-  sendResponse({value: listenerId});
 }
-
+ 
 function sleepSession(msg) {
   deleteSession();
   addMessageListener("Marionette:restart", restart);
@@ -405,6 +404,9 @@ function executeWithCallback(msg, timeout) {
   var timeoutSrc = "var timeoutId = window.setTimeout(Marionette.asyncComplete," + marionetteTimeout + ", 'timed out', 28);" + 
                    "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);";
   if (timeout) {
+    if (marionetteTimeout == null || marionetteTimeout == 0) {
+      sendError("Please set a timeout", 21, null);
+    }
     scriptSrc = script + timeoutSrc;
   }
   else {
