@@ -401,7 +401,10 @@ function executeWithCallback(msg, timeout) {
   // However Selenium code returns 28, see
   // http://code.google.com/p/selenium/source/browse/trunk/javascript/firefox-driver/js/evaluate.js.
   // We'll stay compatible with the Selenium code.
+
+
   var timeoutSrc = "var timeoutId = window.setTimeout(Marionette.asyncComplete," + marionetteTimeout + ", 'timed out', 28);" + 
+                   "window.addEventListener('error', function (evt) { window.removeEventListener('error', arguments.callee, true); Marionette.asyncComplete(evt.target.status, 17); return true;}, true);" +
                    "window.document.setUserData('__marionetteTimeoutId', timeoutId, null);";
   if (timeout) {
     if (marionetteTimeout == null || marionetteTimeout == 0) {
@@ -421,6 +424,7 @@ function executeWithCallback(msg, timeout) {
   Marionette.is_async = true;
   Marionette.win = win;
   Marionette.context = "content";
+  Marionette.onerror = win.onerror;
   applyNamedArgs(args);
 
   var sandbox = new Cu.Sandbox(win);

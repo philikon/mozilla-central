@@ -225,6 +225,7 @@ MarionetteDriverActor.prototype = {
         Marionette.is_async = false;
         Marionette.tests = [];
         Marionette.context = "chrome";
+        Marionette.win = curWindow;
         var params = aRequest.args;
         var _chromeSandbox = new Cu.Sandbox(curWindow,
            { sandboxPrototype: curWindow, wantXrays: false, 
@@ -296,6 +297,8 @@ MarionetteDriverActor.prototype = {
         Marionette.tests = [];
         Marionette.is_async = true;
         Marionette.context = "chrome";
+        Marionette.win = curWindow;
+        Marionette.onerror = curWindow.onerror;
         Marionette.__conn = this.conn;
         Marionette.__actorID = this.actorID;
         this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
@@ -311,6 +314,7 @@ MarionetteDriverActor.prototype = {
         _chromeSandbox.finish = Marionette.finish;
         var script;
         var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
+                           + 'window.onerror = function (errorMsg, url, lineNumber) {Marionette.returnFunc(errorMsg + " at: " + url + " line: " + lineNumber, 17); ; return true};'
                            + 'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
         if (timeout) {
           if (this.scriptTimeout == null || this.scriptTimeout == 0) {

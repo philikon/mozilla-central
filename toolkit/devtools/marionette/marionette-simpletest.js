@@ -6,10 +6,12 @@ var Marionette = {
   is_async: false,
   win: null,
   tests: [],
+  onerror: null,
 
   reset: function Marionette__reset() {
     Marionette.is_async = false;
     Marionette.tests = [];
+    Marionette.onerror = null;
   },
 
   ok: function Marionette__ok(condition, name, diag) {
@@ -58,6 +60,7 @@ var Marionette = {
       else {
         Marionette.returnFunc(Marionette.generate_results(), 0);
       }
+      Marionette.win.window.onerror = Marionette.onerror;
     }
     else {
       return Marionette.generate_results();
@@ -74,12 +77,14 @@ var Marionette = {
       var error_msg = {message: value, status: status, stacktrace: null};
       Marionette.__conn.send({from: Marionette.__actorID, error: error_msg});
     }
-    Marionette.__timer.cancel();
-    Marionette.__timer = null;
+    if (Marionette.__timer != null) {
+      Marionette.__timer.cancel();
+      Marionette.__timer = null;
+    }
   },
 
   asyncComplete: function Marionette__async_completed(value, status) {
-      var document = win.window.document;
+      var document = Marionette.win.window.document;
       var __marionetteRes = document.getUserData('__marionetteRes');
       if(__marionetteRes.status == undefined) {
         __marionetteRes.value = value;
