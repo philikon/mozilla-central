@@ -269,12 +269,12 @@ var BrowserApp = {
     Cc["@mozilla.org/satchel/form-history;1"].getService(Ci.nsIFormHistory2);
 
     let url = "about:home";
-    let restoreSession = false;
+    let forceRestore = false;
     if ("arguments" in window) {
       if (window.arguments[0])
         url = window.arguments[0];
       if (window.arguments[1])
-        restoreSession = window.arguments[1];
+        forceRestore = window.arguments[1];
       if (window.arguments[2])
         gScreenWidth = window.arguments[2];
       if (window.arguments[3])
@@ -291,7 +291,7 @@ var BrowserApp = {
 
     // restore the previous session
     let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-    if (restoreSession || ss.shouldRestore()) {
+    if (forceRestore || ss.shouldRestore()) {
       // A restored tab should not be active if we are loading a URL
       let restoreToFront = false;
 
@@ -301,22 +301,24 @@ var BrowserApp = {
       } else {
         // Let the session make a restored tab active
         restoreToFront = true;
-
-        // Be ready to handle any restore failures by making sure we have a valid tab opened
-        let restoreCleanup = {
-          observe: function(aSubject, aTopic, aData) {
-            Services.obs.removeObserver(restoreCleanup, "sessionstore-windows-restored");
-            if (aData == "fail")
-              BrowserApp.addTab("about:home");
-          }
-        };
-        Services.obs.addObserver(restoreCleanup, "sessionstore-windows-restored", false);
       }
 
+      // Be ready to handle any restore failures by making sure we have a valid tab opened
+      let restoreCleanup = {
+        observe: function(aSubject, aTopic, aData) {
+          Services.obs.removeObserver(restoreCleanup, "sessionstore-windows-restored");
+          if (aData == "fail") {
+            let params = { selected: restoreToFront };
+            BrowserApp.addTab("about:home", { showProgress: false });
+          }
+        }
+      };
+      Services.obs.addObserver(restoreCleanup, "sessionstore-windows-restored", false);
+
       // Start the restore
-      ss.restoreLastSession(restoreToFront);
+      ss.restoreLastSession(restoreToFront, forceRestore);
     } else {
-      this.addTab(url);
+      this.addTab(url, { showProgress: url != "about:home" });
 
       // show telemetry door hanger if we aren't restoring a session
       this._showTelemetryPrompt();
@@ -467,11 +469,12 @@ var BrowserApp = {
   },
 
   addTab: function addTab(aURI, aParams) {
-    aParams = aParams || { selected: true, flags: Ci.nsIWebNavigation.LOAD_FLAGS_NONE };
+    aParams = aParams || {};
+
     let newTab = new Tab(aURI, aParams);
     this._tabs.push(newTab);
-    if ("selected" in aParams && aParams.selected)
-      newTab.active = true;
+
+    newTab.active = "selected" in aParams ? aParams.selected : true;
 
     let evt = document.createEvent("UIEvents");
     evt.initUIEvent("TabOpen", true, false, window, null);
@@ -768,7 +771,7 @@ var BrowserApp = {
   },
 
   getSearchEngines: function() {
-    let engineData = Services.search.getEngines({});
+    let engineData = Services.search.getVisibleEngines({});
     let searchEngines = engineData.map(function (engine) {
       return {
         name: engine.name,
@@ -1409,7 +1412,7 @@ Tab.prototype = {
     if (this.browser)
       return;
 
-    aParams = aParams || { selected: true };
+    aParams = aParams || {};
 
     this.vbox = document.createElement("vbox");
     this.vbox.align = "start";
@@ -1573,12 +1576,16 @@ Tab.prototype = {
 
   screenshot: function(aSrc, aDst) {
       if (!this.browser || !this.browser.contentWindow)
-          return;
+        return;
+
       let canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "canvas");
       canvas.setAttribute("width", aDst.width);  
       canvas.setAttribute("height", aDst.height);
+      canvas.setAttribute("moz-opaque", "true");
+
       let ctx = canvas.getContext("2d");
-      ctx.drawWindow(this.browser.contentWindow, 0, 0, aSrc.width, aSrc.height, "rgb(255, 255, 255)");
+      let flags = ctx.DRAWWINDOW_DO_NOT_FLUSH;
+      ctx.drawWindow(this.browser.contentWindow, 0, 0, aSrc.width, aSrc.height, "#fff", flags);
       let message = {
         gecko: {
           type: "Tab:ScreenshotData",

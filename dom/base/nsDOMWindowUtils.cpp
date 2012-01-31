@@ -806,7 +806,8 @@ nsDOMWindowUtils::Focus(nsIDOMElement* aElement)
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::GarbageCollect(nsICycleCollectorListener *aListener)
+nsDOMWindowUtils::GarbageCollect(nsICycleCollectorListener *aListener,
+                                 PRInt32 aExtraForgetSkippableCalls)
 {
   SAMPLE_LABEL("GC", "GarbageCollect");
   // Always permit this in debug builds.
@@ -817,13 +818,14 @@ nsDOMWindowUtils::GarbageCollect(nsICycleCollectorListener *aListener)
 #endif
 
   nsJSContext::GarbageCollectNow(js::gcreason::DOM_UTILS);
-  nsJSContext::CycleCollectNow(aListener);
+  nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::CycleCollect(nsICycleCollectorListener *aListener)
+nsDOMWindowUtils::CycleCollect(nsICycleCollectorListener *aListener,
+                               PRInt32 aExtraForgetSkippableCalls)
 {
   // Always permit this in debug builds.
 #ifndef DEBUG
@@ -832,7 +834,7 @@ nsDOMWindowUtils::CycleCollect(nsICycleCollectorListener *aListener)
   }
 #endif
 
-  nsJSContext::CycleCollectNow(aListener);
+  nsJSContext::CycleCollectNow(aListener, aExtraForgetSkippableCalls);
   return NS_OK;
 }
 
@@ -920,6 +922,10 @@ nsDOMWindowUtils::NodesFromRect(float aX, float aY,
                                 bool aFlushLayout,
                                 nsIDOMNodeList** aReturn)
 {
+  if (!IsUniversalXPConnectCapable()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
   nsCOMPtr<nsIDocument> doc(do_QueryInterface(mWindow->GetExtantDocument()));
   NS_ENSURE_STATE(doc);
 
