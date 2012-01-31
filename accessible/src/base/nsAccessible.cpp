@@ -579,16 +579,13 @@ nsAccessible::GetIndexInParent(PRInt32 *aIndexInParent)
   return *aIndexInParent != -1 ? NS_OK : NS_ERROR_FAILURE;
 }
 
-nsresult nsAccessible::GetTranslatedString(const nsAString& aKey, nsAString& aStringOut)
+void 
+nsAccessible::TranslateString(const nsAString& aKey, nsAString& aStringOut)
 {
   nsXPIDLString xsValue;
 
-  if (!gStringBundle || 
-    NS_FAILED(gStringBundle->GetStringFromName(PromiseFlatString(aKey).get(), getter_Copies(xsValue)))) 
-    return NS_ERROR_FAILURE;
-
+  gStringBundle->GetStringFromName(PromiseFlatString(aKey).get(), getter_Copies(xsValue));
   aStringOut.Assign(xsValue);
-  return NS_OK;
 }
 
 PRUint64
@@ -596,30 +593,13 @@ nsAccessible::VisibilityState()
 {
   PRUint64 vstates = states::INVISIBLE | states::OFFSCREEN;
 
-  // We need to check the parent chain for visibility.
-  nsAccessible* accessible = this;
-  do {
-    // We don't want background tab page content to be aggressively invisible.
-    // Otherwise this foils screen reader virtual buffer caches.
-    roles::Role role = accessible->Role();
-    if (role == roles::PROPERTYPAGE || role == roles::PANE)
-      break;
-
-    nsIFrame* frame = accessible->GetFrame();
-    if (!frame)
-      return vstates;
-
-    const nsIView* view = frame->GetView();
-    if (view && view->GetVisibility() == nsViewVisibility_kHide)
-      return vstates;
-    
-  } while (accessible = accessible->Parent());
-
   nsIFrame* frame = GetFrame();
   if (!frame)
     return vstates;
 
   const nsCOMPtr<nsIPresShell> shell(GetPresShell());
+  if (!shell)
+    return vstates;
 
   // We need to know if at least a kMinPixels around the object is visible,
   // otherwise it will be marked states::OFFSCREEN.
@@ -646,6 +626,10 @@ nsAccessible::VisibilityState()
       return vstates;
 
   }
+
+  // XXX Do we really need to cross from content to chrome ancestor?
+  if (!frame->IsVisibleConsideringAncestors(nsIFrame::VISIBILITY_CROSS_CHROME_CONTENT_BOUNDARY))
+    return vstates;
 
   // Assume we are visible enough.
   return vstates &= ~states::INVISIBLE;
@@ -1896,7 +1880,8 @@ nsAccessible::GetActionDescription(PRUint8 aIndex, nsAString& aDescription)
   nsresult rv = GetActionName(aIndex, name);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return GetTranslatedString(name, aDescription);
+  TranslateString(name, aDescription);
+  return NS_OK;
 }
 
 // void doAction(in PRUint8 index)

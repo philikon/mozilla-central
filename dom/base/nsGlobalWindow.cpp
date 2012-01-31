@@ -283,6 +283,9 @@ static bool                 gDragServiceDisabled       = false;
 static FILE                *gDumpFile                  = nsnull;
 static PRUint64             gNextWindowID              = 0;
 static PRUint32             gSerialCounter             = 0;
+static PRUint32             gTimeoutsRecentlySet       = 0;
+static TimeStamp            gLastRecordedRecentTimeouts;
+#define STATISTICS_INTERVAL (30 * PR_MSEC_PER_SEC)
 
 #ifdef DEBUG_jst
 PRInt32 gTimeoutCnt                                    = 0;
@@ -4579,7 +4582,7 @@ nsGlobalWindow::Dump(const nsAString& aStr)
 
   if (cstr) {
 #ifdef ANDROID
-    __android_log_print(ANDROID_LOG_INFO, "Gecko", cstr);
+    __android_log_write(ANDROID_LOG_INFO, "GeckoDump", cstr);
 #endif
     FILE *fp = gDumpFile ? gDumpFile : stdout;
     fputs(cstr, fp);
@@ -9054,6 +9057,7 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
     timeout->mPrincipal = ourPrincipal;
   }
 
+  ++gTimeoutsRecentlySet;
   TimeDuration delta = TimeDuration::FromMilliseconds(realInterval);
 
   if (!IsFrozen() && !mTimeoutsSuspendDepth) {
@@ -9226,6 +9230,16 @@ nsGlobalWindow::RunTimeout(nsTimeout *aTimeout)
   // eligible for execution yet. Go away.
   if (!last_expired_timeout) {
     return;
+  }
+
+  // Record telemetry information about timers set recently.
+  TimeDuration recordingInterval = TimeDuration::FromMilliseconds(STATISTICS_INTERVAL);
+  if (gLastRecordedRecentTimeouts.IsNull() ||
+      now - gLastRecordedRecentTimeouts > recordingInterval) {
+    PRUint32 count = gTimeoutsRecentlySet;
+    gTimeoutsRecentlySet = 0;
+    Telemetry::Accumulate(Telemetry::DOM_TIMERS_RECENTLY_SET, count);
+    gLastRecordedRecentTimeouts = now;
   }
 
   // Insert a dummy timeout into the list of timeouts between the

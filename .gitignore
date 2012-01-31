@@ -23,8 +23,7 @@ ID
 security/manager/.nss.checkout
 
 # Build directories
-obj/*
-objdir-prof-android/*
+/obj*/
 
 # Build directories for js shell
 */_DBG.OBJ/
