@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * ***** BEGIN LICENSE BLOCK *****
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -12,18 +12,18 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is Mozilla Corporation code.
+ * The Original Code is mozilla.org code.
  *
- * The Initial Developer of the Original Code is Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2009
+ * The Initial Developer of the Original Code is Mozilla Foundation
+ * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Bas Schouten <bschouten@mozilla.org>
+ *   Kan-Ru Chen <kchen@mozilla.com> (Original Author)
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either of the GNU General Public License Version 2 or later (the "GPL"),
+ * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -34,39 +34,28 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
+#ifndef mozilla_dom_power_PowerManagerService_h
+#define mozilla_dom_power_PowerManagerService_h
 
-#ifndef GFX_MACIOSURFACEIMAGEOGL_H
-#define GFX_MACIOSURFACEIMAGEOGL_H
-#ifdef XP_MACOSX
-
-#include "nsCoreAnimationSupport.h"
+#include "nsIPowerManagerService.h"
+#include "nsCOMPtr.h" // for already_AddRefed
 
 namespace mozilla {
-namespace layers {
+namespace dom {
+namespace power {
 
-class THEBES_API MacIOSurfaceImageOGL : public MacIOSurfaceImage
+class PowerManagerService
+  : public nsIPowerManagerService
 {
-  typedef mozilla::gl::GLContext GLContext;
-
 public:
-  MacIOSurfaceImageOGL(LayerManagerOGL *aManager);
-  virtual ~MacIOSurfaceImageOGL();
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIPOWERMANAGERSERVICE
 
-  void SetUpdateCallback(UpdateSurfaceCallback aCallback, void* aPluginInstanceOwner);
-  void SetDestroyCallback(DestroyCallback aCallback);
-  void Update(ImageContainer* aContainer);
-
-  void SetData(const Data &aData);
-
-  GLTexture mTexture;
-  gfxIntSize mSize;
-  nsRefPtr<nsIOSurface> mIOSurface;
-  void* mPluginInstanceOwner;
-  UpdateSurfaceCallback mUpdateCallback;
-  DestroyCallback mDestroyCallback;
+  static already_AddRefed<nsIPowerManagerService> GetInstance();
 };
 
-} /* layers */
-} /* mozilla */
-#endif /* XP_MACOSX */
-#endif /* GFX_MACIOSURFACEIMAGEOGL_H */
+} // namespace power
+} // namespace dom
+} // namespace mozilla
+
+#endif // mozilla_dom_power_PowerManagerService_h
