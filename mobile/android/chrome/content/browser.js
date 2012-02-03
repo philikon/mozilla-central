@@ -51,9 +51,6 @@ XPCOMUtils.defineLazyGetter(this, "PluralForm", function() {
   return PluralForm;
 });
 
-XPCOMUtils.defineLazyServiceGetter(this, "URIFixup",
-  "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
-
 XPCOMUtils.defineLazyServiceGetter(this, "Haptic",
   "@mozilla.org/widget/hapticfeedback;1", "nsIHapticFeedback");
 
@@ -295,6 +292,12 @@ var BrowserApp = {
       // A restored tab should not be active if we are loading a URL
       let restoreToFront = false;
 
+      sendMessageToJava({
+        gecko: {
+          type: "Session:RestoreBegin"
+        }
+      });
+
       // Open any commandline URLs, except the homepage
       if (url && url != "about:home") {
         this.addTab(url);
@@ -308,9 +311,17 @@ var BrowserApp = {
         observe: function(aSubject, aTopic, aData) {
           Services.obs.removeObserver(restoreCleanup, "sessionstore-windows-restored");
           if (aData == "fail") {
-            let params = { selected: restoreToFront };
-            BrowserApp.addTab("about:home", { showProgress: false });
+            BrowserApp.addTab("about:home", {
+              showProgress: false,
+              selected: restoreToFront
+            });
           }
+
+          sendMessageToJava({
+            gecko: {
+              type: "Session:RestoreEnd"
+            }
+          });
         }
       };
       Services.obs.addObserver(restoreCleanup, "sessionstore-windows-restored", false);
@@ -381,10 +392,14 @@ var BrowserApp = {
   },
 
   set selectedTab(aTab) {
+    if (this._selectedTab)
+      this._selectedTab.setActive(false);
+
     this._selectedTab = aTab;
     if (!aTab)
       return;
 
+    aTab.setActive(true);
     aTab.updateViewport(false);
     this.deck.selectedPanel = aTab.vbox;
   },
@@ -474,7 +489,9 @@ var BrowserApp = {
     let newTab = new Tab(aURI, aParams);
     this._tabs.push(newTab);
 
-    newTab.active = "selected" in aParams ? aParams.selected : true;
+    let selected = "selected" in aParams ? aParams.selected : true;
+    if (selected)
+      this.selectedTab = newTab;
 
     let evt = document.createEvent("UIEvents");
     evt.initUIEvent("TabOpen", true, false, window, null);
@@ -566,12 +583,11 @@ var BrowserApp = {
   // This method updates the state in BrowserApp after a tab has been selected
   // in the Java UI.
   _handleTabSelected: function _handleTabSelected(aTab) {
-      this.selectedTab = aTab;
-      aTab.active = true;
+    this.selectedTab = aTab;
 
-      let evt = document.createEvent("UIEvents");
-      evt.initUIEvent("TabSelect", true, false, window, null);
-      aTab.browser.dispatchEvent(evt);
+    let evt = document.createEvent("UIEvents");
+    evt.initUIEvent("TabSelect", true, false, window, null);
+    aTab.browser.dispatchEvent(evt);
 
     let message = {
       gecko: {
@@ -787,19 +803,12 @@ var BrowserApp = {
     });
   },
 
-  getSearchOrFixupURI: function(aParams) {
+  getSearchOrURI: function getSearchOrURI(aParams) {
     let uri;
     if (aParams.engine) {
-      let engine;
-      // If the default engine was requested, we just pass the URL through
-      // and let the third-party fixup send it to the default search.
-      if (aParams.engine != "__default__")
-        engine = Services.search.getEngineByName(aParams.engine);
-
+      let engine = Services.search.getEngineByName(aParams.engine);
       if (engine)
         uri = engine.getSubmission(aParams.url).uri;
-    } else {
-      uri = URIFixup.createFixupURI(aParams.url, Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP);
     }
     return uri ? uri.spec : aParams.url;
   },
@@ -916,7 +925,7 @@ var BrowserApp = {
              | Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP
       };
 
-      let url = this.getSearchOrFixupURI(data);
+      let url = this.getSearchOrURI(data);
 
       // Don't show progress throbber for about:home
       if (url == "about:home")
@@ -1144,7 +1153,7 @@ var NativeWindow = {
     },
 
     remove: function(aId) {
-      this.items[aId] = null;
+      delete this.items[aId];
     },
 
     SelectorContext: function(aSelector) {
@@ -1419,7 +1428,7 @@ Tab.prototype = {
     BrowserApp.deck.appendChild(this.vbox);
 
     this.browser = document.createElement("browser");
-    this.browser.setAttribute("type", "content");
+    this.browser.setAttribute("type", "content-targetable");
     this.setBrowserSize(980, 480);
     this.browser.style.MozTransformOrigin = "0 0";
     this.vbox.appendChild(this.browser);
@@ -1440,7 +1449,8 @@ Tab.prototype = {
         parentId: ("parentId" in aParams) ? aParams.parentId : -1,
         external: ("external" in aParams) ? aParams.external : false,
         selected: ("selected" in aParams) ? aParams.selected : true,
-        title: aParams.title || ""
+        title: aParams.title || "",
+        delayLoad: aParams.delayLoad || false
       }
     };
     sendMessageToJava(message);
@@ -1502,6 +1512,8 @@ Tab.prototype = {
     this.browser.removeEventListener("pagehide", this, true);
     this.browser.removeEventListener("pageshow", this, true);
 
+    Services.obs.removeObserver(this, "document-shown");
+
     // Make sure the previously selected panel remains selected. The selected panel of a deck is
     // not stable when panels are removed.
     let selectedPanel = BrowserApp.deck.selectedPanel;
@@ -1513,23 +1525,19 @@ Tab.prototype = {
     this.documentIdForCurrentViewport = null;
   },
 
-  set active(aActive) {
+  // This should be called to update the browser when the tab gets selected/unselected
+  setActive: function setActive(aActive) {
     if (!this.browser)
       return;
 
     if (aActive) {
       this.browser.setAttribute("type", "content-primary");
       this.browser.focus();
-      BrowserApp.selectedTab = this;
+      this.browser.docShellIsActive = true;
     } else {
-      this.browser.setAttribute("type", "content");
+      this.browser.setAttribute("type", "content-targetable");
+      this.browser.docShellIsActive = false;
     }
-  },
-
-  get active() {
-    if (!this.browser)
-      return false;
-    return this.browser.getAttribute("type") == "content-primary";
   },
 
   set viewport(aViewport) {
@@ -1777,7 +1785,7 @@ Tab.prototype = {
           gecko: {
             type: "DOMTitleChanged",
             tabID: this.id,
-            title: aEvent.target.title
+            title: aEvent.target.title.substring(0, 255)
           }
         });
         break;
@@ -2652,20 +2660,21 @@ const ElementTouchHelper = {
     }
     return result;
   },
+
   getBoundingContentRect: function(aElement) {
     if (!aElement)
       return {x: 0, y: 0, w: 0, h: 0};
-  
+
     let document = aElement.ownerDocument;
     while (document.defaultView.frameElement)
       document = document.defaultView.frameElement.ownerDocument;
-  
+
     let cwu = document.defaultView.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     let scrollX = {}, scrollY = {};
     cwu.getScrollXY(false, scrollX, scrollY);
-  
+
     let r = aElement.getBoundingClientRect();
- 
+
     // step out of iframes and frames, offsetting scroll values
     for (let frame = aElement.ownerDocument.defaultView; frame.frameElement && frame != content; frame = frame.parent) {
       // adjust client coordinates' origin to be top left of iframe viewport
@@ -2676,14 +2685,10 @@ const ElementTouchHelper = {
       scrollY.value += rect.top + parseInt(top);
     }
 
-    var x = r.left + scrollX.value;
-    var y = r.top + scrollY.value;
-    var x2 = x + r.width;
-    var y2 = y + r.height;
-    return {x: x,
-            y: y,
-            w: x2 - x,
-            h: y2 - y};
+    return {x: r.left + scrollX.value,
+            y: r.top + scrollY.value,
+            w: r.width,
+            h: r.height };
   }
 };
 
@@ -2775,15 +2780,15 @@ var FormAssistant = {
         this._currentInputElement = currentElement;
         let suggestions = this._getAutocompleteSuggestions(currentElement.value, currentElement);
 
-        let rect = currentElement.getBoundingClientRect();
-        let zoom = BrowserApp.selectedTab.viewport.zoom;
+        let rect = ElementTouchHelper.getBoundingContentRect(currentElement);
+        let viewport = BrowserApp.selectedTab.viewport;
 
         sendMessageToJava({
           gecko: {
             type:  "FormAssist:AutoComplete",
             suggestions: suggestions,
-            rect: [rect.left, rect.top, rect.width, rect.height], 
-            zoom: zoom
+            rect: [rect.x - (viewport.x / viewport.zoom), rect.y - (viewport.y / viewport.zoom), rect.w, rect.h],
+            zoom: viewport.zoom
           }
         });
     }
