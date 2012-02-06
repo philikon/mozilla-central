@@ -48,7 +48,6 @@ MarionetteModule.prototype = {
           DebuggerServer.addActors('resource:///modules/marionette-actors.js');
           DebuggerServer.initTransport();
           DebuggerServer.openListener(port, true);
-          MarionetteLogger.write('opened listener on port ' + port);
         }
       }
       catch(e) {
@@ -65,4 +64,3 @@ MarionetteModule.prototype = {
 };
 
 const NSGetFactory = XPCOMUtils.generateNSGetFactory([MarionetteModule]);
-

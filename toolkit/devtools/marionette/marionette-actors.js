@@ -44,8 +44,6 @@
 var Ci = Components.interfaces;
 var Cc = Components.classes;
 var Cu = Components.utils;
-var uuidGen = Components.classes["@mozilla.org/uuid-generator;1"]
-             .getService(Components.interfaces.nsIUUIDGenerator);
 
 var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
              .getService(Ci.mozIJSSubScriptLoader);
@@ -59,23 +57,31 @@ var xulAppInfo = Cc["@mozilla.org/xre/app-info;1"]
                  .getService(Ci.nsIXULAppInfo);
 var isB2G = xulAppInfo.name.indexOf('B2G') > -1;
 
+// import logger
+Cu.import("resource:///modules/marionette-logger.jsm");
+MarionetteLogger.write('marionette-actors.js loaded');
+
 if (isB2G) {
   // prevent 'slow script' dialogs
   prefs.setIntPref("dom.max_script_run_time", 180);
 }
 
-Cu.import("resource:///modules/marionette-logger.jsm");
-MarionetteLogger.write('marionette-actors.js loaded');
+/**
+ * Creates the root actor once a connection is established
+ */
 
 function createRootActor(aConnection)
 {
   return new MarionetteRootActor(aConnection);
 }
 
+/**
+ * Root actor for Marionette. Add any future actors to its actor pool.
+ */
+
 function MarionetteRootActor(aConnection)
 {
   this.conn = aConnection;
-  /* will only ever be one marionette actor */
   this._marionetteActor = new MarionetteDriverActor(this.conn);
   this._marionetteActorPool = null; //hold future actors
 
@@ -91,11 +97,16 @@ MarionetteRootActor.prototype = {
              traits: [] };
   },
 
+  /**
+   * Called when client disconnects. Cleans up marionette driver actions.
+   */
   disconnect: function MRA_disconnect() {
     this._marionetteActor.deleteSession();
   },
 
-  /* used to get the running marionette actor, so we can issue commands */
+  /**
+   * Used to get the running marionette actor, so we can issue commands
+   */
   getMarionetteID: function MRA_getMarionette() {
     return { "from": "root",
              "id": this._marionetteActor.actorID } ;
@@ -107,52 +118,77 @@ MarionetteRootActor.prototype.requestTypes = {
   "sayHello": MarionetteRootActor.prototype.sayHello
 };
 
+/**
+ * This actor is responsible for all marionette API calls. It gets created
+ * for each connection and manages all chrome and browser based calls. It 
+ * mediates content calls by issuing appropriate messages to the content process.
+ */
+
 function MarionetteDriverActor(aConnection)
 {
   this.conn = aConnection;
   this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                              getService(Ci.nsIChromeFrameMessageManager);
+  this.windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].getService(Ci.nsIWindowMediator);
+  this.browsers = {}; //holds list of BrowserObjs
+  this.curBrowser = null; // points to current browser
+  this.context = "content";
+  this.scriptTimeout = null;
+  this.seenItems = {};
+  this.timer = null;
+
+  //register all message listeners
   this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
   this.messageManager.addMessageListener("Marionette:log", this);
   this.messageManager.addMessageListener("Marionette:register", this);
   this.messageManager.addMessageListener("Marionette:goUrl", this);
-  this.windowMediator = Cc['@mozilla.org/appshell/window-mediator;1'].getService(Ci.nsIWindowMediator);
-  this.currentChromeWindow = null; //TODO ADD chrome window support
-  this.browsers = {}; //holds list of BrowserObjs
-  this.curBrowser = null; // points to current browser
-  this.tab = null;
-  this.context = "content";
-  this.scriptTimeout = null;
-  this.seenItems = {};
-  this.timer = null;
 }
 
 MarionetteDriverActor.prototype = {
 
   actorPrefix: "marionette",
 
-  sendAsync: function (name, values) {
+  /**
+   * Helper method to send async messages to content
+   */
+  sendAsync: function MDA_sendAsync(name, values) {
     this.messageManager.sendAsyncMessage("Marionette:" + name + this.browsers[this.curBrowser].curFrameId, values);
   },
 
-  sendResponse: function (value) {
+  /**
+   * Helper methods:
+   */
+
+  /**
+    * Send response value to client
+    */
+  sendResponse: function MDA_sendResponse(value) {
     if (typeof(value) == 'undefined')
         value = null;
     this.conn.send({from:this.actorID, value: value});
   },
 
-  sendOk: function() {
+  /**
+   * Send ack to client
+   */
+  sendOk: function MDA_sendOk() {
     this.conn.send({from:this.actorID, ok: true});
   },
 
-  sendError: function (message, status, trace) {
+  /**
+   * Send error message to client
+   */
+  sendError: function MDA_sendError(message, status, trace) {
     var error_msg = {message: message, status: status, stacktrace: trace};
     this.conn.send({from:this.actorID, error: error_msg});
   },
 
-  getCurrentWindow: function() {
+  /**
+   * Gets the current active window
+   */
+  getCurrentWindow: function MDA_getCurrentWindow() {
     var type = null;
     if (!isB2G) {
       type = 'navigator:browser';
@@ -160,7 +196,10 @@ MarionetteDriverActor.prototype = {
     return this.windowMediator.getMostRecentWindow(type);
   },
 
-  getWinEnumerator: function() {
+  /**
+   * Gets the the window enumerator
+   */
+  getWinEnumerator: function MDA_getWinEnumerator() {
     var type = 'navigator:browser';
     if (isB2G) {
       type = null;
@@ -168,7 +207,10 @@ MarionetteDriverActor.prototype = {
     return this.windowMediator.getEnumerator(type);
   },
 
-  addBrowser: function(win) {
+  /**
+   * Create a new BrowserObj for window and add to known browsers
+   */
+  addBrowser: function MDA_addBrowser(win) {
     var browser = new BrowserObj(win);
     var winId = win.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).outerWindowID;
     winId = winId + (isB2G ? '-b2g' : '');
@@ -180,37 +222,54 @@ MarionetteDriverActor.prototype = {
     return winId;
   },
 
-  startBrowser: function(win, newSession) {
+  /**
+   * Start a new session in a new browser. 
+   *
+   * If newSession is true, we will switch focus to the start frame 
+   * when it registers. Also, if it is in desktop, then a new tab 
+   * with the start page uri (about:blank) will be opened.
+   */
+  startBrowser: function MDA_startBrowser(win, newSession) {
     var winId = this.addBrowser(win);
     this.curBrowser = winId;
     this.browsers[this.curBrowser].newSession = newSession;
     this.browsers[this.curBrowser].startSession(newSession);
     this.browsers[this.curBrowser].loadFrameScript("resource:///modules/marionette-listener.js", win);
-    this.tab = this.browsers[this.curBrowser].tab;
   },
 
-  //We will only ever be running one browser at a time
-  //If no browser is running (ie: in B2G) start one up
+  /**
+   * Marionette API:
+   */
+
+  /**
+   * Create a new session. This creates a BrowserObj.
+   *
+   * In a desktop environment, this opens a new 'about:blank' tab for 
+   * the client to test in.
+   */
   newSession: function MDA_newSession(aRequest) {
-    //TODO: check if session exists before creating it
     if (!prefs.getBoolPref("marionette.contentListener")) {
       this.startBrowser(this.getCurrentWindow(), true);
     }
     else if (isB2G && (this.curBrowser == null)) {
+      //if there is a content listener, then we just wake it up
       var winId = this.addBrowser(this.getCurrentWindow());
       this.curBrowser = winId;
       this.browsers[this.curBrowser].startSession(false);
       this.messageManager.sendAsyncMessage("Marionette:restart", {});
     }
     else {
-      this.sendError("Session already running", 17, null);
+      this.sendError("Session already running", 500, null);
     }
   },
 
+  /**
+   * Sets the context of the subsequent commands to be either 'chrome' or 'content'
+   */
   setContext: function MDA_setContext(aRequest) {
     var context = aRequest.value;
     if (context != "content" && context != "chrome") {
-      this.sendError("invalid context", 17, null); //TODO find more appropriate errmsg
+      this.sendError("invalid context", 500, null);
     }
     else {
       this.context = context;
@@ -218,6 +277,10 @@ MarionetteDriverActor.prototype = {
     }
   },
 
+  /**
+   * Execute the given script either as a function body (executeScript)
+   * or directly (for 'mochitest' like JS Marionette tests)
+   */
   execute: function MDA_execute(aRequest, directInject) {
     if (this.context == "chrome") {
       var curWindow = this.getCurrentWindow();
@@ -235,7 +298,7 @@ MarionetteDriverActor.prototype = {
           //run the given script directly
           var res = Cu.evalInSandbox(aRequest.value, _chromeSandbox, "1.8");
           if (res == undefined || res.passed == undefined) {
-            this.sendError("Marionette.finish() not called", 17, null);
+            this.sendError("Marionette.finish() not called", 500, null);
           }
           else {
             this.sendResponse(res);
@@ -249,7 +312,6 @@ MarionetteDriverActor.prototype = {
         }
       }
       catch (e) {
-        // 17 = JavascriptException
         this.sendError(e.name + ': ' + e.message, 17, e.stack);
       }
       Marionette.reset();
@@ -259,10 +321,13 @@ MarionetteDriverActor.prototype = {
     }
   },
 
+  /**
+   * Set the timeout for asynchronous script execution
+   */
   setScriptTimeout: function MDA_setScriptTimeout(aRequest) {
     var timeout = parseInt(aRequest.value);
     if(isNaN(timeout)){
-      this.sendError("Not a Number", 17, null); //TODO: find more appropriate error message
+      this.sendError("Not a Number", 500, null);
     }
     else {
       this.scriptTimeout = timeout;
@@ -271,10 +336,16 @@ MarionetteDriverActor.prototype = {
     }
   },
 
+  /**
+   * execute async script
+   */
   executeAsync: function MDA_executeAsync(aRequest) {
     this.executeWithCallback(aRequest);
   },
 
+  /**
+   * execute pure JS script. Used to execute 'mochitest'-style Marionette tests.
+   */
   executeJSScript: function MDA_executeJSScript(aRequest) {
     //all pure JS scripts will need to call Marionette.finish() to complete the test.
     if (this.context == "chrome") {
@@ -290,6 +361,14 @@ MarionetteDriverActor.prototype = {
    }
   },
 
+  /**
+   * This function is used by executeAsync and executeJSScript to execute a script
+   * in a sandbox. 
+   * 
+   * For executeJSScript, it will return a message only when the finish() method is called.
+   * For executeAsync, it will return a response when marionetteScriptFinished/arguments[arguments.length-1] 
+   * method is called, or if it times out.
+   */
   executeWithCallback: function MDA_executeWithCallback(aRequest, timeout) {
     if (this.context == "chrome") {
       try {
@@ -313,8 +392,10 @@ MarionetteDriverActor.prototype = {
         _chromeSandbox.ok = Marionette.ok;
         _chromeSandbox.finish = Marionette.finish;
         var script;
+        //define the timeout function and catch any potential errors thrown by the user script
         var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
-                           + 'window.onerror = function (errorMsg, url, lineNumber) {Marionette.returnFunc(errorMsg + " at: " + url + " line: " + lineNumber, 17); ; return true};'
+                           + 'window.onerror = function (errorMsg, url, lineNumber) {'
+                           + 'Marionette.returnFunc(errorMsg + " at: " + url + " line: " + lineNumber, 17); ; return true};'
                            + 'if(Marionette.__timer != null) {Marionette.__timer.initWithCallback(timeoutFunc, '+ this.scriptTimeout +', Components.interfaces.nsITimer.TYPE_ONE_SHOT);}';
         if (timeout) {
           if (this.scriptTimeout == null || this.scriptTimeout == 0) {
@@ -340,30 +421,51 @@ MarionetteDriverActor.prototype = {
     }
   },
 
+  /**
+   * Navigates to given url
+   */
   goUrl: function MDA_goUrl(aRequest) {
     this.sendAsync("goUrl", aRequest);
   },
 
+  /**
+   * Gets current url
+   */
   getUrl: function MDA_getUrl(aRequest) {
     this.sendAsync("getUrl", {});
   },
 
+  /**
+   * Go back in history
+   */
   goBack: function MDA_goBack(aRequest) {
     this.sendAsync("goBack", {});
   },
 
+  /**
+   * Go forward in history
+   */
   goForward: function MDA_goForward(aRequest) {
     this.sendAsync("goForward", {});
   },
 
+  /**
+   * Refresh the page
+   */
   refresh: function MDA_refresh(aRequest) {
     this.sendAsync("refresh", {});
   },
 
+  /**
+   * Get the current window's server-assigned ID
+   */
   getWindow: function MDA_getWindow(aRequest) {
     this.sendResponse(this.curBrowser);
   },
 
+  /**
+   * Get the server-assigned IDs of all available windows
+   */
   getWindows: function MDA_getWindows(aRequest) {
     var res = [];
     var winEn = this.getWinEnumerator(); 
@@ -376,7 +478,10 @@ MarionetteDriverActor.prototype = {
     this.sendResponse(res);
   },
 
-  //searches based on name, then id
+  /**
+   * Switch to a window based on name or server-assigned id.
+   * Searches based on name, then id.
+   */
   switchToWindow: function MDA_switchToWindow(aRequest) {
     var winEn = this.getWinEnumerator(); 
     while(winEn.hasMoreElements()) {
@@ -397,30 +502,51 @@ MarionetteDriverActor.prototype = {
     this.sendError("Unable to locate window " + aRequest.value, 23, null);
   },
 
+  /**
+   * Switch to a given frame within the current window
+   */
   switchToFrame: function MDA_switchToFrame(aRequest) {
     this.sendAsync("switchToFrame", aRequest);
   },
 
+  /**
+   * Set timeout for searching for elements
+   */
   setSearchTimeout: function MDA_setSearchTimeout(aRequest) {
     this.sendAsync("setSearchTimeout", {value: aRequest.value});
   },
 
+  /**
+   * Find an element using the indicated search strategy.
+   */
   findElement: function MDA_findElement(aRequest) {
     this.sendAsync("findElement", {value: aRequest.value, using: aRequest.using, element: aRequest.element});
   },
 
+  /**
+   * Send click event to element
+   */
   clickElement: function MDA_clickElement(aRequest) {
     this.sendAsync("clickElement", {element: aRequest.element});
   },
 
+  /**
+   * Deletes the session.
+   * 
+   * If it is a desktop environment, it will close the session's tab and close all listeners
+   *
+   * If it is a B2G environment, it will make the main content listener sleep, and close
+   * all other listeners. The main content listener persists after disconnect (it's the homescreen),
+   * and can safely be reused.
+   */
   deleteSession: function MDA_deleteSession(aRequest) {
     if (this.browsers[this.curBrowser] != null) {
-      this.tab = null;
       if (isB2G) {
         this.messageManager.sendAsyncMessage("Marionette:sleepSession" + this.browsers[this.curBrowser].mainContentId, {});
         this.browsers[this.curBrowser].knownFrames.splice(this.browsers[this.curBrowser].knownFrames.indexOf(this.browsers[this.curBrowser].mainContentId), 1);
       }
       else {
+        //don't set this pref for B2G since the framescript can be safely reused
         prefs.setBoolPref("marionette.contentListener", false);
       }
       this.browsers[this.curBrowser].closeTab();
@@ -430,7 +556,6 @@ MarionetteDriverActor.prototype = {
           this.messageManager.sendAsyncMessage("Marionette:deleteSession" + this.browsers[win].knownFrames[i], {});
         }
       }
-      //don't set this pref for B2G since the framescript can be safely reused
       var winEnum = this.getWinEnumerator();
       while (winEnum.hasMoreElements()) {
         winEnum.getNext().messageManager.removeDelayedFrameScript("resource:///modules/marionette-listener.js"); 
@@ -447,7 +572,10 @@ MarionetteDriverActor.prototype = {
     this.seenItems = {};
   },
 
-  receiveMessage: function(message) {
+  /**
+   * Receives all messages from content messageManager
+   */
+  receiveMessage: function MDA_receiveMessage(message) {
     if (message.name == "DOMContentLoaded") {
       this.sendOk();
       this.messageManager.removeMessageListener("DOMContentLoaded", this, true);
@@ -465,6 +593,8 @@ MarionetteDriverActor.prototype = {
       MarionetteLogger.write(message.json.message);
     }
     else if (message.name == "Marionette:register") {
+      // This code processes the content listener's registration information
+      // and either accepts the listener, or ignores it
       var nullPrevious= (this.browsers[this.curBrowser].curFrameId == null);
       var curWin = this.getCurrentWindow();
       var frameObject = curWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).getOuterWindowWithId(message.json.value);
@@ -481,11 +611,15 @@ MarionetteDriverActor.prototype = {
       return reg;
     }
     else if (message.name == "Marionette:goUrl") {
+      // if content determines that the goUrl call is directed at a top level window (not an iframe)
+      // it calls back into chrome to load the uri.
       this.browsers[this.curBrowser].loadURI(message.json.value, this);
     }
   },
-  /* for non-e10s eventListening */
-  handleEvent: function(evt) {
+  /**
+   * for non-e10s eventListening
+   */
+  handleEvent: function MDA_handleEvent(evt) {
     if (evt.type == "DOMContentLoaded") {
       this.sendOk();
       this.browsers[this.curBrowser].browser.removeEventListener("DOMContentLoaded", this, false);
@@ -515,6 +649,14 @@ MarionetteDriverActor.prototype.requestTypes = {
   "deleteSession": MarionetteDriverActor.prototype.deleteSession
 };
 
+/**
+ * Creates a BrowserObj. BrowserObjs handle interactions with the
+ * browser, according to the current environment (desktop, b2g, etc.)
+ *
+ * @param nsIDOMWindow win
+ *        The window whose browser needs to be accessed
+ */
+
 function BrowserObj(win) {
   this.DESKTOP = "desktop";
   this.B2G = "B2G";
@@ -529,11 +671,14 @@ function BrowserObj(win) {
   this.messageManager = Cc["@mozilla.org/globalmessagemanager;1"].
                              getService(Ci.nsIChromeFrameMessageManager);
   this.newSession = true; //used to set curFrameId upon new session
-  this.setWindow(win);
+  this.setEnvironment(win);
 }
 
 BrowserObj.prototype = {
-  setWindow: function BO_setWindow(win) {
+  /**
+   * Get the browser and environment type from window
+   */
+  setEnvironment: function BO_setEnvironment(win) {
     if (win.gBrowser != undefined) {
       this.type = this.DESKTOP; 
       this.browser = win.gBrowser; 
@@ -543,10 +688,18 @@ BrowserObj.prototype = {
       this.browser = win.Browser; //BrowserApp for birch?
     }
     else {
-      this.type = this.B2G; //TODO: no browser support yet
+      this.type = this.B2G;
       this.startPage = "homescreen/homescreen.html";
     }
   },
+  /**
+   * Called when we start a session with this browser.
+   *
+   * In a desktop environment, if newTab is true, it will start 
+   * a new 'about:blank' tab and change focus to this tab.
+   *
+   * This will also set the active messagemanager for this object
+   */
   startSession: function BO_startSession(newTab) {
     if (this.type == this.B2G) {
       return;
@@ -559,7 +712,8 @@ BrowserObj.prototype = {
         //if we have a new tab, make it the selected tab and give it focus
         this.browser.selectedTab = this.tab;
         var newTabBrowser = this.browser.getBrowserForTab(this.tab);
-        newTabBrowser.ownerDocument.defaultView.focus(); //focus the tab
+        //focus the tab
+        newTabBrowser.ownerDocument.defaultView.focus();
       }
       else {
         //set this.tab to the currently focused tab
@@ -571,24 +725,27 @@ BrowserObj.prototype = {
       this.browser_mm = this.tab.browser.messageManager;
     }
   },
+
+  /**
+   * Closes current tab
+   */
   closeTab: function BO_closeTab() {
-    if (this.tab != null) {
-      switch (this.type) {
-        case this.DESKTOP:
-          this.browser.removeTab(this.tab);
-          break;
-        case this.B2G:
-          //TODO
-          return;
-        default: 
-          this.browser.closeTab(this.tab);
-      }
+    if (this.tab != null && (this.type == this.DESKTOP)) {
+      this.browser.removeTab(this.tab);
       this.tab = null;
     }
   },
+
+  /**
+   * Opens a tab with given uri
+   */
   addTab: function BO_addTab(uri) {
     this.tab = this.browser.addTab(uri, true);
   },
+
+  /**
+   * Load a uri in the current tab
+   */
   loadURI: function BO_openURI(uri, listener) {
     if (this.type == this.DESKTOP) {
       this.browser.addEventListener("DOMContentLoaded", listener, false);
@@ -599,12 +756,22 @@ BrowserObj.prototype = {
       this.browser.selectedBrowser.loadURI(uri);
     }
   },
+
+  /**
+   * Loads content listeners if we don't already have them
+   */
   loadFrameScript: function BO_loadFrameScript(script, frame) {
     if (!prefs.getBoolPref("marionette.contentListener")) {
       frame.window.messageManager.loadFrameScript(script, true);
       prefs.setBoolPref("marionette.contentListener", true);
     }
   },
+
+  /**
+   * Registers a new frame, and sets its current frame id to this frame
+   * if it is not already assigned, and if a) we already have a session 
+   * or b) we're starting a new session and it is the right start frame.
+   */
   register: function BO_register(id, href) {
     var uid = id + (this.type == this.B2G ? '-b2g' : '');
     if (this.curFrameId == null) {
