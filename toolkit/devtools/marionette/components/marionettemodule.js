@@ -42,6 +42,16 @@ MarionetteModule.prototype = {
       this._loaded = true;
 
       try {
+        //check if marionette pref exists
+        Services.prefs.getBoolPref('marionette.server.enabled');
+      }
+      catch(e) {
+        //create them
+        Services.prefs.setBoolPref('marionette.server.enabled', true);
+        Services.prefs.setIntPref('marionette.server.port', 2828);
+      }
+
+      try {
         let port = Services.prefs.getIntPref('marionette.server.port');
         if (Services.prefs.getBoolPref('marionette.server.enabled')) {
           Cu.import('resource:///modules/devtools/dbg-server.jsm');
