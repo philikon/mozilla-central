@@ -145,5 +145,18 @@ var Marionette = {
       }
       return ostring;
   },
+
+  defaultWaitForTimeout: 10000,
+  waitFor: function test_waitFor(callback, test, timeout) {
+      if (test()) {
+          callback();
+          return;
+      }
+      timeout = timeout || Date.now();
+      if (Date.now() - timeout > Marionette.defaultWaitForTimeout) {
+          throw 'waitFor timeout';
+      }
+      Marionette.win.window.setTimeout(Marionette.waitFor, 100, callback, test, timeout);
+  },
 };
 
