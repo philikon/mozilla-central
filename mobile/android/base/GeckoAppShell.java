@@ -632,6 +632,40 @@ public class GeckoAppShell
             });
     }
 
+    /*
+     * Keep these values consistent with |SensorType| in Hal.h
+     */
+    private static final int SENSOR_ORIENTATION = 1;
+    private static final int SENSOR_ACCELERATION = 2;
+    private static final int SENSOR_PROXIMITY = 3;
+
+    private static Sensor gProximitySensor = null;
+
+    public static void enableSensor(int aSensortype) {
+        SensorManager sm = (SensorManager)
+            GeckoApp.mAppContext.getSystemService(Context.SENSOR_SERVICE);
+
+        switch(aSensortype) {
+        case SENSOR_PROXIMITY:
+            if(gProximitySensor == null)
+                gProximitySensor = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY);
+            sm.registerListener(GeckoApp.mAppContext, gProximitySensor,
+                                SensorManager.SENSOR_DELAY_GAME);
+            break;
+        }
+    }
+
+    public static void disableSensor(int aSensortype) {
+        SensorManager sm = (SensorManager)
+            GeckoApp.mAppContext.getSystemService(Context.SENSOR_SERVICE);
+
+        switch(aSensortype) {
+        case SENSOR_PROXIMITY:
+            sm.unregisterListener(GeckoApp.mAppContext, gProximitySensor);
+            break;
+        }
+    }
+
     public static void moveTaskToBack() {
         GeckoApp.mAppContext.moveTaskToBack(true);
     }
@@ -1900,7 +1934,7 @@ public class GeckoAppShell
      */
     public static byte[] decodeBase64(byte[] in) {
         if (Build.VERSION.SDK_INT >=Build.VERSION_CODES.FROYO)
-            return Base64.decode(in, GUID_ENCODE_FLAGS);
+            return Base64.decode(in, Base64.DEFAULT);
         int iOff = 0;
         int iLen = in.length;
         if (iLen%4 != 0) throw new IllegalArgumentException ("Length of Base64 encoded input string is not a multiple of 4.");

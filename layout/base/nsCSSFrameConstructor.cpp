@@ -145,7 +145,6 @@
 #include "DOMSVGTests.h"
 #include "nsSVGEffects.h"
 #include "nsSVGUtils.h"
-#include "nsSVGOuterSVGFrame.h"
 
 #include "nsRefreshDriver.h"
 #include "nsRuleProcessorData.h"
@@ -4945,9 +4944,8 @@ nsCSSFrameConstructor::ConstructSVGForeignObjectFrame(nsFrameConstructorState& a
   innerPseudoStyle = mPresShell->StyleSet()->
     ResolveAnonymousBoxStyle(nsCSSAnonBoxes::mozSVGForeignContent, styleContext);
 
-  nsIFrame* blockFrame = NS_NewBlockFrame(mPresShell, innerPseudoStyle,
-                                          NS_BLOCK_FLOAT_MGR |
-                                          NS_BLOCK_MARGIN_ROOT);
+  nsIFrame* blockFrame = NS_NewBlockFormattingContext(mPresShell,
+                                                      innerPseudoStyle);
   if (NS_UNLIKELY(!blockFrame)) {
     newFrame->Destroy();
     return NS_ERROR_OUT_OF_MEMORY;
@@ -7686,23 +7684,7 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
     // if frame has view, will already be invalidated
     if (aChange & nsChangeHint_RepaintFrame) {
       if (aFrame->IsFrameOfType(nsIFrame::eSVG)) {
-        if (!(aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
-          nsSVGOuterSVGFrame *outerSVGFrame = nsSVGUtils::GetOuterSVGFrame(aFrame);
-          if (outerSVGFrame) {
-            // We need this to invalidate frames when their 'filter' or 'marker'
-            // property changes. XXX in theory changes to 'marker' should be
-            // handled in nsSVGPathGeometryFrame::DidSetStyleContext, but for
-            // some reason that's broken.
-            //
-            // This call is also currently the only mechanism for invalidating
-            // the area covered by a <foreignObject> when 'opacity' changes on
-            // it or one of its ancestors. (For 'opacity' changes on <image> or
-            // a graphical element such as <path>, or on one of their
-            // ancestors, this is redundant since
-            // nsSVGPathGeometryFrame::DidSetStyleContext also invalidates.)
-            outerSVGFrame->UpdateAndInvalidateCoveredRegion(aFrame);
-          }
-        }
+        nsSVGUtils::UpdateGraphic(aFrame);
       } else {
         aFrame->InvalidateOverflowRect();
       }
@@ -7998,19 +7980,9 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
         ApplyRenderingChangeToTree(presContext, frame, hint);
         didInvalidate = true;
       }
-      if (hint & nsChangeHint_UpdateOverflow) {
+      if ((hint & nsChangeHint_UpdateOverflow) && !didReflow) {
         while (frame) {
-          nsOverflowAreas* pre = static_cast<nsOverflowAreas*>
-            (frame->Properties().Get(frame->PreTransformOverflowAreasProperty()));
-          if (pre) {
-            // FinishAndStoreOverflow will change the overflow areas passed in,
-            // so make a copy.
-            nsOverflowAreas overflowAreas = *pre;
-            frame->FinishAndStoreOverflow(overflowAreas, frame->GetSize());
-          } else {
-            frame->UpdateOverflow();
-          }
-
+          frame->UpdateOverflow();
           nsIFrame* next =
             nsLayoutUtils::GetNextContinuationOrSpecialSibling(frame);
           // Update the ancestors' overflow after we have updated the overflow
