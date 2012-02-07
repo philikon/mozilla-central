@@ -1,10 +1,11 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* vim: sw=4 ts=8 et ft=cpp : */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
  * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
+ * the License. You may obtain a copy of the License at:
  * http://www.mozilla.org/MPL/
  *
  * Software distributed under the License is distributed on an "AS IS" basis,
@@ -12,19 +13,19 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is mozilla.org code.
+ * The Original Code is Mozilla Code.
  *
  * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
+ *   The Mozilla Foundation
+ * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
- *   Henry Sobotka <sobotka@axess.com>
+ *   Sinker Li <thinker@codemud.net>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -36,12 +37,20 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef _NS_LOCALFILEUNICODE_H_
+#include "mozilla/Hal.h"
 
-extern void NS_ShutdownLocalFileUnicode();
+using namespace mozilla::hal;
 
-extern "C" NS_EXPORT nsresult
-NS_NewUnicodeLocalFile(const PRUnichar *, bool, nsILocalFile **);
+namespace mozilla {
+namespace hal_impl {
 
-#endif // _NS_LOCALFILEUNICODE_H_
+void
+EnableSensorNotifications(SensorType aSensor) {
+}
 
+void
+DisableSensorNotifications(SensorType aSensor) {
+}
+
+}
+}
