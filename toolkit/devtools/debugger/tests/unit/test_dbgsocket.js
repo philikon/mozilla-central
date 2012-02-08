@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource:///modules/dbg-server.jsm");
-Cu.import("resource:///modules/dbg-client.jsm");
+Cu.import("resource:///modules/devtools/dbg-server.jsm");
+Cu.import("resource:///modules/devtools/dbg-client.jsm");
 
 function run_test()
 {
@@ -76,7 +76,7 @@ function test_pipe_conn()
       do_check_eq(aPacket.from, "root");
       transport.close();
     },
-    onClosed: function(aPacket) {
+    onClosed: function(aStatus) {
       run_next_test();
     }
   };

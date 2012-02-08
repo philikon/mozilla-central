@@ -44,9 +44,6 @@ include $(topsrcdir)/config/config.mk
 
 PARALLEL_DIRS += \
   debugger \
-  $(NULL)
-
-DIRS += \
   marionette \
   $(NULL)
 

@@ -484,6 +484,7 @@ MAKEFILES_xulapp="
   toolkit/components/urlformatter/Makefile
   toolkit/components/viewconfig/Makefile
   toolkit/components/viewsource/Makefile
+  toolkit/devtools/Makefile
   toolkit/locales/Makefile
   toolkit/mozapps/downloads/Makefile
   toolkit/mozapps/extensions/Makefile
@@ -558,6 +559,7 @@ add_makefiles "
   $MAKEFILES_intl
   $MAKEFILES_xpconnect
   $MAKEFILES_jsipc
+  $MAKEFILES_debugger
   $MAKEFILES_jsreflect
   $MAKEFILES_jsductwork
   $MAKEFILES_content
