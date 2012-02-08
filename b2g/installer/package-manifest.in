@@ -605,3 +605,4 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/MarionetteComponents.manifest
 @BINPATH@/components/marionettemodule.js
 @BINPATH@/components/B2GComponents.xpt
+@BINPATH@/components/CameraContent.js
