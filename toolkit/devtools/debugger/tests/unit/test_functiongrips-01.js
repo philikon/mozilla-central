@@ -14,7 +14,7 @@ function run_test()
   }.toString());
 
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
-  gClient.ready(function() {
+  gClient.connect(function() {
     attachTestGlobalClientAndResume(gClient, "test-grips", function(aResponse, aThreadClient) {
       gThreadClient = aThreadClient;
       test_named_function();
@@ -31,12 +31,15 @@ function test_named_function()
     do_check_eq(args[0]["class"], "Function");
     // No name for an anonymous function.
 
-    gClient.request({ to: args[0].actor, type: "nameAndParameters" }, function(aResponse) {
+    let objClient = gThreadClient.pauseGrip(args[0]);
+    objClient.getSignature(function(aResponse) {
       do_check_eq(aResponse.name, "stopMe");
       do_check_eq(aResponse.parameters.length, 1);
       do_check_eq(aResponse.parameters[0], "arg1");
 
-      test_anon_function();
+      gThreadClient.resume(function() {
+        test_anon_function();
+      });
     });
 
   });
@@ -44,14 +47,15 @@ function test_named_function()
   gDebuggee.eval("stopMe(stopMe)");
 }
 
-function test_named_function() {
+function test_anon_function() {
   gThreadClient.addOneTimeListener("paused", function(aEvent, aPacket) {
     let args = aPacket.frame["arguments"];
 
     do_check_eq(args[0]["class"], "Function");
     // No name for an anonymous function.
 
-    gClient.request({ to: args[0].actor, type: "nameAndParameters" }, function(aResponse) {
+    let objClient = gThreadClient.pauseGrip(args[0]);
+    objClient.getSignature(function(aResponse) {
       do_check_eq(aResponse.name, null);
       do_check_eq(aResponse.parameters.length, 3);
       do_check_eq(aResponse.parameters[0], "foo");

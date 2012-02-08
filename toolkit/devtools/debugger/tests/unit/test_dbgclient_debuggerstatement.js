@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-Cu.import("resource:///modules/dbg-server.jsm");
-Cu.import("resource:///modules/dbg-client.jsm");
+Cu.import("resource:///modules/devtools/dbg-server.jsm");
+Cu.import("resource:///modules/devtools/dbg-client.jsm");
 
 var gClient;
 var gDebuggee;
@@ -17,7 +17,7 @@ function run_test()
 
   let transport = DebuggerServer.connectPipe();
   gClient = new DebuggerClient(transport);
-  gClient.ready(function(aType, aTraits) {
+  gClient.connect(function(aType, aTraits) {
     getTestGlobalContext(gClient, "test-1", function(aContext) {
       test_attach(aContext);
     });

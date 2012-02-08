@@ -7,8 +7,10 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 const Cr = Components.results;
 
-Cu.import("resource:///modules/dbg-server.jsm");
-Cu.import("resource:///modules/dbg-client.jsm");
+Cu.import("resource:///modules/devtools/dbg-server.jsm");
+Cu.import("resource:///modules/devtools/dbg-client.jsm");
+Cu.import("resource://gre/modules/Services.jsm");
+
 
 function check_except(func)
 {
@@ -78,4 +80,20 @@ function finishClient(aClient)
   aClient.close(function() {
     do_test_finished();
   });
+}
+
+/**
+ * Returns the full path of the file with the specified name in a
+ * platform-independent and URL-like form.
+ */
+function getFilePath(aName)
+{
+  let file = do_get_file(aName);
+  let path = Services.io.newFileURI(file).spec;
+  let filePrePath = "file://";
+  if ("nsILocalFileWin" in Ci &&
+      file instanceof Ci.nsILocalFileWin) {
+    filePrePath += "/";
+  }
+  return path.slice(filePrePath.length);
 }

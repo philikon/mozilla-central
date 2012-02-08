@@ -14,7 +14,7 @@ function run_test()
   initTestDebuggerServer();
   gDebuggee = addTestGlobal("test-stack");
   gClient = new DebuggerClient(DebuggerServer.connectPipe());
-  gClient.ready(function () {
+  gClient.connect(function () {
     attachTestGlobalClientAndResume(gClient, "test-stack", function (aResponse, aThreadClient) {
       gThreadClient = aThreadClient;
       test_simple_breakpoint();
@@ -26,7 +26,7 @@ function run_test()
 function test_simple_breakpoint()
 {
   gThreadClient.addOneTimeListener("paused", function (aEvent, aPacket) {
-    var path = do_get_file('test_breakpoint-01.js').path;
+    let path = getFilePath('test_breakpoint-01.js');
     gThreadClient.setBreakpoint({ url: path, line: gDebuggee.line0 + 3}, function (aResponse, bpClient) {
       gThreadClient.addOneTimeListener("paused", function (aEvent, aPacket) {
         // Check the return value.
@@ -39,9 +39,9 @@ function test_simple_breakpoint()
 
         // Remove the breakpoint.
         bpClient.remove(function (aResponse) {
-            gThreadClient.resume(function () {
-              finishClient(gClient);
-            });
+          gThreadClient.resume(function () {
+            finishClient(gClient);
+          });
         });
 
       });
@@ -54,7 +54,7 @@ function test_simple_breakpoint()
   });
 
   gDebuggee.eval("var line0 = Error().lineNumber;\n" +
-       "debugger;\n" +   // line0 + 1
-       "var a = 1;\n" +  // line0 + 2
-       "var b = 2;\n");  // line0 + 3
+                 "debugger;\n" +   // line0 + 1
+                 "var a = 1;\n" +  // line0 + 2
+                 "var b = 2;\n");  // line0 + 3
 }
