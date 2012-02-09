@@ -59,6 +59,7 @@ HISTOGRAM_BOOLEAN(A11Y_INSTANTIATED, "has accessibility support been instantiate
 HISTOGRAM(A11Y_CONSUMERS, 1, 6, 7, LINEAR, "Accessibility client by enum id")
 HISTOGRAM_BOOLEAN(ISIMPLE_DOM_USAGE, "have the ISimpleDOM* accessibility interfaces been used")
 HISTOGRAM_BOOLEAN(IACCESSIBLE_TABLE_USAGE, "has the IAccessibleTable accessibility interface been used")
+HISTOGRAM_BOOLEAN(XFORMS_ACCESSIBLE_USED, "has XForms accessibility been instantiated")
 
 /**
  * Cycle collector telemetry
@@ -323,6 +324,7 @@ HISTOGRAM_BOOLEAN(FX_CONTEXT_SEARCH_AND_TAB_SELECT, "Firefox: Background tab was
 HISTOGRAM_BOOLEAN(FX_KEYWORD_URL_USERSET, "Firefox: keyword.URL has a user-set value")
 HISTOGRAM(FX_IDENTITY_POPUP_OPEN_MS, 1, 1000, 10, EXPONENTIAL, "Firefox: Time taken by the identity popup to open in milliseconds")
 HISTOGRAM(FX_APP_MENU_OPEN_MS, 1, 1000, 10, EXPONENTIAL, "Firefox: Time taken by the app-menu opening in milliseconds")
+HISTOGRAM(FX_BOOKMARKS_TOOLBAR_INIT_MS, 50, 5000, 10, EXPONENTIAL, "Firefox: Time to initialize the bookmarks toolbar view (ms)")
 
 /**
  * Thumbnail Service telemetry.
