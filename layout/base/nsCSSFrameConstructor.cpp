@@ -7616,7 +7616,6 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
                              nsChangeHint aChange);
 
 /**
- * @param aBoundsRect returns the bounds enclosing the areas covered by aFrame and its childre
  * This rect is relative to aFrame's parent
  */
 static void
@@ -7675,11 +7674,21 @@ DoApplyRenderingChangeToTree(nsIFrame* aFrame,
                   "should only be called within ApplyRenderingChangeToTree");
 
   for ( ; aFrame; aFrame = nsLayoutUtils::GetNextContinuationOrSpecialSibling(aFrame)) {
+    NS_ASSERTION(!(aChange & nsChangeHint_UpdateTransformLayer) || aFrame->IsTransformed(),
+                 "Only transformed frames should have UpdateTransformLayer hint");
+
     // Get view if this frame has one and trigger an update. If the
     // frame doesn't have a view, find the nearest containing view
     // (adjusting r's coordinate system to reflect the nesting) and
     // update there.
-    UpdateViewsForTree(aFrame, aFrameManager, aChange);
+    // We don't need to update transforms in UpdateViewsForTree, because
+    // there can't be any out-of-flows or popups that need to be transformed;
+    // all out-of-flow descendants of the transformed element must also be
+    // descendants of the transformed frame.
+    UpdateViewsForTree(aFrame, aFrameManager,
+                       nsChangeHint(aChange & (nsChangeHint_RepaintFrame |
+                                               nsChangeHint_SyncFrameView |
+                                               nsChangeHint_UpdateOpacityLayer)));
 
     // if frame has view, will already be invalidated
     if (aChange & nsChangeHint_RepaintFrame) {
@@ -7982,7 +7991,17 @@ nsCSSFrameConstructor::ProcessRestyledFrames(nsStyleChangeList& aChangeList)
       }
       if ((hint & nsChangeHint_UpdateOverflow) && !didReflow) {
         while (frame) {
-          frame->UpdateOverflow();
+          nsOverflowAreas* pre = static_cast<nsOverflowAreas*>
+            (frame->Properties().Get(frame->PreTransformOverflowAreasProperty()));
+          if (pre) {
+            // FinishAndStoreOverflow will change the overflow areas passed in,
+            // so make a copy.
+            nsOverflowAreas overflowAreas = *pre;
+            frame->FinishAndStoreOverflow(overflowAreas, frame->GetSize());
+          } else {
+            frame->UpdateOverflow();
+          }
+
           nsIFrame* next =
             nsLayoutUtils::GetNextContinuationOrSpecialSibling(frame);
           // Update the ancestors' overflow after we have updated the overflow

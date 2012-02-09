@@ -5195,11 +5195,7 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       break;
 
     case WM_KILLFOCUS:
-      if (sJustGotDeactivate || !wParam) {
-        // Note: wParam is FALSE when the window has lost focus. Sometimes
-        // We can receive WM_KILLFOCUS with !wParam while changing to
-        // full-screen mode and we won't receive an WM_ACTIVATE/WA_INACTIVE
-        // message, so inform the focus manager that we've lost focus now.
+      if (sJustGotDeactivate) {
         result = DispatchFocusToTopLevelWindow(NS_DEACTIVATE);
       }
       break;
@@ -7295,15 +7291,17 @@ nsWindow::SetWindowClipRegion(const nsTArray<nsIntRect>& aRects,
     }
   }
 
-  // If a plugin is not visibile, especially if it is in a background tab,
+  // If a plugin is not visible, especially if it is in a background tab,
   // it should not be able to steal keyboard focus.  This code checks whether
   // the region that the plugin is being clipped to is NULLREGION.  If it is,
   // the plugin window gets disabled.
   if(mWindowType == eWindowType_plugin) {
     if(NULLREGION == ::CombineRgn(dest, dest, dest, RGN_OR)) {
+      ::ShowWindow(mWnd, SW_HIDE);
       ::EnableWindow(mWnd, FALSE);
     } else {
       ::EnableWindow(mWnd, TRUE);
+      ::ShowWindow(mWnd, SW_SHOW);
     }
   }
   if (!::SetWindowRgn(mWnd, dest, TRUE)) {
