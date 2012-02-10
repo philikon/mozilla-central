@@ -48,6 +48,7 @@ var Cu = Components.utils;
 var loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
              .getService(Ci.mozIJSSubScriptLoader);
 loader.loadSubScript("resource:///modules/marionette-simpletest.js");
+loader.loadSubScript("resource:///modules/marionette-log-obj.js");
 
 var prefs = Cc["@mozilla.org/preferences-service;1"]
             .getService(Ci.nsIPrefBranch);
@@ -136,12 +137,14 @@ function MarionetteDriverActor(aConnection)
   this.scriptTimeout = null;
   this.seenItems = {};
   this.timer = null;
+  this.marionetteLog = new MarionetteLogObj();
 
   //register all message listeners
   this.messageManager.addMessageListener("Marionette:ok", this);
   this.messageManager.addMessageListener("Marionette:done", this);
   this.messageManager.addMessageListener("Marionette:error", this);
   this.messageManager.addMessageListener("Marionette:log", this);
+  this.messageManager.addMessageListener("Marionette:testLog", this);
   this.messageManager.addMessageListener("Marionette:register", this);
   this.messageManager.addMessageListener("Marionette:goUrl", this);
 }
@@ -264,6 +267,21 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Log message. Accepts user defined log-level.
+   */
+  log: function MDA_log(aRequest) {
+    this.marionetteLog.log(aRequest.value, aRequest.level);
+    this.sendOk();
+  },
+
+  /**
+   * Return all logged messages.
+   */
+  getLogs: function MDA_getLogs(aRequest) {
+    this.sendResponse(this.marionetteLog.getLogs());
+  },
+
+  /**
    * Sets the context of the subsequent commands to be either 'chrome' or 'content'
    */
   setContext: function MDA_setContext(aRequest) {
@@ -289,12 +307,20 @@ MarionetteDriverActor.prototype = {
         Marionette.tests = [];
         Marionette.context = "chrome";
         Marionette.win = curWindow;
+        Marionette.logObj = this.marionetteLog;
         var params = aRequest.args;
         var _chromeSandbox = new Cu.Sandbox(curWindow,
            { sandboxPrototype: curWindow, wantXrays: false, 
              sandboxName: ''});
         _chromeSandbox.Marionette = Marionette;
         if (directInject) {
+          //we can assume this is a marionette test, so provide convenience funcs:
+          _chromeSandbox.is = _chromeSandbox.Marionette.is;
+          _chromeSandbox.isnot = _chromeSandbox.Marionette.isnot;
+          _chromeSandbox.ok = _chromeSandbox.Marionette.ok;
+          _chromeSandbox.log = _chromeSandbox.Marionette.log;
+          _chromeSandbox.getLogs = _chromeSandbox.Marionette.getLogs;
+          _chromeSandbox.finish = _chromeSandbox.Marionette.finish;
           //run the given script directly
           var res = Cu.evalInSandbox(aRequest.value, _chromeSandbox, "1.8");
           if (res == undefined || res.passed == undefined) {
@@ -378,6 +404,7 @@ MarionetteDriverActor.prototype = {
         Marionette.context = "chrome";
         Marionette.win = curWindow;
         Marionette.onerror = curWindow.onerror;
+        Marionette.logObj = this.marionetteLog;
         Marionette.__conn = this.conn;
         Marionette.__actorID = this.actorID;
         this.timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
@@ -387,10 +414,12 @@ MarionetteDriverActor.prototype = {
            { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
         _chromeSandbox.__marionetteParams = params;
         _chromeSandbox.Marionette = Marionette;
-        _chromeSandbox.is = Marionette.is;
-        _chromeSandbox.isnot = Marionette.isnot;
-        _chromeSandbox.ok = Marionette.ok;
-        _chromeSandbox.finish = Marionette.finish;
+        _chromeSandbox.is = _chromeSandbox.Marionette.is;
+        _chromeSandbox.isnot = _chromeSandbox.Marionette.isnot;
+        _chromeSandbox.ok = _chromeSandbox.Marionette.ok;
+        _chromeSandbox.log = _chromeSandbox.Marionette.log;
+        _chromeSandbox.getLogs = _chromeSandbox.Marionette.getLogs;
+        _chromeSandbox.finish = _chromeSandbox.Marionette.finish;
         var script;
         //define the timeout function and catch any potential errors thrown by the user script
         var timeoutScript = 'var timeoutFunc = function() {Marionette.returnFunc("timed out", 28);};'
@@ -566,6 +595,7 @@ MarionetteDriverActor.prototype = {
     this.messageManager.removeMessageListener("Marionette:done", this);
     this.messageManager.removeMessageListener("Marionette:error", this);
     this.messageManager.removeMessageListener("Marionette:log", this);
+    this.messageManager.removeMessageListener("Marionette:testLog", this);
     this.messageManager.removeMessageListener("Marionette:register", this);
     this.messageManager.removeMessageListener("Marionette:goUrl", this);
     this.curBrowser = null;
@@ -576,44 +606,50 @@ MarionetteDriverActor.prototype = {
    * Receives all messages from content messageManager
    */
   receiveMessage: function MDA_receiveMessage(message) {
-    if (message.name == "DOMContentLoaded") {
-      this.sendOk();
-      this.messageManager.removeMessageListener("DOMContentLoaded", this, true);
-    }
-    else if (message.name == "Marionette:done") {
-      this.sendResponse(message.json.value);
-    }
-    else if (message.name == "Marionette:ok") {
-      this.sendOk();
-    }
-    else if (message.name == "Marionette:error") {
-      this.sendError(message.json.message, message.json.status, message.json.stacktrace);
-    }
-    else if (message.name == "Marionette:log") {
-      MarionetteLogger.write(message.json.message);
-    }
-    else if (message.name == "Marionette:register") {
-      // This code processes the content listener's registration information
-      // and either accepts the listener, or ignores it
-      var nullPrevious= (this.browsers[this.curBrowser].curFrameId == null);
-      var curWin = this.getCurrentWindow();
-      var frameObject = curWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).getOuterWindowWithId(message.json.value);
-      var reg = this.browsers[this.curBrowser].register(message.json.value, message.json.href);
-      if (reg) {
-        this.seenItems[reg] = frameObject; //add to seenItems
-        if (nullPrevious && (this.browsers[this.curBrowser].curFrameId != null)) {
-          this.sendAsync("newSession", {B2G: isB2G});
-          if (this.browsers[this.curBrowser].newSession) {
-            this.sendResponse(reg);
+    switch (message.name) {
+      case "DOMContentLoaded":
+        this.sendOk();
+        this.messageManager.removeMessageListener("DOMContentLoaded", this, true);
+        break;
+      case "Marionette:done":
+        this.sendResponse(message.json.value);
+        break;
+      case "Marionette:ok":
+        this.sendOk();
+        break;
+      case "Marionette:error":
+        this.sendError(message.json.message, message.json.status, message.json.stacktrace);
+        break;
+      case "Marionette:log":
+        //log server-side messages
+        MarionetteLogger.write(message.json.message);
+        break;
+      case "Marionette:testLog":
+        //log messages from tests
+        this.marionetteLog.addLogs(message.json.value);
+        break;
+      case "Marionette:register":
+        // This code processes the content listener's registration information
+        // and either accepts the listener, or ignores it
+        var nullPrevious= (this.browsers[this.curBrowser].curFrameId == null);
+        var curWin = this.getCurrentWindow();
+        var frameObject = curWin.QueryInterface(Components.interfaces.nsIInterfaceRequestor).getInterface(Components.interfaces.nsIDOMWindowUtils).getOuterWindowWithId(message.json.value);
+        var reg = this.browsers[this.curBrowser].register(message.json.value, message.json.href);
+        if (reg) {
+          this.seenItems[reg] = frameObject; //add to seenItems
+          if (nullPrevious && (this.browsers[this.curBrowser].curFrameId != null)) {
+            this.sendAsync("newSession", {B2G: isB2G});
+            if (this.browsers[this.curBrowser].newSession) {
+              this.sendResponse(reg);
+            }
           }
         }
-      }
-      return reg;
-    }
-    else if (message.name == "Marionette:goUrl") {
-      // if content determines that the goUrl call is directed at a top level window (not an iframe)
-      // it calls back into chrome to load the uri.
-      this.browsers[this.curBrowser].loadURI(message.json.value, this);
+        return reg;
+      case "Marionette:goUrl":
+        // if content determines that the goUrl call is directed at a top level window (not an iframe)
+        // it calls back into chrome to load the uri.
+        this.browsers[this.curBrowser].loadURI(message.json.value, this);
+        break;
     }
   },
   /**
@@ -629,6 +665,8 @@ MarionetteDriverActor.prototype = {
 
 MarionetteDriverActor.prototype.requestTypes = {
   "newSession": MarionetteDriverActor.prototype.newSession,
+  "log": MarionetteDriverActor.prototype.log,
+  "getLogs": MarionetteDriverActor.prototype.getLogs,
   "setContext": MarionetteDriverActor.prototype.setContext,
   "executeScript": MarionetteDriverActor.prototype.execute,
   "setScriptTimeout": MarionetteDriverActor.prototype.setScriptTimeout,

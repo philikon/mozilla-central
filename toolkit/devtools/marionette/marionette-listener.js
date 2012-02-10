@@ -45,6 +45,8 @@ var uuidGen = Components.classes["@mozilla.org/uuid-generator;1"]
 var loader = Components.classes["@mozilla.org/moz/jssubscript-loader;1"]
              .getService(Components.interfaces.mozIJSSubScriptLoader);
 loader.loadSubScript("resource:///modules/marionette-simpletest.js");
+loader.loadSubScript("resource:///modules/marionette-log-obj.js");
+var marionetteLogObj = new MarionetteLogObj();
 
 var isB2G = false;
 
@@ -362,6 +364,8 @@ function asyncResponse() {
   }
 
   var res = win.document.getUserData('__marionetteRes');
+  sendSyncMessage("Marionette:testLog", {value: wrapValue(marionetteLogObj.getLogs())});
+  marionetteLogObj.clearLogs();
   if (res.status == 0){
     sendResponse({value: wrapValue(res.value), status: res.status});
   }
@@ -392,6 +396,7 @@ function executeScript(msg, directInject) {
   Marionette.is_async = false;
   Marionette.win = win;
   Marionette.context = "content";
+  Marionette.logObj = marionetteLogObj;
   applyNamedArgs(args);
 
   var sandbox = new Cu.Sandbox(win);
@@ -403,7 +408,16 @@ function executeScript(msg, directInject) {
   sandbox.Marionette = Marionette;
   try {
     if (directInject) {
+      //we can assume this is a marionette test, so provide convenience funcs:
+      sandbox.is = sandbox.Marionette.is;
+      sandbox.isnot = sandbox.Marionette.isnot;
+      sandbox.ok = sandbox.Marionette.ok;
+      sandbox.log = sandbox.Marionette.log;
+      sandbox.getLogs = sandbox.Marionette.getLogs;
+      sandbox.finish = sandbox.Marionette.finish;
       var res = Cu.evalInSandbox(script, sandbox, "1.8");
+      sendSyncMessage("Marionette:testLog", {value: wrapValue(marionetteLogObj.getLogs())});
+      marionetteLogObj.clearLogs();
       if (res == undefined || res.passed == undefined) {
         sendError("Marionette.finish() not called", 17, null);
       }
@@ -415,6 +429,8 @@ function executeScript(msg, directInject) {
       var scriptSrc = "var __marionetteFunc = function(){" + script +
                     "};  __marionetteFunc.apply(null, __marionetteParams);";
       var res = Cu.evalInSandbox(scriptSrc, sandbox, "1.8");
+      sendSyncMessage("Marionette:testLog", {value: wrapValue(marionetteLogObj.getLogs())});
+      marionetteLogObj.clearLogs();
       sendResponse({value: wrapValue(res)});
     }
   }
@@ -500,6 +516,7 @@ function executeWithCallback(msg, timeout) {
   Marionette.win = win;
   Marionette.context = "content";
   Marionette.onerror = win.onerror;
+  Marionette.logObj = marionetteLogObj;
   applyNamedArgs(args);
 
   var sandbox = new Cu.Sandbox(win);
@@ -514,6 +531,8 @@ function executeWithCallback(msg, timeout) {
   sandbox.is = Marionette.is;
   sandbox.isnot = Marionette.isnot;
   sandbox.ok = Marionette.ok;
+  sandbox.log = sandbox.Marionette.log;
+  sandbox.getLogs = sandbox.Marionette.getLogs;
   sandbox.finish = Marionette.finish;
   try {
    Cu.evalInSandbox(scriptSrc, sandbox, "1.8");
