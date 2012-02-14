@@ -432,3 +432,5 @@ pref("layout.frame_rate.precise", true);
 
 // Screen timeout in minutes
 pref("power.screen.timeout", 60);
+
+pref("full-screen-api.enabled", true);
