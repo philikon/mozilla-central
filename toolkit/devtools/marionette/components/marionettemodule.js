@@ -46,8 +46,8 @@ MarionetteModule.prototype = {
         Services.prefs.getBoolPref('marionette.server.enabled');
       }
       catch(e) {
-        //create them
-        Services.prefs.setBoolPref('marionette.server.enabled', true);
+        //create them, but profile must enable them
+        Services.prefs.setBoolPref('marionette.server.enabled', false);
         Services.prefs.setIntPref('marionette.server.port', 2828);
       }
 
