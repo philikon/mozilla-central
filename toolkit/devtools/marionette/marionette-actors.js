@@ -693,7 +693,6 @@ BrowserObj.prototype = {
     }
     else {
       this.type = this.B2G;
-      this.startPage = "homescreen/homescreen.html";
     }
   },
   /**
@@ -779,7 +778,7 @@ BrowserObj.prototype = {
   register: function BO_register(id, href) {
     var uid = id + (this.type == this.B2G ? '-b2g' : '');
     if (this.curFrameId == null) {
-      if ((!this.newSession) || (this.newSession && href.indexOf(this.startPage) > -1)) {
+      if ((!this.newSession) || (this.newSession && (this.B2G || href.indexOf(this.startPage) > -1))) {
         this.curFrameId = uid;
         this.mainContentId = uid;
       }
