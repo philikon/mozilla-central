@@ -67,10 +67,17 @@ MAKEFILES_dom="
   dom/interfaces/xbl/Makefile
   dom/interfaces/xpath/Makefile
   dom/interfaces/xul/Makefile
-  dom/ipc/Makefile
   dom/base/Makefile
   dom/battery/Makefile
   dom/indexedDB/Makefile
+  dom/ipc/Makefile
+  dom/locales/Makefile
+  dom/network/Makefile
+  dom/network/interfaces/Makefile
+  dom/network/src/Makefile
+  dom/plugins/base/Makefile
+  dom/plugins/ipc/Makefile
+  dom/power/Makefile
   dom/sms/Makefile
   dom/sms/interfaces/Makefile
   dom/sms/src/Makefile
@@ -84,9 +91,6 @@ MAKEFILES_dom="
   dom/src/storage/Makefile
   dom/system/Makefile
   dom/workers/Makefile
-  dom/locales/Makefile
-  dom/plugins/base/Makefile
-  dom/plugins/ipc/Makefile
 "
 
 MAKEFILES_editor="
@@ -255,6 +259,7 @@ MAKEFILES_layout="
   layout/ipc/Makefile
   layout/inspector/public/Makefile
   layout/inspector/src/Makefile
+  layout/media/Makefile
   layout/style/Makefile
   layout/style/xbl-marquee/Makefile
   layout/tables/Makefile
@@ -468,7 +473,6 @@ MAKEFILES_xulapp="
   toolkit/components/filepicker/Makefile
   toolkit/components/find/Makefile
   toolkit/components/intl/Makefile
-  toolkit/components/maintenanceservice/Makefile
   toolkit/components/microformats/Makefile
   toolkit/components/parentalcontrols/Makefile
   toolkit/components/passwordmgr/Makefile
@@ -719,6 +723,7 @@ if [ "$ENABLE_TESTS" ]; then
     chrome/test/Makefile
     content/base/test/Makefile
     content/base/test/chrome/Makefile
+    content/base/test/websocket_hybi/Makefile
     content/canvas/test/Makefile
     content/canvas/test/crossorigin/Makefile
     content/canvas/test/webgl/Makefile
@@ -741,8 +746,11 @@ if [ "$ENABLE_TESTS" ]; then
     docshell/test/navigation/Makefile
     dom/battery/test/Makefile
     dom/indexedDB/test/Makefile
+    dom/indexedDB/test/unit/Makefile
+    dom/network/tests/Makefile
     dom/plugins/test/Makefile
     dom/plugins/test/testplugin/Makefile
+    dom/power/test/Makefile
     dom/sms/tests/Makefile
     dom/src/foo/Makefile
     dom/src/json/test/Makefile
@@ -899,6 +907,7 @@ if [ "$ENABLE_TESTS" ]; then
     toolkit/content/tests/chrome/rtlchrome/Makefile
     toolkit/content/tests/chrome/rtltest/Makefile
     toolkit/content/tests/widgets/Makefile
+    toolkit/devtools/debugger/tests/Makefile
     toolkit/mozapps/downloads/tests/Makefile
     toolkit/mozapps/downloads/tests/chrome/Makefile
     toolkit/mozapps/extensions/test/Makefile
@@ -931,11 +940,13 @@ if [ "$ENABLE_TESTS" ]; then
       accessible/tests/mochitest/hyperlink/Makefile
       accessible/tests/mochitest/hypertext/Makefile
       accessible/tests/mochitest/name/Makefile
+      accessible/tests/mochitest/pivot/Makefile
       accessible/tests/mochitest/relations/Makefile
       accessible/tests/mochitest/selectable/Makefile
       accessible/tests/mochitest/states/Makefile
       accessible/tests/mochitest/table/Makefile
       accessible/tests/mochitest/text/Makefile
+      accessible/tests/mochitest/textcaret/Makefile
       accessible/tests/mochitest/textselection/Makefile
       accessible/tests/mochitest/tree/Makefile
       accessible/tests/mochitest/treeupdate/Makefile
@@ -1012,6 +1023,11 @@ if [ "$ENABLE_TESTS" ]; then
         toolkit/mozapps/update/test/chrome/Makefile
       "
     fi
+    if [ "$MOZ_MAINTENANCE_SERVICE" ]; then
+      add_makefiles "
+        toolkit/mozapps/update/test_svc/Makefile
+      "
+    fi
   fi
   if [ "$MOZ_URL_CLASSIFIER" ]; then
     add_makefiles "
@@ -1043,7 +1059,7 @@ if [ "$ENABLE_TESTS" ]; then
       toolkit/components/downloads/test/browser/Makefile
       toolkit/components/passwordmgr/test/browser/Makefile
       toolkit/components/places/tests/browser/Makefile
-      toolkit/components/startup/tests/Makefile
+      toolkit/components/startup/tests/browser/Makefile
       toolkit/content/tests/browser/Makefile
       toolkit/content/tests/browser/common/Makefile
       toolkit/content/tests/browser/data/Makefile
@@ -1074,6 +1090,11 @@ if [ "$ENABLE_TESTS" ]; then
       toolkit/xre/test/win/Makefile
       widget/windows/tests/Makefile
       xpcom/tests/windows/Makefile
+    "
+  fi
+  if [ "$MOZ_BUILD_APP" = "mobile/android" ]; then
+    add_makefiles "
+      testing/mochitest/roboextender/Makefile
     "
   fi
 fi
@@ -1147,6 +1168,7 @@ if [ "$MOZ_B2G_RIL" ]; then
   add_makefiles "
     dom/system/b2g/Makefile
     dom/telephony/Makefile
+    dom/wifi/Makefile
     ipc/ril/Makefile
   "
 fi
@@ -1255,6 +1277,12 @@ if [ "$MOZ_FEEDS" ]; then
   "
 fi
 
+if [ "$MOZ_GRAPHITE" ]; then
+  add_makefiles "
+    gfx/graphite2/src/Makefile
+  "
+fi
+
 if [ "$MOZ_HELP_VIEWER" ]; then
   add_makefiles "
     toolkit/components/help/Makefile
@@ -1288,6 +1316,12 @@ if [ "$MOZ_JSDEBUGGER" ]; then
   add_makefiles "
     js/jsd/Makefile
     js/jsd/idl/Makefile
+  "
+fi
+
+if [ "$MOZ_MAINTENANCE_SERVICE" ]; then
+  add_makefiles "
+    toolkit/components/maintenanceservice/Makefile
   "
 fi
 
@@ -1335,7 +1369,6 @@ if [ "$MOZ_UPDATER" ]; then
     modules/libmar/Makefile
     modules/libmar/src/Makefile
     modules/libmar/tool/Makefile
-    toolkit/mozapps/readstrings/Makefile
   "
   if [ ! "$SYSTEM_BZ2" ]; then
     add_makefiles "
@@ -1346,6 +1379,17 @@ if [ "$MOZ_UPDATER" ]; then
   if [ "$OS_TARGET" != "Android" ]; then
     add_makefiles "
       toolkit/mozapps/update/updater/Makefile
+    "
+  fi
+fi
+
+if [ "$MOZ_UPDATER" -o "$MOZ_MAINTENANCE_SERVICE" ]; then
+  add_makefiles "
+    toolkit/mozapps/readstrings/Makefile
+  "
+  if [ "$OS_TARGET" != "Android" ]; then
+    add_makefiles "
+      toolkit/mozapps/update/common/Makefile
     "
   fi
 fi

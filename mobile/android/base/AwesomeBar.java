@@ -76,6 +76,7 @@ import android.widget.Toast;
 import java.net.URLEncoder;
 import java.util.Map;
 
+import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.db.BrowserDB;
 
@@ -107,14 +108,7 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         setContentView(R.layout.awesomebar);
 
         if (Build.VERSION.SDK_INT >= 11) {
-            RelativeLayout actionBarLayout = (RelativeLayout) getLayoutInflater().inflate(R.layout.awesomebar_search, null);
-
-            GeckoActionBar.setDisplayOptions(this, ActionBar.DISPLAY_SHOW_CUSTOM, ActionBar.DISPLAY_SHOW_CUSTOM |
-                                                                                  ActionBar.DISPLAY_SHOW_HOME |
-                                                                                  ActionBar.DISPLAY_SHOW_TITLE |
-                                                                                  ActionBar.DISPLAY_USE_LOGO);
-            GeckoActionBar.setCustomView(this, actionBarLayout);
-
+            RelativeLayout actionBarLayout = (RelativeLayout) GeckoActionBar.getCustomView(this);
             mGoButton = (ImageButton) actionBarLayout.findViewById(R.id.awesomebar_button);
             mText = (AwesomeBarEditText) actionBarLayout.findViewById(R.id.awesomebar_text);
         } else {
@@ -234,7 +228,7 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         registerForContextMenu(mAwesomeTabs.findViewById(R.id.history_list));
 
         GeckoAppShell.registerGeckoEventListener("SearchEngines:Data", this);
-        GeckoAppShell.sendEventToGecko(new GeckoEvent("SearchEngines:Get", null));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Get", null));
     }
 
     public void handleMessage(String event, JSONObject message) {
@@ -472,16 +466,19 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
         if (mContextMenuSubject == null)
             return false;
 
+        final int id;
         final String url;
         byte[] b = null;
         String title = "";
         if (mContextMenuSubject instanceof Cursor) {
             Cursor cursor = (Cursor)mContextMenuSubject;
+            id = cursor.getInt(cursor.getColumnIndexOrThrow(Bookmarks._ID));
             url = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.URL));
             b = cursor.getBlob(cursor.getColumnIndexOrThrow(URLColumns.FAVICON));
             title = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.TITLE));
         } else if (mContextMenuSubject instanceof Map) {
             Map map = (Map)mContextMenuSubject;
+            id = -1;
             url = (String)map.get(URLColumns.URL);
             b = (byte[]) map.get(URLColumns.FAVICON);
             title = (String)map.get(URLColumns.TITLE);
@@ -500,7 +497,7 @@ public class AwesomeBar extends Activity implements GeckoEventListener {
             case R.id.remove_bookmark: {
                 GeckoAppShell.getHandler().post(new Runnable() {
                     public void run() {
-                        BrowserDB.removeBookmark(mResolver, url);
+                        BrowserDB.removeBookmark(mResolver, id);
 
                         GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
                             public void run() {

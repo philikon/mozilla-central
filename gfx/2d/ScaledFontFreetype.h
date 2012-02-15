@@ -1,5 +1,4 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- *
+/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -13,18 +12,18 @@
  * for the specific language governing rights and limitations under the
  * License.
  *
- * The Original Code is the Mozilla browser.
+ * The Original Code is Mozilla Corporation code.
  *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
+ * The Initial Developer of the Original Code is Mozilla Foundation.
+ * Portions created by the Initial Developer are Copyright (C) 2011
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   Matt Woodrow <mwoodrow@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
+ * either the GNU General Public License Version 2 or later (the "GPL"), or
+ * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
  * in which case the provisions of the GPL or the LGPL are applicable instead
  * of those above. If you wish to allow use of your version of this file only
  * under the terms of either the GPL or the LGPL, and not to allow others to
@@ -36,11 +35,22 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsISupports.idl"
+#ifndef MOZILLA_GFX_SCALEDFONTFREETYPE_H_
+#define MOZILLA_GFX_SCALEDFONTFREETYPE_H_
 
-[scriptable, uuid(ca7a3a93-822f-4cdf-8cb4-c52d16b9afc7)]
-interface nsIAccessibleWin32Object : nsISupports
+#include "ScaledFontBase.h"
+
+namespace mozilla {
+namespace gfx {
+
+class ScaledFontFreetype : public ScaledFontBase
 {
-  /** handle to the external window implementing IAccessible */
-  [noscript] readonly attribute voidPtr hwnd;
+public:
+
+  ScaledFontFreetype(gfxFont* aFont, Float aSize);
 };
+
+}
+}
+
+#endif /* MOZILLA_GFX_SCALEDFONTFREETYPE_H_ */
