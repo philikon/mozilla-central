@@ -158,6 +158,7 @@ function sendError(message, status, trace) {
 function resetValues() {
   marionetteTimeout = null;
   Marionette.tests = [];
+  seenItems = {};
 }
 
 /*
