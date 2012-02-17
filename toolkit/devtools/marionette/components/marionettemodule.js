@@ -1,3 +1,7 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
 
 const kMARIONETTE_CONTRACTID = "@mozilla.org/marionette;1";
@@ -42,27 +46,39 @@ MarionetteModule.prototype = {
       this._loaded = true;
 
       try {
-        let port = Services.prefs.getIntPref('marionette.server.port');
-        if (Services.prefs.getBoolPref('marionette.server.enabled')) {
-          Cu.import('resource:///modules/devtools/dbg-server.jsm');
-          DebuggerServer.addActors('resource:///modules/marionette-actors.js');
-          DebuggerServer.initTransport();
-          DebuggerServer.openListener(port, true);
-          MarionetteLogger.write('opened listener on port ' + port);
+        Services.prefs.lockPref('marionette.defaultPrefs.enabled');
+        if (Services.prefs.getBoolPref('marionette.defaultPrefs.enabled')) {
+          let port;
+          try {
+            port = Services.prefs.getIntPref('marionette.defaultPrefs.port');
+          }
+          catch(e) {
+            port = 2828;
+          }
+          try {
+            Cu.import('resource:///modules/devtools/dbg-server.jsm');
+            DebuggerServer.addActors('resource:///modules/marionette-actors.js');
+            DebuggerServer.initTransport();
+            DebuggerServer.openListener(port, true);
+          }
+          catch(e) {
+            MarionetteLogger.write('exception: ' + e.name + ', ' + e.message);
+          }
         }
       }
-      catch(e) {
-        dump('exception: ' + e.name + ', ' + e.message);
+      catch (e) {
+        MarionetteLogger.write("marionette not enabled: " + e.name + ": " + e.message);
       }
     }
   },
 
   uninit: function mm_uninit() {
-    DebuggerServer.closeListener();
+    if (Services.prefs.getBoolPref('marionette.defaultPrefs.enabled')) {
+      DebuggerServer.closeListener();
+    }
     this._loaded = false;
   },
 
 };
 
 const NSGetFactory = XPCOMUtils.generateNSGetFactory([MarionetteModule]);
-
