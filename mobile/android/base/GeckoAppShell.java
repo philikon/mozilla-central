@@ -116,6 +116,14 @@ public class GeckoAppShell
 
     private static HashMap<String, ArrayList<GeckoEventListener>> mEventListeners;
 
+    /* Is the value in sVibrationEndTime valid? */
+    private static boolean sVibrationMaybePlaying = false;
+
+    /* Time (in System.nanoTime() units) when the currently-playing vibration
+     * is scheduled to end.  This value is valid only when
+     * sVibrationMaybePlaying is true. */
+    private static long sVibrationEndTime = 0;
+
     /* The Android-side API: API methods that Android calls */
 
     // Initialization methods
@@ -146,7 +154,7 @@ public class GeckoAppShell
     private static native void reportJavaCrash(String stackTrace);
 
     public static void notifyUriVisited(String uri) {
-        sendEventToGecko(new GeckoEvent(GeckoEvent.VISITED, uri));
+        sendEventToGecko(GeckoEvent.createVisitedEvent(uri));
     }
 
     public static native void processNextNativeEvent();
@@ -307,9 +315,9 @@ public class GeckoAppShell
         if (files == null)
             return false;
         try {
-            Iterator fileIterator = Arrays.asList(files).iterator();
+            Iterator<File> fileIterator = Arrays.asList(files).iterator();
             while (fileIterator.hasNext()) {
-                File file = (File)fileIterator.next();
+                File file = fileIterator.next();
                 File dest = new File(to, file.getName());
                 if (file.isDirectory())
                     retVal = moveDir(file, dest) ? retVal : false;
@@ -421,9 +429,9 @@ public class GeckoAppShell
             // remove any previously extracted libs
             File[] files = cacheFile.listFiles();
             if (files != null) {
-                Iterator cacheFiles = Arrays.asList(files).iterator();
+                Iterator<File> cacheFiles = Arrays.asList(files).iterator();
                 while (cacheFiles.hasNext()) {
-                    File libFile = (File)cacheFiles.next();
+                    File libFile = cacheFiles.next();
                     if (libFile.getName().endsWith(".so"))
                         libFile.delete();
                 }
@@ -506,7 +514,7 @@ public class GeckoAppShell
             public boolean onTouch(View view, MotionEvent event) {
                 if (event == null)
                     return true;
-                GeckoAppShell.sendEventToGecko(new GeckoEvent(event));
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createMotionEvent(event));
                 return true;
             }
         });
@@ -574,8 +582,7 @@ public class GeckoAppShell
     // Block the current thread until the Gecko event loop is caught up
     synchronized public static void geckoEventSync() {
         sGeckoPendingAcks = new CountDownLatch(1);
-        GeckoAppShell.sendEventToGecko(
-            new GeckoEvent(GeckoEvent.GECKO_EVENT_SYNC));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createSyncEvent());
         while (sGeckoPendingAcks.getCount() != 0) {
             try {
                 sGeckoPendingAcks.await();
@@ -1008,7 +1015,7 @@ public class GeckoAppShell
             String resource = imageUri.getSchemeSpecificPart();
             resource = resource.substring(resource.lastIndexOf('/') + 1);
             try {
-                Class drawableClass = R.drawable.class;
+                Class<R.drawable> drawableClass = R.drawable.class;
                 Field f = drawableClass.getField(resource);
                 icon = f.getInt(null);
             } catch (Exception e) {} // just means the resource doesn't exist
@@ -1126,11 +1133,15 @@ public class GeckoAppShell
     }
 
     public static void performHapticFeedback(boolean aIsLongPress) {
-        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        LayerView layerView = layerController.getView();
-        layerView.performHapticFeedback(aIsLongPress ?
-                                        HapticFeedbackConstants.LONG_PRESS :
-                                        HapticFeedbackConstants.VIRTUAL_KEY);
+        // Don't perform haptic feedback if a vibration is currently playing,
+        // because the haptic feedback will nuke the vibration.
+        if (!sVibrationMaybePlaying || System.nanoTime() >= sVibrationEndTime) {
+            LayerController layerController = GeckoApp.mAppContext.getLayerController();
+            LayerView layerView = layerController.getView();
+            layerView.performHapticFeedback(aIsLongPress ?
+                                            HapticFeedbackConstants.LONG_PRESS :
+                                            HapticFeedbackConstants.VIRTUAL_KEY);
+        }
     }
 
     private static Vibrator vibrator() {
@@ -1141,14 +1152,28 @@ public class GeckoAppShell
     }
 
     public static void vibrate(long milliseconds) {
+        sVibrationEndTime = System.nanoTime() + milliseconds * 1000000;
+        sVibrationMaybePlaying = true;
         vibrator().vibrate(milliseconds);
     }
 
     public static void vibrate(long[] pattern, int repeat) {
+        // If pattern.length is even, the last element in the pattern is a
+        // meaningless delay, so don't include it in vibrationDuration.
+        long vibrationDuration = 0;
+        int iterLen = pattern.length - (pattern.length % 2 == 0 ? 1 : 0);
+        for (int i = 0; i < iterLen; i++) {
+          vibrationDuration += pattern[i];
+        }
+
+        sVibrationEndTime = System.nanoTime() + vibrationDuration * 1000000;
+        sVibrationMaybePlaying = true;
         vibrator().vibrate(pattern, repeat);
     }
 
     public static void cancelVibrate() {
+        sVibrationMaybePlaying = false;
+        sVibrationEndTime = 0;
         vibrator().cancel();
     }
 
@@ -1716,9 +1741,9 @@ public class GeckoAppShell
                 return "";
             
             ArrayList<GeckoEventListener> listeners = mEventListeners.get(type);
-            Iterator items = listeners.iterator();
+            Iterator<GeckoEventListener> items = listeners.iterator();
             while (items.hasNext()) {
-                ((GeckoEventListener) items.next()).handleMessage(type, geckoObject);
+                items.next().handleMessage(type, geckoObject);
             }
 
         } catch (Exception e) {
@@ -1863,7 +1888,7 @@ public class GeckoAppShell
 
     public static void viewSizeChanged() {
         if (mInputConnection != null && mInputConnection.isIMEEnabled()) {
-            sendEventToGecko(new GeckoEvent("ScrollTo:FocusedInput", ""));
+            sendEventToGecko(GeckoEvent.createBroadcastEvent("ScrollTo:FocusedInput", ""));
         }
     }
 

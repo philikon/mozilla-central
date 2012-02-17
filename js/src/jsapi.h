@@ -70,6 +70,8 @@
 
 /************************************************************************/
 
+#define JS_Assert MOZ_Assert
+
 #ifdef __cplusplus
 namespace JS {
 
@@ -1858,7 +1860,11 @@ INTERNED_STRING_TO_JSID(JSContext *cx, JSString *str)
     jsid id;
     JS_ASSERT(str);
     JS_ASSERT(((size_t)str & JSID_TYPE_MASK) == 0);
+#ifdef DEBUG
     JS_ASSERT(JS_StringHasBeenInterned(cx, str));
+#else
+    (void)cx;
+#endif
     JSID_BITS(id) = (size_t)str;
     return id;
 }
@@ -2569,12 +2575,11 @@ JS_StringToVersion(const char *string);
 #define JSOPTION_PCCOUNT        JS_BIT(17)      /* Collect per-op execution counts */
 
 #define JSOPTION_TYPE_INFERENCE JS_BIT(18)      /* Perform type inference. */
-#define JSOPTION_SOFTEN         JS_BIT(19)      /* Disable JIT hardening. */
 
 /* Options which reflect compile-time properties of scripts. */
 #define JSCOMPILEOPTION_MASK    (JSOPTION_XML)
 
-#define JSRUNOPTION_MASK        (JS_BITMASK(20) & ~JSCOMPILEOPTION_MASK)
+#define JSRUNOPTION_MASK        (JS_BITMASK(19) & ~JSCOMPILEOPTION_MASK)
 #define JSALLOPTION_MASK        (JSCOMPILEOPTION_MASK | JSRUNOPTION_MASK)
 
 extern JS_PUBLIC_API(uint32_t)
@@ -2585,6 +2590,9 @@ JS_SetOptions(JSContext *cx, uint32_t options);
 
 extern JS_PUBLIC_API(uint32_t)
 JS_ToggleOptions(JSContext *cx, uint32_t options);
+
+extern JS_PUBLIC_API(void)
+JS_SetJitHardening(JSRuntime *rt, JSBool enabled);
 
 extern JS_PUBLIC_API(const char *)
 JS_GetImplementationVersion(void);
@@ -3094,7 +3102,7 @@ JSVAL_TRACE_KIND(jsval v)
  * wants to use the existing liveness of entries.
  */
 typedef void
-(* JSTraceCallback)(JSTracer *trc, void *thing, JSGCTraceKind kind);
+(* JSTraceCallback)(JSTracer *trc, void **thingp, JSGCTraceKind kind);
 
 struct JSTracer {
     JSRuntime           *runtime;
@@ -5310,6 +5318,8 @@ JS_IsConstructing(JSContext *cx, const jsval *vp)
     } else {
         JS_ASSERT(JS_GetClass(callee)->construct != NULL);
     }
+#else
+    (void)cx;
 #endif
 
     return JSVAL_IS_MAGIC_IMPL(JSVAL_TO_IMPL(vp[1]));

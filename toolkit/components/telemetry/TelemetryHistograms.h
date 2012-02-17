@@ -128,6 +128,17 @@ HISTOGRAM(MAC_INITFONTLIST_TOTAL, 1, 30000, 10, EXPONENTIAL, "gfxMacPlatformFont
 HISTOGRAM(SYSTEM_FONT_FALLBACK, 1, 100000, 50, EXPONENTIAL, "System font fallback (us)")
 HISTOGRAM(SYSTEM_FONT_FALLBACK_FIRST, 1, 40000, 20, EXPONENTIAL, "System font fallback, first call (ms)")
 
+/**
+ * Word cache - one count for overall lookups, the other for the number of times a word is found
+ * Note: range and number of buckets must match
+ */
+HISTOGRAM(WORD_CACHE_LOOKUP_LEN, 1, 256, 30, EXPONENTIAL, "Word cache lookup (chars)")
+HISTOGRAM(WORD_CACHE_HIT_LEN, 1, 256, 30, EXPONENTIAL, "Word cache hit (chars)")
+HISTOGRAM(WORD_CACHE_LOOKUP_SCRIPT, 1, 110, 111, LINEAR, "Word cache lookup (script)")
+HISTOGRAM(WORD_CACHE_HIT_SCRIPT, 1, 110, 111, LINEAR, "Word cache hit (script)")
+
+HISTOGRAM_BOOLEAN(FONT_CACHE_HIT, "font cache hit")
+
 HISTOGRAM_BOOLEAN(SHUTDOWN_OK, "Did the browser start after a successful shutdown")
 
 HISTOGRAM(IMAGE_DECODE_LATENCY, 50,  5000000, 100, EXPONENTIAL, "Time spent decoding an image chunk (us)")
@@ -333,6 +344,15 @@ HISTOGRAM(FX_BOOKMARKS_TOOLBAR_INIT_MS, 50, 5000, 10, EXPONENTIAL, "Firefox: Tim
 HISTOGRAM(FX_THUMBNAILS_CAPTURE_TIME_MS, 1, 500, 15, EXPONENTIAL, "THUMBNAILS: Time (ms) it takes to capture a thumbnail")
 HISTOGRAM(FX_THUMBNAILS_STORE_TIME_MS, 1, 500, 15, EXPONENTIAL, "THUMBNAILS: Time (ms) it takes to store a thumbnail in the cache")
 HISTOGRAM(FX_THUMBNAILS_HIT_OR_MISS, 0, 1, 2, BOOLEAN, "THUMBNAILS: Thumbnail found")
+
+/**
+ * Session restore telemetry
+ */
+HISTOGRAM(FX_SESSION_RESTORE_COLLECT_DATA_MS, 1, 30000, 10, EXPONENTIAL, "Session restore: Time to collect all window and tab data (ms)")
+HISTOGRAM(FX_SESSION_RESTORE_SERIALIZE_DATA_MS, 1, 1000, 10, EXPONENTIAL, "Session restore: Time to JSON serialize session data (ms)")
+HISTOGRAM(FX_SESSION_RESTORE_READ_FILE_MS, 1, 3000, 10, EXPONENTIAL, "Session restore: Time to read the session data from the file on disk (ms)")
+HISTOGRAM(FX_SESSION_RESTORE_WRITE_FILE_MS, 1, 3000, 10, EXPONENTIAL, "Session restore: Time to write the session data to the file on disk (ms)")
+HISTOGRAM_BOOLEAN(FX_SESSION_RESTORE_CORRUPT_FILE, "Session restore: Whether the file read on startup contained parse-able JSON")
 // #endif
 
 HISTOGRAM_BOOLEAN(INNERWINDOWS_WITH_MUTATION_LISTENERS, "Deleted or to-be-reused innerwindow which has had mutation event listeners.")
