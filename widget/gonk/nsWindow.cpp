@@ -160,6 +160,14 @@ nsWindow::DispatchInputEvent(nsGUIEvent &aEvent)
     return gFocusedWindow->mEventCallback(&aEvent);
 }
 
+void
+nsWindow::TurnOnScreen()
+{
+    gWindowToRedraw->Invalidate(sVirtualBounds);
+    gWindowToRedraw->DoDraw();
+    gWindowToRedraw->Invalidate(sVirtualBounds);
+}
+
 NS_IMETHODIMP
 nsWindow::Create(nsIWidget *aParent,
                  void *aNativeParent,
