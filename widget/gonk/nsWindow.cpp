@@ -166,6 +166,10 @@ nsWindow::DispatchInputEvent(nsGUIEvent &aEvent)
 void
 nsWindow::TurnOnScreen()
 {
+    // We get this notification from hal, possibly before we have an
+    // nsWindow.
+    if (!gWindowToRedraw)
+        return;
     gWindowToRedraw->Invalidate(sVirtualBounds);
     gWindowToRedraw->DoDraw();
     gWindowToRedraw->Invalidate(sVirtualBounds);
