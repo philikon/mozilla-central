@@ -225,14 +225,7 @@ if test -n "$L10NBASEDIR"; then
     if test "$L10NBASEDIR" = "yes" -o "$L10NBASEDIR" = "no"; then
         AC_MSG_ERROR([--with-l10n-base must specify a path])
     elif test -d "$L10NBASEDIR"; then
-        case "$host_os" in
-        mingw*)
-            L10NBASEDIR=`cd "$L10NBASEDIR" && pwd -W`
-            ;;
-        *)
-            L10NBASEDIR=`cd "$L10NBASEDIR" && pwd`
-            ;;
-        esac
+        L10NBASEDIR=`cd "$L10NBASEDIR" && pwd`
     else
         AC_MSG_ERROR([Invalid value --with-l10n-base, $L10NBASEDIR doesn't exist])
     fi
@@ -5531,6 +5524,15 @@ dnl ========================================================
 if test -n "$MOZ_ANDROID_HISTORY"; then
      dnl Do this if defined in confvars.sh
      AC_DEFINE(MOZ_ANDROID_HISTORY)
+fi
+
+
+dnl ========================================================
+dnl = Build with the Android Java compositor
+dnl ========================================================
+if test -n "$MOZ_JAVA_COMPOSITOR"; then
+     dnl Do this if defined in confvars.sh
+     AC_DEFINE(MOZ_JAVA_COMPOSITOR)
 fi
 
 dnl ========================================================

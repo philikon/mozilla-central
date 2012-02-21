@@ -460,7 +460,6 @@ let Buf = {
     if (response_type == RESPONSE_TYPE_SOLICITED) {
       let token = this.readUint32();
       let error = this.readUint32();
-      length -= 2 * UINT32_SIZE;
 
       options = this.tokenRequestMap[token];
       request_type = options.rilRequestType;
@@ -486,7 +485,7 @@ let Buf = {
       return;
     }
 
-    RIL.handleParcel(request_type, length, options);
+    RIL.handleParcel(request_type, this.readAvailable, options);
   },
 
   /**
