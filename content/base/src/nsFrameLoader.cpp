@@ -88,6 +88,7 @@
 #include "nsIXULWindow.h"
 #include "nsIEditor.h"
 #include "nsIEditorDocShell.h"
+#include "nsIMozBrowserFrame.h"
 
 #include "nsLayoutUtils.h"
 #include "nsIView.h"
