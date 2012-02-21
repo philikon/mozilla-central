@@ -602,4 +602,16 @@ interface nsIDocShell : nsISupports
    * @see nsIParser
    */
   attribute PRInt32 parentCharsetSource;
+
+  /*
+   * Is this docshell a browser frame (i.e., does it correspond to an <iframe
+   * mozbrowser>)?  The frameloader is responsible for setting this property
+   * when it initializes the docshell.
+   *
+   * If so, this docshell should act like a chrome/content boundary for the
+   * purposes of window.top and window.parent.
+   *
+   * See also nsIMozBrowserFrame.
+   */
+  attribute bool isBrowserFrame;
 };

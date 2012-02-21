@@ -424,6 +424,16 @@ public:
     return FromSupports(wrapper->Native());
   }
 
+  /**
+   * Wrap nsIDOMWindow::GetTop so we can overload the inline GetTop()
+   * implementation below.  (nsIDOMWindow::GetTop simply calls
+   * nsIDOMWindow::GetRealTop().)
+   */
+  nsresult GetTop(nsIDOMWindow **aWindow)
+  {
+    return nsIDOMWindow::GetTop(aWindow);
+  }
+
   inline nsGlobalWindow *GetTop()
   {
     nsCOMPtr<nsIDOMWindow> top;
@@ -586,6 +596,9 @@ private:
 
   // Disables updates for the accelerometer.
   void DisableDeviceMotionUpdates();
+
+  // Implements Get{Real,Scriptable}Top.
+  nsresult GetTopImpl(nsIDOMWindow **aWindow, bool aScriptable);
 
 protected:
   friend class HashchangeCallback;

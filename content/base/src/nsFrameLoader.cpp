@@ -1481,6 +1481,13 @@ nsFrameLoader::MaybeCreateDocShell()
     mDocShell->SetChromeEventHandler(chromeEventHandler);
   }
 
+  nsCOMPtr<nsIMozBrowserFrame> browserFrame = do_QueryInterface(mOwnerContent);
+  if (browserFrame) {
+    bool isBrowserFrame = false;
+    browserFrame->GetReallyIsBrowser(&isBrowserFrame);
+    mDocShell->SetIsBrowserFrame(isBrowserFrame);
+  }
+
   // This is nasty, this code (the do_GetInterface(mDocShell) below)
   // *must* come *after* the above call to
   // mDocShell->SetChromeEventHandler() for the global window to get
