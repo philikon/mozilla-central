@@ -78,6 +78,9 @@ static bool sFramebufferOpen;
 nsWindow::nsWindow()
 {
     if (!sGLContext && !sFramebufferOpen) {
+        // workaround Bug 725143
+        hal::SetScreenEnabled(true);
+
         // We (apparently) don't have a way to tell if allocating the
         // fbs succeeded or failed.
         gNativeWindow = new android::FramebufferNativeWindow();
@@ -158,6 +161,18 @@ nsWindow::DispatchInputEvent(nsGUIEvent &aEvent)
     gFocusedWindow->UserActivity();
     aEvent.widget = gFocusedWindow;
     return gFocusedWindow->mEventCallback(&aEvent);
+}
+
+void
+nsWindow::TurnOnScreen()
+{
+    // We get this notification from hal, possibly before we have an
+    // nsWindow.
+    if (!gWindowToRedraw)
+        return;
+    gWindowToRedraw->Invalidate(sVirtualBounds);
+    gWindowToRedraw->DoDraw();
+    gWindowToRedraw->Invalidate(sVirtualBounds);
 }
 
 NS_IMETHODIMP

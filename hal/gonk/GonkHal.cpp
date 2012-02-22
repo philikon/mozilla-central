@@ -19,6 +19,7 @@
 #include "nsIThread.h"
 #include "nsIObserver.h"
 #include "nsIObserverService.h"
+#include "nsWindow.h"
 #include "hardware/lights.h"
 #include "hardware/hardware.h"
 #include "hardware_legacy/vibrator.h"
@@ -367,6 +368,8 @@ SetScreenEnabled(bool enabled)
 {
   WriteToFile(screenEnabledFilename, enabled ? "on" : "mem");
   sScreenEnabled = enabled;
+  if (sScreenEnabled)
+    nsWindow::TurnOnScreen();
 }
 
 double

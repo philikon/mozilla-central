@@ -398,6 +398,7 @@ public:
   virtual NS_HIDDEN_(void) MaybeUpdateTouchState();
   virtual NS_HIDDEN_(void) UpdateTouchState();
   virtual NS_HIDDEN_(bool) DispatchCustomEvent(const char *aEventName);
+  virtual NS_HIDDEN_(nsresult) SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust);
 
   // nsIDOMStorageIndexedDB
   NS_DECL_NSIDOMSTORAGEINDEXEDDB
@@ -421,6 +422,16 @@ public:
   static nsGlobalWindow *FromWrapper(nsIXPConnectWrappedNative *wrapper)
   {
     return FromSupports(wrapper->Native());
+  }
+
+  /**
+   * Wrap nsIDOMWindow::GetTop so we can overload the inline GetTop()
+   * implementation below.  (nsIDOMWindow::GetTop simply calls
+   * nsIDOMWindow::GetRealTop().)
+   */
+  nsresult GetTop(nsIDOMWindow **aWindow)
+  {
+    return nsIDOMWindow::GetTop(aWindow);
   }
 
   inline nsGlobalWindow *GetTop()
@@ -585,6 +596,9 @@ private:
 
   // Disables updates for the accelerometer.
   void DisableDeviceMotionUpdates();
+
+  // Implements Get{Real,Scriptable}Top.
+  nsresult GetTopImpl(nsIDOMWindow **aWindow, bool aScriptable);
 
 protected:
   friend class HashchangeCallback;
