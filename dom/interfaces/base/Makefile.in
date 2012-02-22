@@ -88,6 +88,7 @@ XPIDLSRCS =					\
 	nsIDOMPerformance.idl			\
 	nsIDOMPerformanceTiming.idl		\
 	nsIDOMPerformanceNavigation.idl		\
+	nsIDOMMozBrowserFrame.idl		\
 	nsIMozBrowserFrame.idl                  \
 	$(NULL)
 
