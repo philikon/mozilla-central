@@ -573,6 +573,9 @@ abstract public class GeckoApp
         }
 
         public void run() {
+            if (mSoftwareLayerClient == null)
+                return;
+
             synchronized (mSoftwareLayerClient) {
                 if (!Tabs.getInstance().isSelectedTab(mThumbnailTab))
                     return;
@@ -639,7 +642,8 @@ abstract public class GeckoApp
             }
             mLastScreen = compressed;
         }
-        if (thumbnailTab.getURL().equals("about:home")) {
+
+        if ("about:home".equals(thumbnailTab.getURL())) {
             thumbnailTab.updateThumbnail(null);
             return;
         }
@@ -1117,6 +1121,19 @@ abstract public class GeckoApp
                         }
                     });
                 }
+            } else if (event.equals("Bookmark:Insert")) {
+                final String url = message.getString("url");
+                final String title = message.getString("title");
+                mMainHandler.post(new Runnable() {
+                    public void run() {
+                        Toast.makeText(GeckoApp.mAppContext, R.string.bookmark_added, Toast.LENGTH_SHORT).show();
+                        GeckoAppShell.getHandler().post(new Runnable() {
+                            public void run() {
+                                BrowserDB.addBookmark(GeckoApp.mAppContext.getContentResolver(), title, url);
+                            }
+                        });
+                    }
+                });
             }
         } catch (Exception e) {
             Log.e(LOGTAG, "Exception handling message \"" + event + "\":", e);
@@ -1243,8 +1260,8 @@ abstract public class GeckoApp
         mMainHandler.post(new Runnable() {
             public void run() {
                 Tab tab = Tabs.getInstance().getTab(tabId);
-                mDoorHangerPopup.addDoorHanger(message, value, buttons,
-                                                           tab, options);
+                if (tab != null)
+                    mDoorHangerPopup.addDoorHanger(message, value, buttons, tab, options);
             }
         });
     }
@@ -1843,6 +1860,7 @@ abstract public class GeckoApp
         GeckoAppShell.registerGeckoEventListener("Update:Restart", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Tab:HasTouchListener", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Session:StatePurged", GeckoApp.mAppContext);
+        GeckoAppShell.registerGeckoEventListener("Bookmark:Insert", GeckoApp.mAppContext);
 
         IntentFilter batteryFilter = new IntentFilter();
         batteryFilter.addAction(Intent.ACTION_BATTERY_CHANGED);
@@ -2199,6 +2217,7 @@ abstract public class GeckoApp
         GeckoAppShell.unregisterGeckoEventListener("CharEncoding:State", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Tab:HasTouchListener", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Session:StatePurged", GeckoApp.mAppContext);
+        GeckoAppShell.unregisterGeckoEventListener("Bookmark:Insert", GeckoApp.mAppContext);
 
         mFavicons.close();
 
@@ -2563,8 +2582,9 @@ abstract public class GeckoApp
                 String url = data.getStringExtra(AwesomeBar.URL_KEY);
                 AwesomeBar.Type type = AwesomeBar.Type.valueOf(data.getStringExtra(AwesomeBar.TYPE_KEY));
                 String searchEngine = data.getStringExtra(AwesomeBar.SEARCH_KEY);
+                boolean userEntered = data.getBooleanExtra(AwesomeBar.USER_ENTERED_KEY, false);
                 if (url != null && url.length() > 0)
-                    loadRequest(url, type, searchEngine);
+                    loadRequest(url, type, searchEngine, userEntered);
             }
             break;
         case CAMERA_CAPTURE_REQUEST:
@@ -2590,13 +2610,14 @@ abstract public class GeckoApp
 
     // If searchEngine is provided, url will be used as the search query.
     // Otherwise, the url is loaded.
-    private void loadRequest(String url, AwesomeBar.Type type, String searchEngine) {
+    private void loadRequest(String url, AwesomeBar.Type type, String searchEngine, boolean userEntered) {
         mBrowserToolbar.setTitle(url);
         Log.d(LOGTAG, type.name());
         JSONObject args = new JSONObject();
         try {
             args.put("url", url);
             args.put("engine", searchEngine);
+            args.put("userEntered", userEntered);
         } catch (Exception e) {
             Log.e(LOGTAG, "error building JSON arguments");
         }
@@ -2609,7 +2630,7 @@ abstract public class GeckoApp
     }
 
     public void loadUrl(String url, AwesomeBar.Type type) {
-        loadRequest(url, type, null);
+        loadRequest(url, type, null, false);
     }
 
     /**

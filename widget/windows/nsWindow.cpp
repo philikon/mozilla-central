@@ -412,9 +412,7 @@ nsWindow::nsWindow() : nsBaseWidget()
   mTransparentSurface   = nsnull;
   mMemoryDC             = nsnull;
   mTransparencyMode     = eTransparencyOpaque;
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   memset(&mGlassMargins, 0, sizeof mGlassMargins);
-#endif // #if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
 #endif
   mBackground           = ::GetSysColor(COLOR_BTNFACE);
   mBrush                = ::CreateSolidBrush(NSRGB_2_COLOREF(mBackground));
@@ -606,12 +604,10 @@ nsWindow::Create(nsIWidget *aParent,
     return NS_ERROR_FAILURE;
   }
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   if (mIsRTL && nsUXThemeData::dwmSetWindowAttributePtr) {
     DWORD dwAttribute = TRUE;    
     nsUXThemeData::dwmSetWindowAttributePtr(mWnd, DWMWA_NONCLIENT_RTL_LAYOUT, &dwAttribute, sizeof dwAttribute);
   }
-#endif
 
   if (mWindowType != eWindowType_plugin &&
       mWindowType != eWindowType_invisible &&
@@ -2510,7 +2506,6 @@ RegionFromArray(const nsTArray<nsIntRect>& aRects)
 
 void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
 {
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   if (!HasGlass() || GetParent())
     return;
 
@@ -2554,12 +2549,10 @@ void nsWindow::UpdateOpaqueRegion(const nsIntRegion &aOpaqueRegion)
     mGlassMargins = margins;
     UpdateGlass();
   }
-#endif // #if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
 }
 
 void nsWindow::UpdateGlass()
 {
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   MARGINS margins = mGlassMargins;
 
   // DWMNCRP_USEWINDOWSTYLE - The non-client rendering area is
@@ -2592,7 +2585,6 @@ void nsWindow::UpdateGlass()
     nsUXThemeData::dwmExtendFrameIntoClientAreaPtr(mWnd, &margins);
     nsUXThemeData::dwmSetWindowAttributePtr(mWnd, DWMWA_NCRENDERING_POLICY, &policy, sizeof policy);
   }
-#endif // #if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
 }
 #endif
 
@@ -3537,20 +3529,16 @@ NS_IMETHODIMP nsWindow::DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus
   if (mViewCallback) {
     // A subset of events are sent to the base xul window first
     switch(event->message) {
-      // send to the base window (view mgr ignores these for the view)
-      case NS_UISTATECHANGED:
-      case NS_DESTROY:
-      case NS_SETZLEVEL:
-      case NS_XUL_CLOSE:
-      case NS_MOVE:
-        (*mEventCallback)(event); // web shell / xul window
-        return NS_OK;
-
       // sent to the base window, then to the view
       case NS_SIZE:
       case NS_DEACTIVATE:
       case NS_ACTIVATE:
       case NS_SIZEMODE:
+      case NS_UISTATECHANGED:
+      case NS_DESTROY:
+      case NS_SETZLEVEL:
+      case NS_XUL_CLOSE:
+      case NS_MOVE:
         (*mEventCallback)(event); // web shell / xul window
         break;
     };
@@ -4554,7 +4542,6 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
   bool result = false;    // call the default nsWindow proc
   *aRetValue = 0;
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   // Glass hit testing w/custom transparent margins
   LRESULT dwmHitResult;
   if (mCustomNonClient &&
@@ -4563,7 +4550,6 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
     *aRetValue = dwmHitResult;
     return true;
   }
-#endif // MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
 
   switch (msg) {
     // WM_QUERYENDSESSION must be handled by all windows.
@@ -4755,11 +4741,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       if (!mCustomNonClient)
         break;
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
       // let the dwm handle nc painting on glass
       if(nsUXThemeData::CheckForCompositor())
         break;
-#endif
 
       if (wParam == TRUE) {
         // going active
@@ -4791,11 +4775,9 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       if (!mCustomNonClient)
         break;
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
       // let the dwm handle nc painting on glass
       if(nsUXThemeData::CheckForCompositor())
         break;
-#endif
 
       HRGN paintRgn = ExcludeNonClientFromPaintRegion((HRGN)wParam);
       LRESULT res = CallWindowProcW(GetPrevWindowProc(), mWnd,
@@ -5304,7 +5286,6 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       return true;
     }
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   case WM_DWMCOMPOSITIONCHANGED:
     // First, update the compositor state to latest one. All other methods
     // should use same state as here for consistency painting.
@@ -5317,7 +5298,6 @@ bool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
     UpdateGlass();
     Invalidate(true, true, true);
     break;
-#endif
 
   case WM_UPDATEUISTATE:
   {
@@ -8149,10 +8129,8 @@ void nsWindow::SetWindowTranslucencyInner(nsTransparencyMode aMode)
   ::SetWindowLongPtrW(hWnd, GWL_STYLE, style);
   ::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, exStyle);
 
-#if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   if (HasGlass())
     memset(&mGlassMargins, 0, sizeof mGlassMargins);
-#endif // #if MOZ_WINSDK_TARGETVER >= MOZ_NTDDI_LONGHORN
   mTransparencyMode = aMode;
 
   SetupTranslucentWindowMemoryBitmap(aMode);

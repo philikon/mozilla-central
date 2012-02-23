@@ -838,9 +838,9 @@ nsAccessible::ChildAtPoint(PRInt32 aX, PRInt32 aY,
 
   nsPresContext *presContext = frame->PresContext();
 
-  nsIntRect screenRect = frame->GetScreenRectExternal();
-  nsPoint offset(presContext->DevPixelsToAppUnits(aX - screenRect.x),
-                 presContext->DevPixelsToAppUnits(aY - screenRect.y));
+  nsRect screenRect = frame->GetScreenRectInAppUnits();
+  nsPoint offset(presContext->DevPixelsToAppUnits(aX) - screenRect.x,
+                 presContext->DevPixelsToAppUnits(aY) - screenRect.y);
 
   nsCOMPtr<nsIPresShell> presShell = presContext->PresShell();
   nsIFrame *foundFrame = presShell->GetFrameForPoint(frame, offset);
@@ -851,7 +851,9 @@ nsAccessible::ChildAtPoint(PRInt32 aX, PRInt32 aY,
 
   // Get accessible for the node with the point or the first accessible in
   // the DOM parent chain.
-  nsAccessible* accessible = accDocument->GetAccessibleOrContainer(content);
+  nsDocAccessible* contentDocAcc = GetAccService()->
+    GetDocAccessible(content->OwnerDoc());
+  nsAccessible* accessible = contentDocAcc->GetAccessibleOrContainer(content);
   if (!accessible)
     return fallbackAnswer;
 
@@ -1058,7 +1060,8 @@ nsAccessible::GetBounds(PRInt32* aX, PRInt32* aY,
   *aHeight = presContext->AppUnitsToDevPixels(unionRectTwips.height);
 
   // We have the union of the rectangle, now we need to put it in absolute screen coords
-  nsIntRect orgRectPixels = boundingFrame->GetScreenRectExternal();
+  nsIntRect orgRectPixels = boundingFrame->GetScreenRectInAppUnits().
+    ToNearestPixels(presContext->AppUnitsPerDevPixel());
   *aX += orgRectPixels.x;
   *aY += orgRectPixels.y;
 
