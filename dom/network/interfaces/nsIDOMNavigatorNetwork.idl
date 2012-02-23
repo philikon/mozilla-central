@@ -42,5 +42,5 @@ interface nsIDOMMozConnection;
 interface nsIDOMMozNavigatorNetwork : nsISupports
 {
   readonly attribute nsIDOMMozConnection mozConnection;
-  readonly attribute nsIDOMMozConnection mozMobileConnection;
+  //readonly attribute nsIDOMMozConnection mozMobileConnection;
 };
