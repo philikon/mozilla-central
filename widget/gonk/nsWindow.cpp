@@ -292,6 +292,9 @@ nsWindow::Resize(PRInt32 aX,
 
     (*mEventCallback)(&event);
 
+    if (aRepaint && gWindowToRedraw)
+        gWindowToRedraw->Invalidate(sVirtualBounds);
+
     return NS_OK;
 }
 
