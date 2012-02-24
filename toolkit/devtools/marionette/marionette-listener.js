@@ -174,36 +174,47 @@ function errUnload() {
  */
 
 /**
- * Execute the given script either as a function body (executeScript)
- * or directly (for 'mochitest' like JS Marionette tests)
+ * Returns a content sandbox that can be used by the execute_foo functions.
  */
-function executeScript(msg, directInject) {
-  let script = msg.json.value;
-  let args = msg.json.args;
+function createExecuteContentSandbox(aWindow, marionette, args) {
   try {
-    args = elementManager.convertWrappedArguments(args, win);
+    args = elementManager.convertWrappedArguments(args, aWindow);
   }
   catch(e) {
     sendError(e.message, e.num, e.stack);
     return;
   }
 
-  let marionette = new Marionette(false, win, "content", marionetteLogObj);
-
-  let sandbox = new Cu.Sandbox(win);
-  sandbox.window = win;
+  let sandbox = new Cu.Sandbox(aWindow);
+  sandbox.window = aWindow;
   sandbox.document = sandbox.window.document;
   sandbox.navigator = sandbox.window.navigator;
   sandbox.__namedArgs = elementManager.applyNamedArgs(args);
   sandbox.__marionetteParams = args;
   sandbox.__proto__ = sandbox.window;
-  sandbox.finish = function sandbox_finish() {
-    return marionette.generate_results();
-  };
 
   marionette.exports.forEach(function(fn) {
     sandbox[fn] = marionette[fn].bind(marionette);
   });
+
+  return sandbox;
+}
+
+/**
+ * Execute the given script either as a function body (executeScript)
+ * or directly (for 'mochitest' like JS Marionette tests)
+ */
+function executeScript(msg, directInject) {
+  let script = msg.json.value;
+  let marionette = new Marionette(false, win, "content", marionetteLogObj);
+
+  let sandbox = createExecuteContentSandbox(win, marionette, msg.json.args);
+  if (!sandbox)
+    return;
+
+  sandbox.finish = function sandbox_finish() {
+    return marionette.generate_results();
+  };
 
   try {
     if (directInject) {
@@ -269,16 +280,7 @@ function executeJSScript(msg) {
 function executeWithCallback(msg, timeout) {
   win.addEventListener("unload", errUnload, false);
   let script = msg.json.value;
-  let args = msg.json.args ? msg.json.args : [];
   let command_id = msg.json.id;
-
-  try {
-    args = elementManager.convertWrappedArguments(args, win);
-  }
-  catch(e) {
-    sendError(e.message, e.num, e.stack);
-    return;
-  }
 
   // Error code 28 is scriptTimeout, but spec says execute_async should return 21 (Timeout),
   // see http://code.google.com/p/selenium/wiki/JsonWireProtocol#/session/:sessionId/execute_async.
@@ -327,17 +329,9 @@ function executeWithCallback(msg, timeout) {
 
   let marionette = new Marionette(true, win, "content", marionetteLogObj);
 
-  let sandbox = new Cu.Sandbox(win);
-  sandbox.window = win;
-  sandbox.document = sandbox.window.document;
-  sandbox.navigator = sandbox.window.navigator;
-  sandbox.__marionetteParams = args;
-  sandbox.__proto__ = sandbox.window;
-  sandbox.__namedArgs = elementManager.applyNamedArgs(args);
-
-  marionette.exports.forEach(function(fn) {
-    sandbox[fn] = marionette[fn].bind(marionette);
-  });
+  let sandbox = createExecuteContentSandbox(win, marionette, msg.json.args);
+  if (!sandbox)
+    return;
 
   sandbox.asyncComplete = contentAsyncReturnFunc;
   sandbox.finish = function sandbox_finish() {
