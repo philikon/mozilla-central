@@ -279,6 +279,59 @@ MarionetteDriverActor.prototype = {
   },
 
   /**
+   * Returns a chrome sandbox that can be used by the execute_foo functions.
+   */
+  createExecuteSandbox: function MDA_createExecuteSandbox(aWindow, marionette, args) {
+    try {
+      args = this.elementManager.convertWrappedArguments(args, aWindow);
+    }
+    catch(e) {
+      this.sendError(e.message, e.num, e.stack);
+      return;
+    }
+
+    let _chromeSandbox = new Cu.Sandbox(aWindow,
+       { sandboxPrototype: aWindow, wantXrays: false, sandboxName: ''});
+    _chromeSandbox.__namedArgs = this.elementManager.applyNamedArgs(args);
+    _chromeSandbox.__marionetteParams = args;
+
+    marionette.exports.forEach(function(fn) {
+      _chromeSandbox[fn] = marionette[fn].bind(marionette);
+    });
+
+    return _chromeSandbox;
+  },
+
+  /**
+   * Executes a script in the given sandbox.
+   */
+  executeScriptInSandbox: function MDA_executeScriptInSandbox(sandbox, script,
+     directInject, async) {
+    try {
+      if (directInject && async &&
+          (this.scriptTimeout == null || this.scriptTimeout == 0)) {
+        this.sendError("Please set a timeout", 21, null);
+        return;
+      }
+
+      let res = Cu.evalInSandbox(script, sandbox, "1.8");
+
+      if (directInject && !async &&
+          (res == undefined || res.passed == undefined)) {
+        this.sendError("finish() not called", 500, null);
+        return;
+      }
+
+      if (!async) {
+        this.sendResponse(this.elementManager.wrapValue(res));
+      }
+    }
+    catch (e) {
+      this.sendError(e.name + ': ' + e.message, 17, e.stack);
+    }
+  },
+
+  /**
    * Execute the given script either as a function body (executeScript)
    * or directly (for 'mochitest' like JS Marionette tests)
    */
@@ -290,49 +343,25 @@ MarionetteDriverActor.prototype = {
 
     let curWindow = this.getCurrentWindow();
     let marionette = new Marionette(false, curWindow, "chrome", this.marionetteLog);
-
-    let args = aRequest.args;
-    try {
-      args = this.elementManager.convertWrappedArguments(args, curWindow);
-    }
-    catch(e) {
-      this.sendError(e.message, e.num, e.stack);
+    let _chromeSandbox = this.createExecuteSandbox(curWindow, marionette, aRequest.args);
+    if (!_chromeSandbox)
       return;
-    }
 
     try {
-      let _chromeSandbox = new Cu.Sandbox(curWindow,
-         { sandboxPrototype: curWindow, wantXrays: false, 
-           sandboxName: ''});
-      _chromeSandbox.__namedArgs = this.elementManager.applyNamedArgs(args);
-
-      marionette.exports.forEach(function(fn) {
-        _chromeSandbox[fn] = marionette[fn].bind(marionette);
-      });
-
       _chromeSandbox.finish = function chromeSandbox_finish() {
         return marionette.generate_results();
       };
 
       if (directInject) {
-        //run the given script directly
-        let res = Cu.evalInSandbox(aRequest.value, _chromeSandbox, "1.8");
-        if (res == undefined || res.passed == undefined) {
-          this.sendError("finish() not called", 500, null);
-        }
-        else {
-          this.sendResponse(this.elementManager.wrapValue(res));
-        }
+        var script = aRequest.value;
       }
       else {
-        _chromeSandbox.__marionetteParams = args;
-        let script = "var func = function() {" +
+        var script = "var func = function() {" +
                        aRequest.value + 
                      "};" +
                      "func.apply(null, __marionetteParams);";
-        let res = Cu.evalInSandbox(script, _chromeSandbox, "1.8");
-        this.sendResponse(this.elementManager.wrapValue(res));
       }
+      this.executeScriptInSandbox(_chromeSandbox, script, directInject, false);
     }
     catch (e) {
       this.sendError(e.name + ': ' + e.message, 17, e.stack);
@@ -387,7 +416,7 @@ MarionetteDriverActor.prototype = {
    * For executeAsync, it will return a response when marionetteScriptFinished/arguments[arguments.length-1] 
    * method is called, or if it times out.
    */
-  executeWithCallback: function MDA_executeWithCallback(aRequest, timeout) {
+  executeWithCallback: function MDA_executeWithCallback(aRequest, directInject) {
     this.command_id = this.uuidGen.generateUUID().toString();
 
     if (this.context == "content") {
@@ -435,14 +464,9 @@ MarionetteDriverActor.prototype = {
       chromeAsyncReturnFunc(marionette.generate_results(), 0);
     }
 
-    let args = aRequest.args;
-    try {
-      args = this.elementManager.convertWrappedArguments(args, curWindow);
-    }
-    catch(e) {
-      this.sendError(e.message, e.num, e.stack, this.command_id);
+    let _chromeSandbox = this.createExecuteSandbox(curWindow, marionette, aRequest.args);
+    if (!_chromeSandbox)
       return;
-    }
 
     try {
 
@@ -453,22 +477,10 @@ MarionetteDriverActor.prototype = {
         }, that.scriptTimeout, Ci.nsITimer.TYPE_ONESHOT);
       }
 
-      let _chromeSandbox = new Cu.Sandbox(curWindow,
-         { sandboxPrototype: curWindow, wantXrays: false, sandboxName: ''});
-      _chromeSandbox.__marionetteParams = args;
       _chromeSandbox.returnFunc = chromeAsyncReturnFunc;
       _chromeSandbox.finish = chromeAsyncFinish;
-      _chromeSandbox.__namedArgs = this.elementManager.applyNamedArgs(args);
 
-      marionette.exports.forEach(function(fn) {
-        _chromeSandbox[fn] = marionette[fn].bind(marionette);
-      });
-
-      if (timeout) {
-        if (this.scriptTimeout == null || this.scriptTimeout == 0) {
-          this.sendError("Please set a timeout", 21, null);
-        }
-        //don't wrap sent JS in function
+      if (directInject) {
         var script = aRequest.value;
       }
       else {
@@ -477,7 +489,8 @@ MarionetteDriverActor.prototype = {
                 + 'var __marionetteFunc = function() {' + aRequest.value + '};'
                 + '__marionetteFunc.apply(null, __marionetteParams);';
       }
-      Cu.evalInSandbox(script, _chromeSandbox, "1.8");
+
+      this.executeScriptInSandbox(_chromeSandbox, script, directInject, true);
     } catch (e) {
       this.sendError(e.name + ": " + e.message, 17, e.stack, marionette.command_id);
     }
