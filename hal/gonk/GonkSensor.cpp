@@ -115,20 +115,36 @@ ReleaseResources()
   sInitialized = false;
 }
 
-static void
-SensorSwitch(SensorType aSensor, bool activate)
-{
-  int type = HalSensorToHardwareSensor(aSensor);
+typedef struct {
+  bool activate;
+  SensorType type;
+} SensorInfo;
+
+static void* SensorSwitchRun(void* aSensorInfo) {
+  SensorInfo* info = static_cast<SensorInfo*>(aSensorInfo);
+  int type = HalSensorToHardwareSensor(info->type);
   const sensor_t* sensors = NULL;
   SensorDevice& device = SensorDevice::getInstance();
   size_t size = device.getSensorList(&sensors);
 
-  for (size_t i=0; i<size; i++) {
+  for (size_t i = 0; i < size; i++) {
     if (sensors[i].type == type) {
-      device.activate((void*)pthread_self(), sensors[i].handle, activate);
+      device.activate((void*)pthread_self(), sensors[i].handle, info->activate);
       break;
     }
   }
+  moz_free(aSensorInfo);
+  return NULL;
+}
+
+static void
+SensorSwitch(SensorType aSensor, bool activate)
+{
+  SensorInfo* info = (SensorInfo*)moz_malloc(sizeof(SensorInfo));
+  if (!info)
+    return;
+  pthread_t thread;
+  pthread_create(&thread, NULL, SensorSwitchRun, info);
 }
 
 void
