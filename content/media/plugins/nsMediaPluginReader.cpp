@@ -157,7 +157,7 @@ bool nsMediaPluginReader::DecodeVideoFrame(bool &aKeyframeSkip,
     mLastVideoFrame = NULL;
   }
 
-  // Read the next
+  // Read next frame
   while (true) {
     MPAPI::VideoFrame frame;
     if (!mPlugin->ReadVideo(mPlugin, &frame, mVideoSeekTimeUs)) {
@@ -183,12 +183,6 @@ bool nsMediaPluginReader::DecodeVideoFrame(bool &aKeyframeSkip,
         continue;
       }
       aKeyframeSkip = false;
-    }
-
-    // If we can't read the video buffer, we have to use an overlay.
-    if (frame.mUnreadable) {
-      LOG("unreadable video frame");
-      return false;
     }
 
     VideoData::YCbCrBuffer b;
@@ -284,7 +278,7 @@ bool nsMediaPluginReader::DecodeAudioData()
   // This is the approximate byte position in the stream.
   PRInt64 pos = mDecoder->GetResource()->Tell();
 
-  // Read the next 
+  // Read next frame
   MPAPI::AudioFrame frame;
   if (!mPlugin->ReadAudio(mPlugin, &frame, mAudioSeekTimeUs)) {
     return false;
@@ -355,7 +349,7 @@ nsresult nsMediaPluginReader::GetBuffered(nsTimeRanges* aBuffered, PRInt64 aStar
   PRInt64 startOffset = stream->GetNextCachedData(0);
   while (startOffset >= 0) {
     PRInt64 endOffset = stream->GetCachedDataEnd(startOffset);
-    // Bytes [startOffset..endOffset] are cached.                                                                                                      
+    // Bytes [startOffset..endOffset] are cached.
     NS_ASSERTION(startOffset >= 0, "Integer underflow in GetBuffered");
     NS_ASSERTION(endOffset >= 0, "Integer underflow in GetBuffered");
 

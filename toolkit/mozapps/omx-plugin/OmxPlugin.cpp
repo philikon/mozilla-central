@@ -38,6 +38,9 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include <unistd.h>
+#include <fcntl.h>
+
 #include <DataSource.h>
 #include <MediaErrors.h>
 #include <MediaExtractor.h>
@@ -45,6 +48,13 @@
 #include <MetaData.h>
 #include <OMXCodec.h>
 #include <OMX.h>
+#include <HardwareAPI.h>
+#include <ui/GraphicBuffer.h>
+#include <ui/Overlay.h>
+#include <ui/Rect.h>
+#include <ui/Region.h>
+#include <binder/IMemory.h>
+#include <hardware/overlay.h>
 
 #include <OMX_Types.h>
 #include <OMX_Core.h>
@@ -128,7 +138,7 @@ status_t MediaStreamSource::getSize(off_t *size)
   return OK;
 }
 
-}  // namespace android                                                                                                                               
+}  // namespace android
 
 using namespace android;
 
@@ -139,34 +149,37 @@ class OmxDecoder {
   sp<MediaSource> mVideoSource;
   sp<MediaSource> mAudioTrack;
   sp<MediaSource> mAudioSource;
-  const char *mVideoDecoderComponent;
   int32_t mVideoWidth;
   int32_t mVideoHeight;
   int32_t mVideoColorFormat;
   int32_t mVideoStride;
   int32_t mVideoSliceHeight;
+  int32_t mVideoRotation;
   int32_t mAudioChannels;
   int32_t mAudioSampleRate;
   int64_t mDurationUs;
-  MediaBuffer* mVideoBuffer;
+  MediaBuffer *mVideoBuffer;
   VideoFrame mVideoFrame;
-  MediaBuffer* mAudioBuffer;
+  MediaBuffer *mAudioBuffer;
   AudioFrame mAudioFrame;
 
   void ReleaseVideoBuffer();
   void ReleaseAudioBuffer();
 
-  void PlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable, void *aBufferId);
-  void CbYCrYFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable, void *aBufferId);
-  void SemiPlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable, void *aBufferId);
-  void SemiPlanarYVU420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable, void *aBufferId);
-  bool ToVideoFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable, void *aBufferId);
-  bool ToAudioFrame(AudioFrame *aFrame, int64_t aTimeUs, void *aData, size_t aDataOffset, size_t aSize, int32_t aAudioChannels, int32_t aAudioSampleRate);
+  void PlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame);
+  void CbYCrYFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame);
+  void SemiPlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame);
+  void SemiPlanarYVU420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame);
+  bool ToVideoFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame);
+  bool ToAudioFrame(AudioFrame *aFrame, int64_t aTimeUs, void *aData, size_t aDataOffset, size_t aSize,
+                    int32_t aAudioChannels, int32_t aAudioSampleRate);
 public:
   OmxDecoder(PluginHost *aPluginHost, Decoder *aDecoder);
   ~OmxDecoder();
 
   bool Init();
+  bool SetVideoFormat();
+  bool SetAudioFormat();
 
   void GetDuration(int64_t *durationUs) {
     *durationUs = mDurationUs;
@@ -197,8 +210,7 @@ public:
 OmxDecoder::OmxDecoder(PluginHost *aPluginHost, Decoder *aDecoder) :
   mPluginHost(aPluginHost), mDecoder(aDecoder)
 {
-  mVideoWidth = mVideoHeight = mVideoColorFormat = mVideoStride = mVideoSliceHeight = 0;
-  mVideoDecoderComponent = NULL;
+  mVideoWidth = mVideoHeight = mVideoColorFormat = mVideoStride = mVideoSliceHeight = mVideoRotation = 0;
   mVideoBuffer = NULL;
   mAudioBuffer = NULL;
 }
@@ -255,7 +267,6 @@ bool OmxDecoder::Init() {
     int32_t bitRate;
     if (!meta->findInt32(kKeyBitRate, &bitRate))
       bitRate = 0;
-    size_t bytesPerSecond = (bitRate+7)/8;
 
     const char *mime;
     if (!meta->findCString(kKeyMIMEType, &mime)) {
@@ -283,9 +294,6 @@ bool OmxDecoder::Init() {
   int64_t totalDurationUs = 0;
 
   sp<MediaSource> videoSource;
-  int32_t videoWidth = 0, videoHeight = 0;
-  const char *videoDecoderComponent = NULL;
-  int32_t videoColorFormat = 0, videoStride = 0, videoSliceHeight = 0;
   if (videoTrack != NULL) {
     videoSource = OMXCodec::Create(GetOMX(),
                                    videoTrack->getFormat(),
@@ -306,29 +314,6 @@ bool OmxDecoder::Init() {
       if (durationUs > totalDurationUs)
         totalDurationUs = durationUs;
     }
-
-    if (!videoSource->getFormat()->findInt32(kKeyWidth, &videoWidth) ||
-        !videoSource->getFormat()->findInt32(kKeyHeight, &videoHeight) ||
-        !videoSource->getFormat()->findCString(kKeyDecoderComponent, &videoDecoderComponent) ||
-        !videoSource->getFormat()->findInt32(kKeyColorFormat, &videoColorFormat) ) {
-      return false;
-    }
-
-    LOG("width: %d height: %d component: %s format: %d\n",
-        videoWidth, videoHeight, videoDecoderComponent, videoColorFormat);
-
-    if (!videoSource->getFormat()->findInt32(kKeyStride, &videoStride) ) {
-      videoStride = videoWidth;
-      LOG("stride not available, assuming width");
-    }
-
-    if (!videoSource->getFormat()->findInt32(kKeySliceHeight, &videoSliceHeight) ) {
-      videoSliceHeight = videoHeight;
-      LOG("slice height not available, assuming height");
-    }
-
-    LOG("stride: %d slice height: %d",
-        videoStride, videoSliceHeight);
   }
 
   sp<MediaSource> audioSource;
@@ -360,86 +345,122 @@ bool OmxDecoder::Init() {
   mVideoSource = videoSource;
   mAudioTrack = audioTrack;
   mAudioSource = audioSource;
-  mVideoWidth = videoWidth;
-  mVideoHeight = videoHeight;
-  mVideoDecoderComponent = videoDecoderComponent;
-  mVideoColorFormat = videoColorFormat;
-  mVideoStride = videoStride;
-  mVideoSliceHeight = videoSliceHeight;
-  mAudioChannels = audioChannels;
-  mAudioSampleRate = audioSampleRate;
   mDurationUs = totalDurationUs;
+
+  return SetVideoFormat() && SetAudioFormat();
+}
+
+bool OmxDecoder::SetVideoFormat() {
+  const char *componentName;
+
+  if (!mVideoSource->getFormat()->findInt32(kKeyWidth, &mVideoWidth) ||
+      !mVideoSource->getFormat()->findInt32(kKeyHeight, &mVideoHeight) ||
+      !mVideoSource->getFormat()->findCString(kKeyDecoderComponent, &componentName) ||
+      !mVideoSource->getFormat()->findInt32(kKeyColorFormat, &mVideoColorFormat) ) {
+    return false;
+  }
+
+  if (!mVideoSource->getFormat()->findInt32(kKeyStride, &mVideoStride)) {
+    mVideoStride = mVideoWidth;
+    LOG("stride not available, assuming width");
+  }
+
+  if (!mVideoSource->getFormat()->findInt32(kKeySliceHeight, &mVideoSliceHeight)) {
+    mVideoSliceHeight = mVideoHeight;
+    LOG("slice height not available, assuming height");
+  }
+
+  if (!mVideoSource->getFormat()->findInt32(kKeyRotation, &mVideoRotation)) {
+    mVideoRotation = 0;
+    LOG("rotation not available, assuming 0");
+  }
+
+  LOG("width: %d height: %d component: %s format: %d stride: %d sliceHeight: %d rotation: %d",
+      mVideoWidth, mVideoHeight, componentName, mVideoColorFormat,
+      mVideoStride, mVideoSliceHeight, mVideoRotation);
+
+  return true;
+}
+
+bool OmxDecoder::SetAudioFormat() {
+  // If the format changed, update our cached info.
+  if (!mAudioSource->getFormat()->findInt32(kKeyChannelCount, &mAudioChannels) ||
+      !mAudioSource->getFormat()->findInt32(kKeySampleRate, &mAudioSampleRate)) {
+    return false;
+  }
+
+  LOG("channelCount: %d sampleRate: %d",
+      mAudioChannels, mAudioSampleRate);
 
   return true;
 }
 
 void OmxDecoder::ReleaseVideoBuffer() {
-  if (mVideoBuffer)
+  if (mVideoBuffer) {
     mVideoBuffer->release();
-  mVideoBuffer = NULL;
+    mVideoBuffer = NULL;
+  }
 }
 
 void OmxDecoder::ReleaseAudioBuffer() {
-  if (mAudioBuffer)
+  if (mAudioBuffer) {
     mAudioBuffer->release();
-  mAudioBuffer = NULL;
+    mAudioBuffer = NULL;
+  }
 }
 
-void OmxDecoder::PlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs,void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable,
-                                   void *aBufferId) {
+void OmxDecoder::PlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame) {
   void *y = aData;
   void *u = static_cast<uint8_t *>(y) + mVideoStride * mVideoSliceHeight;
   void *v = static_cast<uint8_t *>(u) + mVideoStride/2 * mVideoSliceHeight/2;
 
-  aFrame->Set(aTimeUs, aKeyFrame, aUnreadable, aBufferId,
+  aFrame->Set(aTimeUs, aKeyFrame,
+              aData, aSize, mVideoStride, mVideoSliceHeight, mVideoRotation,
               y, mVideoStride, mVideoWidth, mVideoHeight, 0, 0,
               u, mVideoStride/2, mVideoWidth/2, mVideoHeight/2, 0, 0,
               v, mVideoStride/2, mVideoWidth/2, mVideoHeight/2, 0, 0);
 }
 
-void OmxDecoder::CbYCrYFrame(VideoFrame *aFrame, int64_t aTimeUs,void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable,
-                             void *aBufferId) {
-  aFrame->Set(aTimeUs, aKeyFrame, aUnreadable, aBufferId,
+void OmxDecoder::CbYCrYFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame) {
+  aFrame->Set(aTimeUs, aKeyFrame,
+              aData, aSize, mVideoStride, mVideoSliceHeight, mVideoRotation,
               aData, mVideoStride, mVideoWidth, mVideoHeight, 1, 1,
               aData, mVideoStride, mVideoWidth/2, mVideoHeight/2, 0, 3,
               aData, mVideoStride, mVideoWidth/2, mVideoHeight/2, 2, 3);
 }
 
-void OmxDecoder::SemiPlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs,void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable,
-                                       void *aBufferId) {
+void OmxDecoder::SemiPlanarYUV420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame) {
   void *y = aData;
   void *uv = static_cast<uint8_t *>(y) + (mVideoStride * mVideoSliceHeight);
 
-  aFrame->Set(aTimeUs, aKeyFrame, aUnreadable, aBufferId,
+  aFrame->Set(aTimeUs, aKeyFrame,
+              aData, aSize, mVideoStride, mVideoSliceHeight, mVideoRotation,
               y, mVideoStride, mVideoWidth, mVideoHeight, 0, 0,
               uv, mVideoStride, mVideoWidth/2, mVideoHeight/2, 0, 1,
               uv, mVideoStride, mVideoWidth/2, mVideoHeight/2, 1, 1);
 }
 
-void OmxDecoder::SemiPlanarYVU420Frame(VideoFrame *aFrame, int64_t aTimeUs,void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable,
-                                       void *aBufferId) {
-  SemiPlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame, aUnreadable, aBufferId);
+void OmxDecoder::SemiPlanarYVU420Frame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame) {
+  SemiPlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame);
   aFrame->Cb.mOffset = 1;
   aFrame->Cr.mOffset = 0;
 }
 
-bool OmxDecoder::ToVideoFrame(VideoFrame *aFrame, int64_t aTimeUs,void *aData, size_t aSize, bool aKeyFrame, bool aUnreadable,
-                              void *aBufferId) {
+bool OmxDecoder::ToVideoFrame(VideoFrame *aFrame, int64_t aTimeUs, void *aData, size_t aSize, bool aKeyFrame) {
   const int OMX_QCOM_COLOR_FormatYVU420SemiPlanar = 0x7FA30C00;
-  const int QOMX_COLOR_FormatYUV420PackedSemiPlanar64x32Tile2m8ka = 0x7FA30C03;
 
   switch (mVideoColorFormat) {
   case OMX_COLOR_FormatYUV420Planar:
-    PlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame, aUnreadable, aBufferId);
+    PlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame);
     break;
   case OMX_COLOR_FormatCbYCrY:
-    CbYCrYFrame(aFrame, aTimeUs, aData, aSize, aKeyFrame, aUnreadable, aBufferId);
+    CbYCrYFrame(aFrame, aTimeUs, aData, aSize, aKeyFrame);
     break;
   case OMX_COLOR_FormatYUV420SemiPlanar:
-    SemiPlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame, aUnreadable, aBufferId);
+    SemiPlanarYUV420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame);
     break;
   case OMX_QCOM_COLOR_FormatYVU420SemiPlanar:
-    SemiPlanarYVU420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame, aUnreadable, aBufferId);
+    SemiPlanarYVU420Frame(aFrame, aTimeUs, aData, aSize, aKeyFrame);
     break;
   default:
     return false;
@@ -477,7 +498,11 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aSeekTimeUs)
       int64_t timeUs;
       int32_t unreadable;
       int32_t keyFrame;
-      void *bufferId;
+
+      if (!mVideoBuffer->meta_data()->findInt64(kKeyTime, &timeUs) ) {
+        LOG("no key time");
+        return false;
+      }
 
       if (!mVideoBuffer->meta_data()->findInt32(kKeyIsSyncFrame, &keyFrame)) {
         keyFrame = 0;
@@ -487,50 +512,38 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aSeekTimeUs)
         unreadable = 0;
       }
 
-      if (!mVideoBuffer->meta_data()->findPointer(kKeyBufferID, &bufferId)) {
-        bufferId = 0;
+      LOG("data: %p size: %u offset: %u length: %u unreadable: %d",
+          mVideoBuffer->data(), 
+          mVideoBuffer->size(),
+          mVideoBuffer->range_offset(),
+          mVideoBuffer->range_length(),
+          unreadable);
+
+      char *data = reinterpret_cast<char *>(mVideoBuffer->data()) + mVideoBuffer->range_offset();
+      size_t length = mVideoBuffer->range_length();
+
+      if (unreadable) {
+        LOG("video frame is unreadable");
       }
 
-      if (!mVideoBuffer->meta_data()->findInt64(kKeyTime, &timeUs) ) {
-        LOG("no key time");
+      if (!ToVideoFrame(aFrame, timeUs, data, length, keyFrame)) {
         return false;
       }
 
-      return ToVideoFrame(aFrame, timeUs, mVideoBuffer->data() + mVideoBuffer->range_offset(), mVideoBuffer->range_length(),
-                          keyFrame, unreadable, bufferId);
+      return true;
     }
 
     if (err == INFO_FORMAT_CHANGED) {
       // If the format changed, update our cached info.
-      if (!mVideoSource->getFormat()->findInt32(kKeyWidth, &mVideoWidth) ||
-          !mVideoSource->getFormat()->findInt32(kKeyHeight, &mVideoHeight) ||
-          !mVideoSource->getFormat()->findInt32(kKeyColorFormat, &mVideoColorFormat) ) {
-        LOG("bad format");
+      if (!SetVideoFormat()) {
         return false;
       }
-
-      LOG("format changed -- width: %d height: %d format: %d\n",
-          mVideoWidth, mVideoHeight, mVideoColorFormat);
-
-      if (!mVideoSource->getFormat()->findInt32(kKeyStride, &mVideoStride) ) {
-        LOG("stride not available, assuming width");
-        mVideoStride = mVideoWidth;
-      }
-  
-      if (!mVideoSource->getFormat()->findInt32(kKeySliceHeight, &mVideoSliceHeight) ) {
-        LOG("slice height not available, assuming height");
-        mVideoSliceHeight = mVideoHeight;
-      }
-
-      LOG("stride: %d slice height: %d",
-          mVideoStride, mVideoSliceHeight);
 
       // Ok, try to read a buffer again.
       continue;
     }
 
     /* err == ERROR_END_OF_STREAM */
-    LOG("err = %d", err);
     break;
   }
 
@@ -570,8 +583,7 @@ bool OmxDecoder::ReadAudio(AudioFrame *aFrame, int64_t aSeekTimeUs)
 
     if (err == INFO_FORMAT_CHANGED) {
       // If the format changed, update our cached info.
-      if (!mAudioSource->getFormat()->findInt32(kKeyChannelCount, &mAudioChannels) ||
-          !mAudioSource->getFormat()->findInt32(kKeySampleRate, &mAudioSampleRate)) {
+      if (!SetAudioFormat()) {
         return false;
       }
 

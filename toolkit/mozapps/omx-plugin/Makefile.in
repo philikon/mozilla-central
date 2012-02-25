@@ -66,6 +66,8 @@ include $(topsrcdir)/config/rules.mk
 INCLUDES        += \
                 -I$(srcdir)/../../media/plugins \
                 -I$(ANDROID_SOURCE)/dalvik/libnativehelper/include/nativehelper \
+                -I$(ANDROID_SOURCE)/frameworks/base/include/ \
+                -I$(ANDROID_SOURCE)/frameworks/base/include/binder/ \
                 -I$(ANDROID_SOURCE)/frameworks/base/include/utils/ \
                 -I$(ANDROID_SOURCE)/frameworks/base/include/media/ \
                 -I$(ANDROID_SOURCE)/frameworks/base/include/media/stagefright \
@@ -74,7 +76,8 @@ INCLUDES        += \
                 $(NULL)
 
 EXTRA_DSO_LDOPTS += \
-		-lutils -lstagefright -lmedia -lstagefright_omx \
+		-lutils -lstagefright -lmedia -lstagefright_omx -lbinder -lui \
+		-lsurfaceflinger_client -lhardware -lcutils \
 		$(NULL)
 
 libs::	$(DLL_PREFIX)$(LIBRARY_NAME)$(DLL_SUFFIX)

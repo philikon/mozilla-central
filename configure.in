@@ -253,6 +253,12 @@ MOZ_ARG_WITH_STRING(android-ndk,
                           location where the Android NDK can be found],
     android_ndk=$withval)
 
+MOZ_ARG_WITH_STRING(android-source,
+[  --with-android-source=DIR
+                          location where the Android source can be found],
+    android_source=$withval)
+
+
 MOZ_ARG_WITH_STRING(android-toolchain,
 [  --with-android-toolchain=DIR
                           location of the android toolchain, default NDK/build/prebuilt/HOST/arm-eabi-4.4.0],
@@ -304,6 +310,9 @@ MOZ_ARG_WITH_STRING(gonk,
 if test -n "$gonkdir" ; then
     kernel_name=`uname -s | tr "[[:upper:]]" "[[:lower:]]"`
     gonk_toolchain="$gonkdir"/prebuilt/$kernel_name-x86/toolchain/arm-eabi-4.4.3
+    android_source="$gonkdir"
+
+    ANDROID_SOURCE="${android_source}"
 
     dnl set up compilers
     AS="$gonk_toolchain"/bin/"$android_tool_prefix"-as
@@ -485,6 +494,7 @@ fi
 
 AC_SUBST(ANDROID_NDK)
 AC_SUBST(ANDROID_TOOLCHAIN)
+AC_SUBST(ANDROID_SOURCE)
 AC_SUBST(ANDROID_PLATFORM)
 AC_SUBST(ANDROID_SDK)
 AC_SUBST(ANDROID_PLATFORM_TOOLS)
@@ -4662,6 +4672,8 @@ MOZ_TREMOR=
 MOZ_WAVE=1
 MOZ_MEDIA=
 MOZ_WEBM=1
+MOZ_MEDIA_PLUGINS=1
+MOZ_OMX_PLUGIN=
 MOZ_VP8_ERROR_CONCEALMENT=
 MOZ_VP8_ENCODER=
 VPX_AS=
@@ -4994,6 +5006,14 @@ cairo-gonk)
     ;;
 
 esac
+
+if test -n "$MOZ_MEDIA_PLUGINS"; then
+  AC_DEFINE(MOZ_MEDIA_PLUGINS)
+fi
+
+if test -n "$MOZ_OMX_PLUGIN"; then
+  AC_DEFINE(MOZ_OMX_PLUGIN)
+fi
 
 AC_SUBST(MOZ_OLD_LINKER)
 AC_SUBST(MOZ_PDF_PRINTING)
@@ -5718,6 +5738,29 @@ MOZ_ARG_DISABLE_BOOL(webm,
 [  --disable-webm          Disable support for WebM media (VP8 video and Vorbis audio)],
     MOZ_WEBM=,
     MOZ_WEBM=1)
+
+dnl ========================================================
+dnl = Disable media plugin support
+dnl ========================================================
+MOZ_ARG_DISABLE_BOOL(media-plugins,
+[  --disable-media-plugins Disable support for media plugins],
+    MOZ_MEDIA_PLUGINS=,
+    MOZ_MEDIA_PLUGINS=1)
+
+dnl ========================================================
+dnl = Enable building OMX media plugin (android)
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(omx-plugin,
+[  --enable-omx-plugin      Enable building OMX plugin (android)],
+    MOZ_OMX_PLUGIN=1,
+    MOZ_OMX_PLUGIN=)
+
+if test -n "$MOZ_OMX_PLUGIN"; then
+    if test -z "$android_source" ; then
+        AC_MSG_ERROR([You must specify --with-android-source=/path/to/source when building the OMX plugin.])
+    fi
+fi
+
 
 dnl system libvpx Support
 dnl ========================================================
@@ -8833,6 +8876,8 @@ AC_SUBST(MOZ_WAVE)
 AC_SUBST(MOZ_VORBIS)
 AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_WEBM)
+AC_SUBST(MOZ_MEDIA_PLUGINS)
+AC_SUBST(MOZ_OMX_PLUGIN)
 AC_SUBST(MOZ_VP8_ERROR_CONCEALMENT)
 AC_SUBST(MOZ_VP8_ENCODER)
 AC_SUBST(MOZ_OGG)

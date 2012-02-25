@@ -1633,6 +1633,18 @@ if [ "$MOZ_WEBM" ]; then
   fi
 fi
 
+if [ "$MOZ_MEDIA_PLUGINS" ]; then
+  add_makefiles "
+    content/media/plugins/Makefile
+  "
+fi
+
+if [ "$MOZ_OMX_PLUGIN" ]; then
+  add_makefiles "
+    toolkit/mozapps/omx-plugin/Makefile
+  "
+fi
+
 if [ "$MOZ_WAVE" ]; then
  add_makefiles "
    content/media/wave/Makefile

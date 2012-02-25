@@ -292,6 +292,7 @@ pref("dom.indexedDB.warningQuota", 5);
 // prevent video elements from preloading too much data
 pref("media.preload.default", 1); // default to preload none
 pref("media.preload.auto", 2);    // preload metadata if preload=auto
+pref("media.cache_size", 128);    // 4MB media cache
 
 //  0: don't show fullscreen keyboard
 //  1: always show fullscreen keyboard
@@ -440,3 +441,5 @@ pref("power.screen.timeout", 60);
 pref("full-screen-api.enabled", true);
 
 pref("media.volume.steps", 10);
+
+pref("media.plugins.enabled", true);

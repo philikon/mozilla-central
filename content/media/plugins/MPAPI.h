@@ -54,21 +54,28 @@ struct VideoPlane {
 struct VideoFrame {
   int64_t mTimeUs;
   bool mKeyFrame;
-  bool mUnreadable;
-  void *mBufferId;
+  void *mData;
+  size_t mSize;
+  int32_t mStride;
+  int32_t mSliceHeight;
+  int32_t mRotation;
   VideoPlane Y;
   VideoPlane Cb;
   VideoPlane Cr;
 
-  void Set(int64_t aTimeUs, bool aKeyFrame, bool aUnreadable, void *aBufferId,
+  void Set(int64_t aTimeUs, bool aKeyFrame,
+           void *aData, size_t aSize, int32_t aStride, int32_t aSliceHeight, int32_t aRotation,
            void *aYData, int32_t aYStride, int32_t aYWidth, int32_t aYHeight, int32_t aYOffset, int32_t aYSkip,
            void *aCbData, int32_t aCbStride, int32_t aCbWidth, int32_t aCbHeight, int32_t aCbOffset, int32_t aCbSkip,
            void *aCrData, int32_t aCrStride, int32_t aCrWidth, int32_t aCrHeight, int32_t aCrOffset, int32_t aCrSkip)
   {
     mTimeUs = aTimeUs;
     mKeyFrame = aKeyFrame;
-    mUnreadable = aUnreadable;
-    mBufferId = aBufferId;
+    mData = aData;
+    mSize = aSize;
+    mStride = aStride;
+    mSliceHeight = aSliceHeight;
+    mRotation = aRotation;
     Y.mData = aYData;
     Y.mStride = aYStride;
     Y.mWidth = aYWidth;
@@ -112,7 +119,7 @@ struct AudioFrame {
 struct Decoder;
 
 struct PluginHost {
-  bool (*Read)(Decoder *aDecoder, char* aBuffer, int64_t aOffset, uint32_t aCount, uint32_t* aBytes);
+  bool (*Read)(Decoder *aDecoder, char *aBuffer, int64_t aOffset, uint32_t aCount, uint32_t* aBytes);
   uint64_t (*GetLength)(Decoder *aDecoder);
   void (*SetMetaDataReadMode)(Decoder *aDecoder);
   void (*SetPlaybackReadMode)(Decoder *aDecoder);
@@ -125,8 +132,8 @@ struct Decoder {
   Decoder();
 
   void (*GetDuration)(Decoder *aDecoder, int64_t *durationUs);
-  void (*GetVideoParameters)(Decoder *aDecoder, int32_t *width, int32_t *height);
-  void (*GetAudioParameters)(Decoder *aDecoder, int32_t *numChannels, int32_t *sampleRate);
+  void (*GetVideoParameters)(Decoder *aDecoder, int32_t *aWidth, int32_t *aHeight);
+  void (*GetAudioParameters)(Decoder *aDecoder, int32_t *aNumChannels, int32_t *aSampleRate);
   bool (*HasVideo)(Decoder *aDecoder);
   bool (*HasAudio)(Decoder *aDecoder);
   bool (*ReadVideo)(Decoder *aDecoder, VideoFrame *aFrame, int64_t aSeekTimeUs);
