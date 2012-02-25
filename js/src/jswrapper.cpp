@@ -61,18 +61,14 @@
 using namespace js;
 using namespace js::gc;
 
-static int sWrapperFamily;
+namespace js {
+int sWrapperFamily;
+}
 
 void *
 Wrapper::getWrapperFamily()
 {
     return &sWrapperFamily;
-}
-
-JS_FRIEND_API(bool)
-js::IsWrapper(const JSObject *wrapper)
-{
-    return wrapper->isProxy() && GetProxyHandler(wrapper)->family() == &sWrapperFamily;
 }
 
 JS_FRIEND_API(JSObject *)
@@ -334,10 +330,10 @@ Wrapper::fun_toString(JSContext *cx, JSObject *wrapper, uintN indent)
     return str;
 }
 
-RegExpShared *
-Wrapper::regexp_toShared(JSContext *cx, JSObject *wrapper)
+bool
+Wrapper::regexp_toShared(JSContext *cx, JSObject *wrapper, RegExpGuard *g)
 {
-    return wrappedObject(wrapper)->asRegExp().getShared(cx);
+    return wrappedObject(wrapper)->asRegExp().getShared(cx, g);
 }
 
 bool
@@ -796,9 +792,9 @@ CrossCompartmentWrapper::nativeCall(JSContext *cx, JSObject *wrapper, Class *cla
     if (!Wrapper::nativeCall(cx, wrapper, clasp, native, dstArgs))
         return false;
 
+    srcArgs.rval() = dstArgs.rval();
     dstArgs.pop();
     call.leave();
-    srcArgs.rval() = dstArgs.rval();
     return call.origin->wrap(cx, &srcArgs.rval());
 }
 
@@ -912,10 +908,10 @@ SecurityWrapper<Base>::objectClassIs(JSObject *obj, ESClassValue classValue, JSC
 }
 
 template <class Base>
-RegExpShared *
-SecurityWrapper<Base>::regexp_toShared(JSContext *cx, JSObject *obj)
+bool
+SecurityWrapper<Base>::regexp_toShared(JSContext *cx, JSObject *obj, RegExpGuard *g)
 {
-    return Base::regexp_toShared(cx, obj);
+    return Base::regexp_toShared(cx, obj, g);
 }
 
 
