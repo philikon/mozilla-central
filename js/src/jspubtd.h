@@ -44,7 +44,6 @@
  * JS public API typedefs.
  */
 #include "jstypes.h"
-#include "jscompat.h"
 
 /*
  * Allow headers to reference JS::Value without #including the whole jsapi.h.
@@ -95,10 +94,7 @@ typedef ptrdiff_t jsid;
 JS_BEGIN_EXTERN_C
 
 /* Scalar typedefs. */
-typedef int32_t   jsint;
 typedef uint32_t  jsuint;
-typedef double    jsdouble;
-typedef int32_t   jsrefcount;   /* PRInt32 if JS_THREADSAFE, see jslock.h */
 
 #ifdef WIN32
 typedef wchar_t   jschar;
