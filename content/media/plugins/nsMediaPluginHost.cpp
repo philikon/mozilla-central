@@ -46,9 +46,6 @@
 #include "pratom.h"
 #include "nsMediaPluginReader.h"
 
-#include "android/log.h"
-#define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "MediaPluginHost" , ## args)
-
 #include "MPAPI.h"
 
 using namespace MPAPI;
@@ -65,13 +62,11 @@ static bool Read(Decoder *aDecoder, char *aBuffer, int64_t aOffset, uint32_t aCo
   if (aOffset != resource->Tell()) {
     nsresult rv = resource->Seek(nsISeekableStream::NS_SEEK_SET, aOffset);
     if (NS_FAILED(rv)) {
-      LOG("seek failed");
       return false;
     }
   }
   nsresult rv = resource->Read(aBuffer, aCount, aBytes);
   if (NS_FAILED(rv)) {
-    LOG("read failed");
     return false;
   }
   return true;
