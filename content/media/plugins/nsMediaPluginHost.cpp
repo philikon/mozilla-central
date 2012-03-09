@@ -96,7 +96,7 @@ static PluginHost sPluginHost = {
 
 void nsMediaPluginHost::TryLoad(const char *name)
 {
-  PRLibrary *lib = PR_LoadLibrary("libomxplugin.so");
+  PRLibrary *lib = PR_LoadLibrary(name);
   if (lib) {
     Manifest *manifest = static_cast<Manifest *>(PR_FindSymbol(lib, "MPAPI_MANIFEST"));
     if (manifest)
@@ -105,7 +105,9 @@ void nsMediaPluginHost::TryLoad(const char *name)
 }
 
 nsMediaPluginHost::nsMediaPluginHost() {
+#ifdef ANDROID
   TryLoad("libomxplugin.so");
+#endif
 }
 
 bool nsMediaPluginHost::FindDecoder(const nsACString& aMimeType, const char* const** aCodecs)
