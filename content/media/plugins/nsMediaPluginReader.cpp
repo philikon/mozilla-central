@@ -286,13 +286,14 @@ bool nsMediaPluginReader::DecodeAudioData()
   memcpy(buffer.get(), frame.mData, frame.mSize);
 
   PRUint32 frames = frame.mSize / (2 * frame.mAudioChannels);
-  PRInt64 durationUs;
-  if (!FramesToUsecs(frames, frame.mAudioSampleRate, durationUs))
-    return false;
+  CheckedInt64 duration = FramesToUsecs(frames, frame.mAudioSampleRate);
+  if (!duration.valid()) {
+    return NS_ERROR_FAILURE;
+  }
 
   mAudioQueue.Push(new AudioData(pos,
                                  frame.mTimeUs,
-                                 durationUs,
+                                 duration.value(),
                                  frames,
                                  buffer.forget(),
                                  frame.mAudioChannels));
