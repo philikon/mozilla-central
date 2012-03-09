@@ -477,6 +477,9 @@ bool OmxDecoder::ToAudioFrame(AudioFrame *aFrame, int64_t aTimeUs, void *aData, 
 
 bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aSeekTimeUs)
 {
+  if (!mVideoSource.get())
+    return false;
+
   for (;;) {
     ReleaseVideoBuffer();
 
