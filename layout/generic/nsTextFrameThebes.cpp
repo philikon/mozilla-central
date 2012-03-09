@@ -84,7 +84,7 @@
 #include "nsTextFrameTextRunCache.h"
 #include "nsExpirationTracker.h"
 #include "nsTextFrame.h"
-#include "nsIUGenCategory.h"
+#include "nsUnicodeProperties.h"
 #include "nsUnicharUtilCIID.h"
 
 #include "nsTextFragment.h"
@@ -1212,7 +1212,7 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
   bool isValid = true;
   nsBlockInFlowLineIterator backIterator(block, &isValid);
   if (aForFrameLine) {
-    backIterator = nsBlockInFlowLineIterator(block, *aForFrameLine, false);
+    backIterator = nsBlockInFlowLineIterator(block, *aForFrameLine);
   } else {
     backIterator = nsBlockInFlowLineIterator(block, lineContainerChild, &isValid);
     NS_ASSERTION(isValid, "aForFrame not found in block, someone lied to us");
@@ -6137,7 +6137,6 @@ public:
   PRInt32 GetBeforeOffset();
 
 private:
-  nsCOMPtr<nsIUGenCategory>   mCategories;
   gfxSkipCharsIterator        mIterator;
   const nsTextFragment*       mFrag;
   nsTextFrame*                mTextFrame;
@@ -6239,9 +6238,8 @@ bool
 ClusterIterator::IsPunctuation()
 {
   NS_ASSERTION(mCharIndex >= 0, "No cluster selected");
-  if (!mCategories)
-    return false;
-  nsIUGenCategory::nsUGenCategory c = mCategories->Get(mFrag->CharAt(mCharIndex));
+  nsIUGenCategory::nsUGenCategory c =
+    mozilla::unicode::GetGenCategory(mFrag->CharAt(mCharIndex));
   return c == nsIUGenCategory::kPunctuation || c == nsIUGenCategory::kSymbol;
 }
 
@@ -6306,8 +6304,6 @@ ClusterIterator::ClusterIterator(nsTextFrame* aTextFrame, PRInt32 aPosition,
   }
   mIterator.SetOriginalOffset(aPosition);
 
-  mCategories = do_GetService(NS_UNICHARCATEGORY_CONTRACTID);
-  
   mFrag = aTextFrame->GetContent()->GetText();
   mTrimmed = aTextFrame->GetTrimmedOffsets(mFrag, true);
 
@@ -6448,7 +6444,7 @@ FindEndOfPunctuationRun(const nsTextFragment* aFrag,
   PRInt32 i;
 
   for (i = aStart; i < aEnd - aOffset; ++i) {
-    if (nsContentUtils::IsPunctuationMarkAt(aFrag, aOffset + i)) {
+    if (nsContentUtils::IsFirstLetterPunctuationAt(aFrag, aOffset + i)) {
       aIter->SetOriginalOffset(aOffset + i);
       FindClusterEnd(aTextRun, aEnd, aIter);
       i = aIter->GetOriginalOffset() - aOffset;

@@ -362,8 +362,6 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
 
     /*** end of early success return cases ***/
 
-    ScopedGfxFeatureReporter reporter("WebGL");
-
     // At this point we know that the old context is not going to survive, even though we still don't
     // know if creating the new context will succeed.
     DestroyResourcesAndContext();
@@ -385,6 +383,8 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
         Preferences::GetBool("webgl.disabled", false);
     bool verbose =
         Preferences::GetBool("webgl.verbose", false);
+
+    ScopedGfxFeatureReporter reporter("WebGL", forceEnabled);
 
     if (disabled)
         return NS_ERROR_FAILURE;
@@ -489,15 +489,9 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
     // if we want EGL, try it now
     if (!gl && (preferEGL || useANGLE) && !preferOpenGL) {
         gl = gl::GLContextProviderEGL::CreateOffscreen(gfxIntSize(width, height), format);
-        if (gl) {
-            if (InitAndValidateGL()) {
-                if (useANGLE) {
-                    gl->SetFlushGuaranteesResolve(true);
-                }
-            } else {
-                LogMessage("Error during ANGLE OpenGL ES initialization");
-                return NS_ERROR_FAILURE;
-            }
+        if (gl && !InitAndValidateGL()) {
+            LogMessage("Error during ANGLE OpenGL ES initialization");
+            return NS_ERROR_FAILURE;
         }
     }
 #endif

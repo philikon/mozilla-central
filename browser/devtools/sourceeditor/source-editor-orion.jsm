@@ -23,6 +23,7 @@
  *   Mihai Sucan <mihai.sucan@gmail.com> (original author)
  *   Kenny Heaton <kennyheaton@gmail.com>
  *   Spyros Livathinos <livathinos.spyros@gmail.com>
+ *   Allen Eubank <adeubank@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -124,6 +125,18 @@ const DEFAULT_KEYBINDINGS = [
     code: Ci.nsIDOMKeyEvent.DOM_VK_TAB,
     shift: true,
   },
+  {
+    action: "Move Lines Up",
+    code: Ci.nsIDOMKeyEvent.DOM_VK_UP,
+    ctrl: Services.appinfo.OS == "Darwin",
+    alt: true,
+  },
+  {
+    action: "Move Lines Down",
+    code: Ci.nsIDOMKeyEvent.DOM_VK_DOWN,
+    ctrl: Services.appinfo.OS == "Darwin",
+    alt: true,
+  },
 ];
 
 var EXPORTED_SYMBOLS = ["SourceEditor"];
@@ -146,6 +159,8 @@ function SourceEditor() {
     Services.prefs.getBoolPref(SourceEditor.PREFS.EXPAND_TAB);
 
   this._onOrionSelection = this._onOrionSelection.bind(this);
+  this._onTextChanged = this._onTextChanged.bind(this);
+  this._onOrionContextMenu = this._onOrionContextMenu.bind(this);
 
   this._eventTarget = {};
   this._eventListenersQueue = [];
@@ -172,6 +187,8 @@ SourceEditor.prototype = {
   _iframeWindow: null,
   _eventTarget: null,
   _eventListenersQueue: null,
+  _contextMenu: null,
+  _dirty: false,
 
   /**
    * The Source Editor user interface manager.
@@ -279,7 +296,21 @@ SourceEditor.prototype = {
 
     this._view.addEventListener("Load", onOrionLoad);
     if (config.highlightCurrentLine || Services.appinfo.OS == "Linux") {
-      this._view.addEventListener("Selection", this._onOrionSelection);
+      this.addEventListener(SourceEditor.EVENTS.SELECTION,
+                            this._onOrionSelection);
+    }
+    this.addEventListener(SourceEditor.EVENTS.TEXT_CHANGED,
+                           this._onTextChanged);
+
+    if (typeof config.contextMenu == "string") {
+      let chromeDocument = this.parentElement.ownerDocument;
+      this._contextMenu = chromeDocument.getElementById(config.contextMenu);
+    } else if (typeof config.contextMenu == "object" ) {
+      this._contextMenu = config._contextMenu;
+    }
+    if (this._contextMenu) {
+      this.addEventListener(SourceEditor.EVENTS.CONTEXT_MENU,
+                            this._onOrionContextMenu);
     }
 
     let KeyBinding = window.require("orion/textview/keyBinding").KeyBinding;
@@ -349,6 +380,7 @@ SourceEditor.prototype = {
       "Find Next Occurrence": [this.ui.findNext, this.ui],
       "Find Previous Occurrence": [this.ui.findPrevious, this.ui],
       "Goto Line...": [this.ui.gotoLine, this.ui],
+      "Move Lines Down": [this._moveLines, this],
     };
 
     for (let name in actions) {
@@ -356,9 +388,17 @@ SourceEditor.prototype = {
       this._view.setAction(name, action[0].bind(action[1]));
     }
 
+    this._view.setAction("Move Lines Up", this._moveLines.bind(this, true));
+
     let keys = (config.keys || []).concat(DEFAULT_KEYBINDINGS);
     keys.forEach(function(aKey) {
-      let binding = new KeyBinding(aKey.code, aKey.accel, aKey.shift, aKey.alt);
+      // In Orion mod1 refers to Cmd on Macs and Ctrl on Windows and Linux.
+      // So, if ctrl is in aKey we use it on Windows and Linux, otherwise
+      // we use aKey.accel for mod1.
+      let mod1 = Services.appinfo.OS != "Darwin" &&
+                 "ctrl" in aKey ? aKey.ctrl : aKey.accel;
+      let binding = new KeyBinding(aKey.code, mod1, aKey.shift, aKey.alt,
+                                  aKey.ctrl);
       this._view.setKeyBinding(binding, aKey.action);
 
       if (aKey.callback) {
@@ -561,6 +601,78 @@ SourceEditor.prototype = {
   },
 
   /**
+   * Move lines upwards or downwards, relative to the current caret location.
+   *
+   * @private
+   * @param boolean aLineAbove
+   *        True if moving lines up, false to move lines down.
+   */
+  _moveLines: function SE__moveLines(aLineAbove)
+  {
+    if (this.readOnly) {
+      return false;
+    }
+
+    let model = this._model;
+    let selection = this.getSelection();
+    let firstLine = model.getLineAtOffset(selection.start);
+    if (firstLine == 0 && aLineAbove) {
+      return true;
+    }
+
+    let lastLine = model.getLineAtOffset(selection.end);
+    let firstLineStart = model.getLineStart(firstLine);
+    let lastLineStart = model.getLineStart(lastLine);
+    if (selection.start != selection.end && lastLineStart == selection.end) {
+      lastLine--;
+    }
+    if (!aLineAbove && (lastLine + 1) == this.getLineCount()) {
+      return true;
+    }
+
+    let lastLineEnd = model.getLineEnd(lastLine, true);
+    let text = this.getText(firstLineStart, lastLineEnd);
+
+    if (aLineAbove) {
+      let aboveLine = firstLine - 1;
+      let aboveLineStart = model.getLineStart(aboveLine);
+
+      this.startCompoundChange();
+      if (lastLine == (this.getLineCount() - 1)) {
+        let delimiterStart = model.getLineEnd(aboveLine);
+        let delimiterEnd = model.getLineEnd(aboveLine, true);
+        let lineDelimiter = this.getText(delimiterStart, delimiterEnd);
+        text += lineDelimiter;
+        this.setText("", firstLineStart - lineDelimiter.length, lastLineEnd);
+      } else {
+        this.setText("", firstLineStart, lastLineEnd);
+      }
+      this.setText(text, aboveLineStart, aboveLineStart);
+      this.endCompoundChange();
+      this.setSelection(aboveLineStart, aboveLineStart + text.length);
+    } else {
+      let belowLine = lastLine + 1;
+      let belowLineEnd = model.getLineEnd(belowLine, true);
+
+      let insertAt = belowLineEnd - lastLineEnd + firstLineStart;
+      let lineDelimiter = "";
+      if (belowLine == this.getLineCount() - 1) {
+        let delimiterStart = model.getLineEnd(lastLine);
+        lineDelimiter = this.getText(delimiterStart, lastLineEnd);
+        text = lineDelimiter + text.substr(0, text.length -
+                                              lineDelimiter.length);
+      }
+      this.startCompoundChange();
+      this.setText("", firstLineStart, lastLineEnd);
+      this.setText(text, insertAt, insertAt);
+      this.endCompoundChange();
+      this.setSelection(insertAt + lineDelimiter.length,
+                        insertAt + text.length);
+    }
+    return true;
+  },
+
+  /**
    * The Orion Selection event handler. The current caret line is
    * highlighted and for Linux users the selected text is copied into the X11
    * PRIMARY buffer.
@@ -585,6 +697,44 @@ SourceEditor.prototype = {
         window.setTimeout(this._updatePrimarySelection.bind(this),
                           PRIMARY_SELECTION_DELAY);
     }
+  },
+
+  /**
+   * The TextChanged event handler which tracks the dirty state of the editor.
+   *
+   * @see SourceEditor.EVENTS.TEXT_CHANGED
+   * @see SourceEditor.EVENTS.DIRTY_CHANGED
+   * @see SourceEditor.dirty
+   * @private
+   */
+  _onTextChanged: function SE__onTextChanged()
+  {
+    this._updateDirty();
+  },
+
+  /**
+   * The Orion contextmenu event handler. This method opens the default or
+   * the custom context menu popup at the pointer location.
+   *
+   * @param object aEvent
+   *        The contextmenu event object coming from Orion. This object should
+   *        hold the screenX and screenY properties.
+   */
+  _onOrionContextMenu: function SE__onOrionContextMenu(aEvent)
+  {
+    if (this._contextMenu.state == "closed") {
+      this._contextMenu.openPopupAtScreen(aEvent.screenX || 0,
+                                          aEvent.screenY || 0, true);
+    }
+  },
+
+  /**
+   * Update the dirty state of the editor based on the undo stack.
+   * @private
+   */
+  _updateDirty: function SE__updateDirty()
+  {
+    this.dirty = !this._undoStack.isClean();
   },
 
   /**
@@ -866,18 +1016,28 @@ SourceEditor.prototype = {
 
   /**
    * Undo a change in the editor.
+   *
+   * @return boolean
+   *         True if there was a change undone, false otherwise.
    */
   undo: function SE_undo()
   {
-    return this._undoStack.undo();
+    let result = this._undoStack.undo();
+    this.ui._onUndoRedo();
+    return result;
   },
 
   /**
    * Redo a change in the editor.
+   *
+   * @return boolean
+   *         True if there was a change redone, false otherwise.
    */
   redo: function SE_redo()
   {
-    return this._undoStack.redo();
+    let result = this._undoStack.redo();
+    this.ui._onUndoRedo();
+    return result;
   },
 
   /**
@@ -903,11 +1063,54 @@ SourceEditor.prototype = {
   },
 
   /**
-   * Reset the Undo stack
+   * Reset the Undo stack.
    */
   resetUndo: function SE_resetUndo()
   {
     this._undoStack.reset();
+    this._updateDirty();
+    this.ui._onUndoRedo();
+  },
+
+  /**
+   * Set the "dirty" state of the editor. Set this to false when you save the
+   * text being edited. The dirty state will become true once the user makes
+   * changes to the text.
+   *
+   * @param boolean aNewValue
+   *        The new dirty state: true if the text is not saved, false if you
+   *        just saved the text.
+   */
+  set dirty(aNewValue)
+  {
+    if (aNewValue == this._dirty) {
+      return;
+    }
+
+    let event = {
+      type: SourceEditor.EVENTS.DIRTY_CHANGED,
+      oldValue: this._dirty,
+      newValue: aNewValue,
+    };
+
+    this._dirty = aNewValue;
+    if (!this._dirty && !this._undoStack.isClean()) {
+      this._undoStack.markClean();
+    }
+    this._dispatchEvent(event);
+  },
+
+  /**
+   * Get the editor "dirty" state. This tells if the text is considered saved or
+   * not.
+   *
+   * @see SourceEditor.EVENTS.DIRTY_CHANGED
+   * @return boolean
+   *         True if there are changes which are not saved, false otherwise.
+   */
+  get dirty()
+  {
+    return this._dirty;
   },
 
   /**
@@ -1326,9 +1529,21 @@ SourceEditor.prototype = {
   destroy: function SE_destroy()
   {
     if (this._config.highlightCurrentLine || Services.appinfo.OS == "Linux") {
-      this._view.removeEventListener("Selection", this._onOrionSelection);
+      this.removeEventListener(SourceEditor.EVENTS.SELECTION,
+                               this._onOrionSelection);
     }
     this._onOrionSelection = null;
+
+    this.removeEventListener(SourceEditor.EVENTS.TEXT_CHANGED,
+                             this._onTextChanged);
+    this._onTextChanged = null;
+
+    if (this._contextMenu) {
+      this.removeEventListener(SourceEditor.EVENTS.CONTEXT_MENU,
+                               this._onOrionContextMenu);
+      this._contextMenu = null;
+    }
+    this._onOrionContextMenu = null;
 
     if (this._primarySelectionTimeout) {
       let window = this.parentElement.ownerDocument.defaultView;

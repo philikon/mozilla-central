@@ -100,6 +100,9 @@ public class AwesomeBarTabs extends TabHost {
     private JSONArray mSearchEngines;
     private ContentResolver mContentResolver;
 
+    private BookmarksQueryTask mBookmarksQueryTask;
+    private HistoryQueryTask mHistoryQueryTask;
+    
     private AwesomeBarCursorAdapter mAllPagesCursorAdapter;
     private BookmarksListAdapter mBookmarksAdapter;
     private SimpleExpandableListAdapter mHistoryAdapter;
@@ -199,6 +202,7 @@ public class AwesomeBarTabs extends TabHost {
         private static final int VIEW_TYPE_COUNT = 2;
 
         private LayoutInflater mInflater;
+        private Resources mResources;
         private LinkedList<Pair<Integer, String>> mParentStack;
         private RefreshBookmarkCursorTask mRefreshTask = null;
         private TextView mBookmarksTitleView;
@@ -207,6 +211,7 @@ public class AwesomeBarTabs extends TabHost {
             super(context, layout, c, from, to);
 
             mInflater = (LayoutInflater) mContext.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
+            mResources = mContext.getResources();
 
             // mParentStack holds folder id/title pairs that allow us to navigate
             // back up the folder heirarchy
@@ -214,7 +219,7 @@ public class AwesomeBarTabs extends TabHost {
 
             // Add the root folder to the stack
             Pair<Integer, String> rootFolder = new Pair<Integer, String>(Bookmarks.FIXED_ROOT_ID, "");
-            mParentStack.push(rootFolder);
+            mParentStack.addFirst(rootFolder);
         }
 
         public void refreshCurrentFolder() {
@@ -233,14 +238,14 @@ public class AwesomeBarTabs extends TabHost {
             if (mParentStack.size() == 1)
                 return false;
 
-            mParentStack.pop();
+            mParentStack.removeFirst();
             refreshCurrentFolder();
             return true;
         }
 
         public void moveToChildFolder(int folderId, String folderTitle) {
             Pair<Integer, String> folderPair = new Pair<Integer, String>(folderId, folderTitle);
-            mParentStack.push(folderPair);
+            mParentStack.addFirst(folderPair);
             refreshCurrentFolder();
         }
 
@@ -265,6 +270,24 @@ public class AwesomeBarTabs extends TabHost {
             if (!c.moveToPosition(position))
                 return "";
 
+            String guid = c.getString(c.getColumnIndexOrThrow(Bookmarks.GUID));
+
+            // If we don't have a special GUID, just return the folder title from the DB.
+            if (guid == null || guid.length() == 12)
+                return c.getString(c.getColumnIndexOrThrow(Bookmarks.TITLE));
+
+            // Use localized strings for special folder names.
+            if (guid.equals(Bookmarks.MOBILE_FOLDER_GUID))
+                return mResources.getString(R.string.bookmarks_folder_mobile);
+            else if (guid.equals(Bookmarks.MENU_FOLDER_GUID))
+                return mResources.getString(R.string.bookmarks_folder_menu);
+            else if (guid.equals(Bookmarks.TOOLBAR_FOLDER_GUID))
+                return mResources.getString(R.string.bookmarks_folder_toolbar);
+            else if (guid.equals(Bookmarks.UNFILED_FOLDER_GUID))
+                return mResources.getString(R.string.bookmarks_folder_unfiled);
+
+            // If for some reason we have a folder with a special GUID, but it's not one of
+            // the special folders we expect in the UI, just return the title from the DB.
             return c.getString(c.getColumnIndexOrThrow(Bookmarks.TITLE));
         }
 
@@ -319,8 +342,10 @@ public class AwesomeBarTabs extends TabHost {
     // This method checks to see if we're in a bookmark sub-folder. If we are,
     // it will go up a level and return true. Otherwise it will return false.
     public boolean onBackPressed() {
-        // If we're not in the bookmarks tab, we have nothing to do
-        if (!getCurrentTabTag().equals(BOOKMARKS_TAB))
+        // If we're not in the bookmarks tab, we have nothing to do. We should
+        // also return false if mBookmarksAdapter hasn't been initialized yet.
+        if (!getCurrentTabTag().equals(BOOKMARKS_TAB) ||
+                mBookmarksAdapter == null)
             return false;
 
         return mBookmarksAdapter.moveToParentFolder();
@@ -365,6 +390,8 @@ public class AwesomeBarTabs extends TabHost {
             bookmarksList.addHeaderView(headerView, null, true);
 
             bookmarksList.setAdapter(mBookmarksAdapter);
+
+            mBookmarksQueryTask = null;
         }
     }
 
@@ -559,6 +586,8 @@ public class AwesomeBarTabs extends TabHost {
             historyList.setAdapter(mHistoryAdapter);
 
             expandAllGroups(historyList);
+
+            mHistoryQueryTask = null;
         }
     }
 
@@ -706,10 +735,14 @@ public class AwesomeBarTabs extends TabHost {
 
                 // Lazy load bookmarks and history lists. Only query the database
                 // if those lists requested by user.
-                if (tabId.equals(BOOKMARKS_TAB) && mBookmarksAdapter == null) {
-                    new BookmarksQueryTask().execute();
-                } else if (tabId.equals(HISTORY_TAB) && mHistoryAdapter == null) {
-                    new HistoryQueryTask().execute();
+                if (tabId.equals(BOOKMARKS_TAB) && mBookmarksAdapter == null
+                        && mBookmarksQueryTask == null) {
+                    mBookmarksQueryTask = new BookmarksQueryTask();
+                    mBookmarksQueryTask.execute();
+                } else if (tabId.equals(HISTORY_TAB) && mHistoryAdapter == null
+                        && mHistoryQueryTask == null) {
+                    mHistoryQueryTask = new HistoryQueryTask();
+                    mHistoryQueryTask.execute();
                 } else {
                     hideSoftInput = false;
                 }

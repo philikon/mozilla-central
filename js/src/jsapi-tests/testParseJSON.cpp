@@ -51,7 +51,7 @@ BEGIN_TEST(testParseJSON_success)
     CHECK(TryParse(cx, "1", DOUBLE_TO_JSVAL(1)));
     CHECK(TryParse(cx, "1.75", DOUBLE_TO_JSVAL(1.75)));
     CHECK(TryParse(cx, "9e9", DOUBLE_TO_JSVAL(9e9)));
-    CHECK(TryParse(cx, "9e99999", DOUBLE_TO_JSVAL(std::numeric_limits<jsdouble>::infinity())));
+    CHECK(TryParse(cx, "9e99999", DOUBLE_TO_JSVAL(std::numeric_limits<double>::infinity())));
 
     JSFlatString *str;
 
@@ -194,7 +194,7 @@ reportJSONEror(JSContext *cx, const char *message, JSErrorReport *report)
 END_TEST(testParseJSON_error)
 
 static JSBool
-Censor(JSContext *cx, uintN argc, jsval *vp)
+Censor(JSContext *cx, unsigned argc, jsval *vp)
 {
     JS_ASSERT(argc == 2);
 #ifdef DEBUG

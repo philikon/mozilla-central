@@ -147,7 +147,7 @@
 #include "nsILink.h"
 #include "nsBlobProtocolHandler.h"
 
-#include "nsICharsetAlias.h"
+#include "nsCharsetAlias.h"
 #include "nsIParser.h"
 #include "nsIContentSink.h"
 
@@ -1636,6 +1636,7 @@ nsDocument::~nsDocument()
 
   if (mListenerManager) {
     mListenerManager->Disconnect();
+    UnsetFlags(NODE_HAS_LISTENERMANAGER);
   }
 
   if (mScriptLoader) {
@@ -1950,6 +1951,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
 
   if (tmp->mListenerManager) {
     tmp->mListenerManager->Disconnect();
+    tmp->UnsetFlags(NODE_HAS_LISTENERMANAGER);
     tmp->mListenerManager = nsnull;
   }
 
@@ -3010,13 +3012,10 @@ nsDocument::SetDocumentCharacterSet(const nsACString& aCharSetID)
     mCharacterSet = aCharSetID;
 
 #ifdef DEBUG
-    nsCOMPtr<nsICharsetAlias> calias(do_GetService(NS_CHARSETALIAS_CONTRACTID));
-    if (calias) {
-      nsCAutoString canonicalName;
-      calias->GetPreferred(aCharSetID, canonicalName);
-      NS_ASSERTION(canonicalName.Equals(aCharSetID),
-                   "charset name must be canonical");
-    }
+    nsCAutoString canonicalName;
+    nsCharsetAlias::GetPreferred(aCharSetID, canonicalName);
+    NS_ASSERTION(canonicalName.Equals(aCharSetID),
+                 "charset name must be canonical");
 #endif
 
     PRInt32 n = mCharSetObservers.Length();
@@ -3170,16 +3169,10 @@ nsDocument::TryChannelCharset(nsIChannel *aChannel,
     nsCAutoString charsetVal;
     nsresult rv = aChannel->GetContentCharset(charsetVal);
     if (NS_SUCCEEDED(rv)) {
-      nsCOMPtr<nsICharsetAlias> calias(do_GetService(NS_CHARSETALIAS_CONTRACTID));
-      if (calias) {
-        nsCAutoString preferred;
-        rv = calias->GetPreferred(charsetVal,
-                                  preferred);
-        if(NS_SUCCEEDED(rv)) {
-          aCharset = preferred;
-          aCharsetSource = kCharsetFromChannel;
-          return true;
-        }
+      rv = nsCharsetAlias::GetPreferred(charsetVal, aCharset);
+      if(NS_SUCCEEDED(rv)) {
+        aCharsetSource = kCharsetFromChannel;
+        return true;
       }
     }
   }
@@ -6215,6 +6208,7 @@ nsDocument::GetListenerManager(bool aCreateIfNotFound)
   if (!mListenerManager && aCreateIfNotFound) {
     mListenerManager =
       new nsEventListenerManager(static_cast<nsIDOMEventTarget*>(this));
+    SetFlags(NODE_HAS_LISTENERMANAGER);
   }
 
   return mListenerManager;
@@ -8483,19 +8477,6 @@ nsDocument::CreateTouchList(nsIVariant* aPoints,
   return NS_OK;
 }
 
-PRInt64
-nsIDocument::SizeOf() const
-{
-  PRInt64 size = MemoryReporter::GetBasicSize<nsIDocument, nsINode>(this);
-
-  for (nsIContent* node = GetFirstChild(); node;
-       node = node->GetNextNode(this)) {
-    size += node->SizeOf();
-  }
-
-  return size;
-}
-
 static void
 DispatchFullScreenChange(nsIDocument* aTarget)
 {
@@ -9081,14 +9062,6 @@ nsDocument::IsFullScreenEnabled(bool aCallerIsChrome, bool aLogFailure)
   return true;
 }
 
-PRInt64
-nsDocument::SizeOf() const
-{
-  PRInt64 size = MemoryReporter::GetBasicSize<nsDocument, nsIDocument>(this);
-  size += mAttrStyleSheet ? mAttrStyleSheet->DOMSizeOf() : 0;
-  return size;
-}
-
 #define EVENT(name_, id_, type_, struct_)                                 \
   NS_IMETHODIMP nsDocument::GetOn##name_(JSContext *cx, jsval *vp) {      \
     return nsINode::GetOn##name_(cx, vp);                                 \
@@ -9161,6 +9134,31 @@ nsDocument::GetMozVisibilityState(nsAString& aState)
   return NS_OK;
 }
 
+/* virtual */ void
+nsIDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
+{
+  aWindowSizes->mDOM +=
+    nsINode::SizeOfExcludingThis(aWindowSizes->mMallocSizeOf);
+
+  if (mPresShell) {
+    mPresShell->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf,
+                                    &aWindowSizes->mLayoutArenas,
+                                    &aWindowSizes->mLayoutStyleSets,
+                                    &aWindowSizes->mLayoutTextRuns);
+  }
+
+  // Measurement of the following members may be added later if DMD finds it
+  // is worthwhile:
+  // - many!
+}
+
+void
+nsIDocument::DocSizeOfIncludingThis(nsWindowSizes* aWindowSizes) const
+{
+  aWindowSizes->mDOM += aWindowSizes->mMallocSizeOf(this);
+  DocSizeOfExcludingThis(aWindowSizes);
+}
+
 static size_t
 SizeOfStyleSheetsElementIncludingThis(nsIStyleSheet* aStyleSheet,
                                       nsMallocSizeOfFun aMallocSizeOf,
@@ -9169,9 +9167,39 @@ SizeOfStyleSheetsElementIncludingThis(nsIStyleSheet* aStyleSheet,
   return aStyleSheet->SizeOfIncludingThis(aMallocSizeOf);
 }
 
-/* virtual */ size_t
-nsDocument::SizeOfStyleSheets(nsMallocSizeOfFun aMallocSizeOf) const
+size_t
+nsDocument::SizeOfExcludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 {
-  return mStyleSheets.SizeOfExcludingThis(SizeOfStyleSheetsElementIncludingThis,
-                                          aMallocSizeOf); 
+  // This SizeOfExcludingThis() overrides the one from nsINode.  But
+  // nsDocuments can only appear at the top of the DOM tree, and we use the
+  // specialized DocSizeOfExcludingThis() in that case.  So this should never
+  // be called.
+  MOZ_NOT_REACHED("nsDocument::SizeOfExcludingThis");
+  return 0;
+}
+
+void
+nsDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
+{
+  nsIDocument::DocSizeOfExcludingThis(aWindowSizes);
+
+  for (nsIContent* node = nsINode::GetFirstChild();
+       node;
+       node = node->GetNextNode(this))
+  {
+    aWindowSizes->mDOM +=
+      node->SizeOfIncludingThis(aWindowSizes->mMallocSizeOf);
+  }
+
+  aWindowSizes->mStyleSheets +=
+    mStyleSheets.SizeOfExcludingThis(SizeOfStyleSheetsElementIncludingThis,
+                                     aWindowSizes->mMallocSizeOf); 
+  aWindowSizes->mDOM +=
+    mAttrStyleSheet ?
+    mAttrStyleSheet->DOMSizeOfIncludingThis(aWindowSizes->mMallocSizeOf) :
+    0;
+
+  // Measurement of the following members may be added later if DMD finds it
+  // is worthwhile:
+  // - many!
 }

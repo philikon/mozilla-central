@@ -904,7 +904,7 @@ GetAllKeysHelper::GetSuccessResult(JSContext* aCx,
   }
 
   if (!keys.IsEmpty()) {
-    if (!JS_SetArrayLength(aCx, array, jsuint(keys.Length()))) {
+    if (!JS_SetArrayLength(aCx, array, uint32_t(keys.Length()))) {
       NS_WARNING("Failed to set array length!");
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
     }
@@ -1450,5 +1450,5 @@ nsresult
 CountHelper::GetSuccessResult(JSContext* aCx,
                               jsval* aVal)
 {
-  return JS_NewNumberValue(aCx, static_cast<jsdouble>(mCount), aVal);
+  return JS_NewNumberValue(aCx, static_cast<double>(mCount), aVal);
 }

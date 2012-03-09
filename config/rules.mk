@@ -131,10 +131,12 @@ SOLO_FILE ?= $(error Specify a test filename in SOLO_FILE when using check-inter
 
 libs::
 	$(foreach dir,$(XPCSHELL_TESTS),$(_INSTALL_TESTS))
+ifndef NO_XPCSHELL_MANIFEST_CHECK
 	$(PYTHON) $(MOZILLA_DIR)/build/xpccheck.py \
 	  $(topsrcdir) \
 	  $(topsrcdir)/testing/xpcshell/xpcshell.ini \
 	  $(addprefix $(MOZILLA_DIR)/$(relativesrcdir)/,$(XPCSHELL_TESTS))
+endif
 
 testxpcsrcdir = $(topsrcdir)/testing/xpcshell
 
@@ -146,6 +148,9 @@ xpcshell-tests:
 	  $(testxpcsrcdir)/runxpcshelltests.py \
 	  --symbols-path=$(DIST)/crashreporter-symbols \
 	  --build-info-json=$(DEPTH)/mozinfo.json \
+	  --tests-root-dir=$(testxpcobjdir) \
+	  --xunit-file=$(testxpcobjdir)/$(relativesrcdir)/results.xml \
+	  --xunit-suite-name=xpcshell \
 	  $(EXTRA_TEST_ARGS) \
 	  $(LIBXUL_DIST)/bin/xpcshell \
 	  $(foreach dir,$(XPCSHELL_TESTS),$(testxpcobjdir)/$(relativesrcdir)/$(dir))

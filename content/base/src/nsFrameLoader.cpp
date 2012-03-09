@@ -981,9 +981,9 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  nsCOMPtr<nsIDocShell> ourDochell = GetExistingDocShell();
+  nsCOMPtr<nsIDocShell> ourDocshell = GetExistingDocShell();
   nsCOMPtr<nsIDocShell> otherDocshell = aOther->GetExistingDocShell();
-  if (!ourDochell || !otherDocshell) {
+  if (!ourDocshell || !otherDocshell) {
     // How odd
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -991,7 +991,7 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   // To avoid having to mess with session history, avoid swapping
   // frameloaders that don't correspond to root same-type docshells,
   // unless both roots have session history disabled.
-  nsCOMPtr<nsIDocShellTreeItem> ourTreeItem = do_QueryInterface(ourDochell);
+  nsCOMPtr<nsIDocShellTreeItem> ourTreeItem = do_QueryInterface(ourDocshell);
   nsCOMPtr<nsIDocShellTreeItem> otherTreeItem =
     do_QueryInterface(otherDocshell);
   nsCOMPtr<nsIDocShellTreeItem> ourRootTreeItem, otherRootTreeItem;
@@ -1059,7 +1059,7 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  nsCOMPtr<nsPIDOMWindow> ourWindow = do_GetInterface(ourDochell);
+  nsCOMPtr<nsPIDOMWindow> ourWindow = do_GetInterface(ourDocshell);
   nsCOMPtr<nsPIDOMWindow> otherWindow = do_GetInterface(otherDocshell);
 
   nsCOMPtr<nsIDOMElement> ourFrameElement =
@@ -1106,6 +1106,14 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   nsIPresShell* ourShell = ourDoc->GetShell();
   nsIPresShell* otherShell = otherDoc->GetShell();
   if (!ourShell || !otherShell) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
+  bool weAreBrowserFrame = false;
+  bool otherIsBrowserFrame = false;
+  ourDocshell->GetIsBrowserFrame(&weAreBrowserFrame);
+  otherDocshell->GetIsBrowserFrame(&otherIsBrowserFrame);
+  if (weAreBrowserFrame != otherIsBrowserFrame) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 

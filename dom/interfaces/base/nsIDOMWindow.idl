@@ -70,7 +70,7 @@ interface nsIDOMMozURLProperty : nsISupports
  * @see <http://www.whatwg.org/html/#window>
  */
 
-[scriptable, uuid(f6e3b10d-d5f4-4fcd-aa4c-5f98626d428a)]
+[scriptable, uuid(17400E2B-F78B-4E69-B500-C2A3135A40FD)]
 interface nsIDOMWindow : nsISupports
 {
   // the current browsing context
@@ -503,11 +503,6 @@ interface nsIDOMWindow : nsISupports
    * @see <http://dev.w3.org/2006/webapi/FileAPI/#creating-revoking>
    */
   readonly attribute nsIDOMMozURLProperty URL;
-
-  /**
-   * Global storage, accessible by domain.
-   */
-  readonly attribute nsIDOMStorageList globalStorage;
 
   /**
    * HTML5 event attributes that only apply to windows and <body>/<frameset>
