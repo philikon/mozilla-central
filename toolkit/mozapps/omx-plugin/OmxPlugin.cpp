@@ -347,7 +347,8 @@ bool OmxDecoder::Init() {
   mAudioSource = audioSource;
   mDurationUs = totalDurationUs;
 
-  return SetVideoFormat() && SetAudioFormat();
+  return (!mVideoSource.get() || SetVideoFormat()) &&
+         (!mAudioSource.get() || SetAudioFormat());
 }
 
 bool OmxDecoder::SetVideoFormat() {
@@ -645,6 +646,7 @@ static bool Match(const char *aMimeChars, size_t aMimeLen, const char *aNeedle)
 
 static const char* const gCodecs[] = {
   "avc",
+  "mp3",
   "mp4v",
   "mp4a",
   NULL
@@ -654,6 +656,7 @@ static bool CanDecode(const char *aMimeChars, size_t aMimeLen, const char* const
 {
   if (!Match(aMimeChars, aMimeLen, "video/mp4") &&
       !Match(aMimeChars, aMimeLen, "audio/mp4") &&
+      !Match(aMimeChars, aMimeLen, "audio/mpeg") &&
       !Match(aMimeChars, aMimeLen, "application/octet-stream")) { // file urls
     return false;
   }
