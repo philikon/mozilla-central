@@ -5056,14 +5056,6 @@ cairo-gonk)
 
 esac
 
-if test -n "$MOZ_MEDIA_PLUGINS"; then
-  AC_DEFINE(MOZ_MEDIA_PLUGINS)
-fi
-
-if test -n "$MOZ_OMX_PLUGIN"; then
-  AC_DEFINE(MOZ_OMX_PLUGIN)
-fi
-
 AC_SUBST(MOZ_OLD_LINKER)
 AC_SUBST(MOZ_PDF_PRINTING)
 if test "$MOZ_PDF_PRINTING"; then
@@ -5796,6 +5788,10 @@ MOZ_ARG_DISABLE_BOOL(media-plugins,
     MOZ_MEDIA_PLUGINS=,
     MOZ_MEDIA_PLUGINS=1)
 
+if test -n "$MOZ_MEDIA_PLUGINS"; then
+  AC_DEFINE(MOZ_MEDIA_PLUGINS)
+fi
+
 dnl ========================================================
 dnl = Enable building OMX media plugin (android)
 dnl ========================================================
@@ -5805,6 +5801,7 @@ MOZ_ARG_ENABLE_BOOL(omx-plugin,
     MOZ_OMX_PLUGIN=)
 
 if test -n "$MOZ_OMX_PLUGIN"; then
+    AC_DEFINE(MOZ_OMX_PLUGIN)
     if test -z "$android_source" ; then
         AC_MSG_ERROR([You must specify --with-android-source=/path/to/source when building the OMX plugin.])
     fi
