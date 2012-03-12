@@ -11,9 +11,12 @@
 #include "hardware/sensors.h"
 #include "mozilla/Util.h"
 #include "SensorDevice.h"
+#include "nsThreadUtils.h"
 
 using namespace mozilla::hal;
 using namespace android;
+
+namespace mozilla {
 
 static SensorType
 HardwareSensorToHalSensor(int type)
@@ -63,19 +66,19 @@ SensorseventToSensorData(const sensors_event_t& data, SensorData* aSensorData)
 static void
 onSensorChanged(const sensors_event_t& data, SensorData* aSensorData)
 {
-  mozilla::DebugOnly<bool> convertedData = SensorseventToSensorData(data, aSensorData);
+  DebugOnly<bool> convertedData = SensorseventToSensorData(data, aSensorData);
   MOZ_ASSERT(convertedData);
   NotifySensorChange(*aSensorData);
 }
 
-namespace mozilla {
 namespace hal_impl {
 
 static pthread_t sThread;
-static bool sInitialized = false;
-static bool sContinue = false;
-static int sActivatedSensors = 0;
+static bool sInitialized;
+static bool sContinue;
+static int sActivatedSensors;
 static SensorData sSensordata[NUM_SENSOR_TYPE];
+static nsCOMPtr<nsIThread> sSwitchThread;
 
 static void*
 UpdateSensorData(void* /*unused*/)
@@ -100,9 +103,10 @@ UpdateSensorData(void* /*unused*/)
 }
 
 static void 
-InitialResources()
+InitializeResources()
 {
   pthread_create(&sThread, NULL, &UpdateSensorData, NULL);
+  NS_NewThread(getter_AddRefs(sSwitchThread));
   sInitialized = true;
   sContinue = true;
 }
@@ -112,46 +116,53 @@ ReleaseResources()
 {
   sContinue = false;
   pthread_join(sThread, NULL);
+  sSwitchThread->Shutdown();
   sInitialized = false;
 }
 
-typedef struct {
-  bool activate;
-  SensorType type;
-} SensorInfo;
+// This class is used as a runnable on the sSwitchThread
+class SensorInfo {
+  public:
+    NS_INLINE_DECL_REFCOUNTING(SensorInfo)
 
-static void* SensorSwitchRun(void* aSensorInfo) {
-  SensorInfo* info = static_cast<SensorInfo*>(aSensorInfo);
-  int type = HalSensorToHardwareSensor(info->type);
-  const sensor_t* sensors = NULL;
-  SensorDevice& device = SensorDevice::getInstance();
-  size_t size = device.getSensorList(&sensors);
+    SensorInfo(bool aActivate, sensor_t aSensor, pthread_t aThreadId) :
+               activate(aActivate), sensor(aSensor), threadId(aThreadId) { }
 
-  for (size_t i = 0; i < size; i++) {
-    if (sensors[i].type == type) {
-      device.activate((void*)pthread_self(), sensors[i].handle, info->activate);
-      break;
+    void Switch() {
+     SensorDevice& device = SensorDevice::getInstance();
+     device.activate((void*)threadId, sensor.handle, activate);
     }
-  }
-  moz_free(aSensorInfo);
-  return NULL;
-}
+
+  protected:
+    SensorInfo() { };
+    bool      activate;
+    sensor_t  sensor;
+    pthread_t threadId;
+};
 
 static void
 SensorSwitch(SensorType aSensor, bool activate)
 {
-  SensorInfo* info = (SensorInfo*)moz_malloc(sizeof(SensorInfo));
-  if (!info)
-    return;
-  pthread_t thread;
-  pthread_create(&thread, NULL, SensorSwitchRun, info);
+  int type = HalSensorToHardwareSensor(aSensor);
+  const sensor_t* sensors = NULL;
+  SensorDevice& device = SensorDevice::getInstance();
+  size_t size = device.getSensorList(&sensors);
+  for (size_t i = 0; i < size; i++) {
+    if (sensors[i].type == type) {
+      // Post an event to the activation thread
+      nsCOMPtr<nsIRunnable> event = NS_NewRunnableMethod(new SensorInfo(activate, sensors[i], pthread_self()),
+                                                         &SensorInfo::Switch);
+      sSwitchThread->Dispatch(event, NS_DISPATCH_NORMAL);
+      break;
+    }
+  }
 }
 
 void
 EnableSensorNotifications(SensorType aSensor) 
 {
   if (!sInitialized) {
-    InitialResources();
+    InitializeResources();
   }
   
   SensorSwitch(aSensor, true);
