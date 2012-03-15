@@ -248,6 +248,9 @@ pref("extensions.blocklist.detailsURL", "https://www.mozilla.com/%LOCALE%/blockl
 pref("dom.disable_open_during_load", true);
 pref("privacy.popups.showBrowserMessage", true);
 
+/* disable opening windows with the dialog feature */
+pref("dom.disable_window_open_dialog_feature", true);
+
 pref("keyword.enabled", true);
 pref("keyword.URL", "http://www.google.com/m?ie=UTF-8&oe=UTF-8&sourceid=navclient&gfns=1&q=");
 
@@ -465,7 +468,7 @@ pref("dom.ipc.content.nice", 1);
 // product URLs
 // The breakpad report server to link to in about:crashes
 pref("breakpad.reportURL", "http://crash-stats.mozilla.com/report/index/");
-pref("app.support.baseURL", "http://support.mozilla.org/mobile");
+pref("app.support.baseURL", "http://support.mozilla.org/1/mobile/%VERSION%/%OS%/%LOCALE%/");
 pref("app.feedbackURL", "http://input.mozilla.com/feedback/");
 pref("app.privacyURL", "http://www.mozilla.com/%LOCALE%/m/privacy.html");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
@@ -597,6 +600,8 @@ pref("layers.acceleration.disabled", false);
 #else
 pref("layers.acceleration.disabled", true);
 #endif
+
+pref("layers.offmainthreadcomposition.enabled", true);
 
 pref("notification.feature.enabled", true);
 

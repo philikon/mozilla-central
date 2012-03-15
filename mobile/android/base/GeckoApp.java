@@ -42,7 +42,7 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.gfx.FloatSize;
-import org.mozilla.gecko.gfx.GeckoSoftwareLayerClient;
+import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.IntSize;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.LayerController;
@@ -51,6 +51,7 @@ import org.mozilla.gecko.gfx.PlaceholderLayerClient;
 import org.mozilla.gecko.gfx.RectUtils;
 import org.mozilla.gecko.gfx.SurfaceTextureLayer;
 import org.mozilla.gecko.gfx.ViewportMetrics;
+import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.Tab.HistoryEntry;
 
 import java.io.*;
@@ -109,6 +110,7 @@ abstract public class GeckoApp
     public static final String ACTION_BOOKMARK      = "org.mozilla.gecko.BOOKMARK";
     public static final String ACTION_LOAD          = "org.mozilla.gecko.LOAD";
     public static final String ACTION_UPDATE        = "org.mozilla.gecko.UPDATE";
+    public static final String ACTION_INIT_PW       = "org.mozilla.gecko.INIT_PW";
     public static final String SAVED_STATE_URI      = "uri";
     public static final String SAVED_STATE_TITLE    = "title";
     public static final String SAVED_STATE_VIEWPORT = "viewport";
@@ -121,7 +123,6 @@ abstract public class GeckoApp
     public static SurfaceView cameraView;
     public static GeckoApp mAppContext;
     public static boolean mDOMFullScreen = false;
-    public static File sGREDir = null;
     public static Menu sMenu;
     private static GeckoThread sGeckoThread = null;
     public GeckoAppHandler mMainHandler;
@@ -139,11 +140,9 @@ abstract public class GeckoApp
     public static FormAssistPopup mFormAssistPopup;
     public Favicons mFavicons;
 
-    private Geocoder mGeocoder;
-    private Address  mLastGeoAddress;
     private static LayerController mLayerController;
     private static PlaceholderLayerClient mPlaceholderLayerClient;
-    private static GeckoSoftwareLayerClient mSoftwareLayerClient;
+    private static GeckoLayerClient mLayerClient;
     private AboutHomeContent mAboutHomeContent;
     private static AbsoluteLayout mPluginContainer;
 
@@ -174,7 +173,6 @@ abstract public class GeckoApp
     public enum LaunchState {Launching, WaitForDebugger,
                              Launched, GeckoRunning, GeckoExiting};
     private static LaunchState sLaunchState = LaunchState.Launching;
-    private static boolean sTryCatchAttached = false;
 
     private static final int FILE_PICKER_REQUEST = 1;
     private static final int AWESOMEBAR_REQUEST = 2;
@@ -538,10 +536,6 @@ abstract public class GeckoApp
         }
     }
 
-    public String getLastViewport() {
-        return mLastViewport;
-    }
-
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         if (mOwnActivityDepth > 0)
@@ -565,21 +559,18 @@ abstract public class GeckoApp
         }
 
         public void run() {
-            if (mSoftwareLayerClient == null)
+            if (mLayerClient == null)
                 return;
 
-            synchronized (mSoftwareLayerClient) {
+            synchronized (mLayerClient) {
                 if (!Tabs.getInstance().isSelectedTab(mThumbnailTab))
-                    return;
-
-                if (getLayerController().getLayerClient() != mSoftwareLayerClient)
                     return;
 
                 HistoryEntry lastHistoryEntry = mThumbnailTab.getLastHistoryEntry();
                 if (lastHistoryEntry == null)
                     return;
 
-                ViewportMetrics viewportMetrics = mSoftwareLayerClient.getGeckoViewportMetrics();
+                ViewportMetrics viewportMetrics = mLayerClient.getGeckoViewportMetrics();
                 // If we don't have viewport metrics, the screenshot won't be right so bail
                 if (viewportMetrics == null)
                     return;
@@ -602,8 +593,7 @@ abstract public class GeckoApp
 
     void getAndProcessThumbnailForTab(final Tab tab, boolean forceBigSceenshot) {
         boolean isSelectedTab = Tabs.getInstance().isSelectedTab(tab);
-        final Bitmap bitmap = isSelectedTab ?
-            mSoftwareLayerClient.getBitmap() : null;
+        final Bitmap bitmap = isSelectedTab ? mLayerClient.getBitmap() : null;
         
         if (bitmap != null) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -618,8 +608,9 @@ abstract public class GeckoApp
             }
 
             mLastScreen = null;
-            int sw = forceBigSceenshot ? mSoftwareLayerClient.getWidth() : tab.getMinScreenshotWidth();
-            int sh = forceBigSceenshot ? mSoftwareLayerClient.getHeight(): tab.getMinScreenshotHeight();
+            View view = mLayerController.getView();
+            int sw = forceBigSceenshot ? view.getWidth() : tab.getMinScreenshotWidth();
+            int sh = forceBigSceenshot ? view.getHeight(): tab.getMinScreenshotHeight();
             int dw = forceBigSceenshot ? sw : tab.getThumbnailWidth();
             int dh = forceBigSceenshot ? sh : tab.getThumbnailHeight();
             GeckoAppShell.sendEventToGecko(GeckoEvent.createScreenshotEvent(tab.getId(), sw, sh, dw, dh));
@@ -852,7 +843,6 @@ abstract public class GeckoApp
 
     void showTabs() {
         Intent intent = new Intent(mAppContext, TabsTray.class);
-        intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY);
         startActivity(intent);
         overridePendingTransition(R.anim.grow_fade_in, 0);
     }
@@ -891,7 +881,16 @@ abstract public class GeckoApp
                 final int tabId = message.getInt("tabID");
                 final String uri = message.getString("uri");
                 final String title = message.getString("title");
+                final String backgroundColor = message.getString("bgColor");
                 handleContentLoaded(tabId, uri, title);
+                if (getLayerController() != null) {
+                    if (backgroundColor != null) {
+                        getLayerController().setCheckerboardColor(backgroundColor);
+                    } else {
+                        // Default to black if no color is given
+                        getLayerController().setCheckerboardColor(0);
+                    }
+                }
                 Log.i(LOGTAG, "URI - " + uri + ", title - " + title);
             } else if (event.equals("DOMTitleChanged")) {
                 final int tabId = message.getInt("tabID");
@@ -1109,7 +1108,8 @@ abstract public class GeckoApp
                     });
                 } else {
                     mAboutHomeContent.update(GeckoApp.mAppContext,
-                                             EnumSet.of(AboutHomeContent.UpdateFlags.TOP_SITES));
+                                             EnumSet.of(AboutHomeContent.UpdateFlags.TOP_SITES,
+                                                        AboutHomeContent.UpdateFlags.REMOTE_TABS));
                 }
             
                 mAboutHomeContent.setVisibility(View.VISIBLE);
@@ -1363,12 +1363,12 @@ abstract public class GeckoApp
                 if (tab == null)
                     return;
 
-                ViewportMetrics targetViewport = mLayerController.getViewportMetrics();
-                ViewportMetrics pluginViewport;
+                ImmutableViewportMetrics targetViewport = mLayerController.getViewportMetrics();
+                ImmutableViewportMetrics pluginViewport;
                 
                 try {
                     JSONObject viewportObject = new JSONObject(metadata);
-                    pluginViewport = new ViewportMetrics(viewportObject);
+                    pluginViewport = new ImmutableViewportMetrics(new ViewportMetrics(viewportObject));
                 } catch (JSONException e) {
                     Log.e(LOGTAG, "Bad viewport metadata: ", e);
                     return;
@@ -1463,7 +1463,7 @@ abstract public class GeckoApp
             return;
         }
 
-        PointF origin = metrics.getDisplayportOrigin();
+        PointF origin = metrics.getOrigin();
         x = x + (int)origin.x;
         y = y + (int)origin.y;
 
@@ -1472,7 +1472,7 @@ abstract public class GeckoApp
         if (layer == null)
             return;
 
-        layer.update(new Point(x, y), new IntSize(w, h), metrics.getZoomFactor(), inverted, blend);
+        layer.update(new Rect(x, y, x + w, y + h), metrics.getZoomFactor(), inverted, blend);
         layerView.addLayer(layer);
 
         // FIXME: shouldn't be necessary, layer will request
@@ -1558,7 +1558,7 @@ abstract public class GeckoApp
     }
 
     public void repositionPluginViews(Tab tab, boolean setVisible) {
-        ViewportMetrics targetViewport = mLayerController.getViewportMetrics();
+        ImmutableViewportMetrics targetViewport = mLayerController.getViewportMetrics();
 
         if (targetViewport == null)
             return;
@@ -1609,6 +1609,8 @@ abstract public class GeckoApp
     @Override
     public void onCreate(Bundle savedInstanceState)
     {
+        GeckoAppShell.registerGlobalExceptionHandler();
+
         mAppContext = this;
 
         // StrictMode is set by defaults resource flag |enableStrictMode|.
@@ -1616,7 +1618,7 @@ abstract public class GeckoApp
             enableStrictMode();
         }
 
-        System.loadLibrary("mozglue");
+        GeckoAppShell.loadMozGlue();
         mMainHandler = new GeckoAppHandler();
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onCreate");
         if (savedInstanceState != null) {
@@ -1687,9 +1689,6 @@ abstract public class GeckoApp
             mBrowserToolbar.updateTabCount(1);
         }
 
-        if (sGREDir == null)
-            sGREDir = new File(this.getApplicationInfo().dataDir);
-
         Uri data = intent.getData();
         if (data != null && "http".equals(data.getScheme()) &&
             isHostOnPrefetchWhitelist(data.getHost())) {
@@ -1731,10 +1730,9 @@ abstract public class GeckoApp
 
         if (mLayerController == null) {
             /*
-             * Create a layer client so that Gecko will have a buffer to draw into, but don't hook
-             * it up to the layer controller yet.
+             * Create a layer client, but don't hook it up to the layer controller yet.
              */
-            mSoftwareLayerClient = new GeckoSoftwareLayerClient(this);
+            mLayerClient = new GeckoLayerClient(this);
 
             /*
              * Hook a placeholder layer client up to the layer controller so that the user can pan
@@ -1746,8 +1744,7 @@ abstract public class GeckoApp
              * run experience, perhaps?
              */
             mLayerController = new LayerController(this);
-            mPlaceholderLayerClient = PlaceholderLayerClient.createInstance(this);
-            mLayerController.setLayerClient(mPlaceholderLayerClient);
+            mPlaceholderLayerClient = new PlaceholderLayerClient(mLayerController, mLastViewport);
 
             mGeckoLayout.addView(mLayerController.getView(), 0);
         }
@@ -1758,21 +1755,6 @@ abstract public class GeckoApp
         mFormAssistPopup = (FormAssistPopup) findViewById(R.id.form_assist_popup);
 
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - UI almost up");
-
-        if (!sTryCatchAttached) {
-            sTryCatchAttached = true;
-            mMainHandler.post(new Runnable() {
-                public void run() {
-                    try {
-                        Looper.loop();
-                    } catch (Exception e) {
-                        GeckoAppShell.reportJavaCrash(e);
-                    }
-                    // resetting this is kinda pointless, but oh well
-                    sTryCatchAttached = false;
-                }
-            });
-        }
 
         //register for events
         GeckoAppShell.registerGeckoEventListener("DOMContentLoaded", GeckoApp.mAppContext);
@@ -2091,10 +2073,6 @@ abstract public class GeckoApp
             mMainHandler.sendMessage(message);
         }
 
-        // An Android framework bug can cause an IME crash when focus changes invalidate text
-        // selection offsets. A workaround is to reset selection when the activity resumes.
-        GeckoAppShell.resetIMESelection();
-
         int newOrientation = getResources().getConfiguration().orientation;
 
         if (mOrientation != newOrientation) {
@@ -2194,6 +2172,10 @@ abstract public class GeckoApp
         super.onDestroy();
 
         unregisterReceiver(mBatteryReceiver);
+
+        if (mAboutHomeContent != null) {
+            mAboutHomeContent.onDestroy();
+        }
     }
 
     @Override
@@ -2513,7 +2495,7 @@ abstract public class GeckoApp
                         fileExt = name.substring(period);
                         fileName = name.substring(0, period);
                     }
-                    File file = File.createTempFile(fileName, fileExt, sGREDir);
+                    File file = File.createTempFile(fileName, fileExt, GeckoAppShell.getGREDir(GeckoApp.mAppContext));
 
                     FileOutputStream fos = new FileOutputStream(file);
                     InputStream is = cr.openInputStream(uri);
@@ -2580,7 +2562,7 @@ abstract public class GeckoApp
             Log.e(LOGTAG, "error building JSON arguments");
         }
         if (type == AwesomeBar.Type.ADD) {
-            Log.i(LOGTAG, "Sending message to Gecko: " + SystemClock.uptimeMillis() + " - Tab:Add");
+            Log.d(LOGTAG, "Sending message to Gecko: " + SystemClock.uptimeMillis() + " - Tab:Add");
             GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Add", args.toString()));
         } else {
             GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Load", args.toString()));
@@ -2621,12 +2603,14 @@ abstract public class GeckoApp
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Add", args.toString()));
     }
 
-    public GeckoSoftwareLayerClient getSoftwareLayerClient() { return mSoftwareLayerClient; }
+    public GeckoLayerClient getLayerClient() { return mLayerClient; }
     public LayerController getLayerController() { return mLayerController; }
 
     // accelerometer
     public void onAccuracyChanged(Sensor sensor, int accuracy)
     {
+        Log.w(LOGTAG, "onAccuracyChanged "+accuracy);
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createSensorAccuracyEvent(accuracy));
     }
 
     public void onSensorChanged(SensorEvent event)
@@ -2635,51 +2619,12 @@ abstract public class GeckoApp
         GeckoAppShell.sendEventToGecko(GeckoEvent.createSensorEvent(event));
     }
 
-    private class GeocoderRunnable implements Runnable {
-        Location mLocation;
-        GeocoderRunnable (Location location) {
-            mLocation = location;
-        }
-        public void run() {
-            try {
-                List<Address> addresses = mGeocoder.getFromLocation(mLocation.getLatitude(),
-                                                                    mLocation.getLongitude(), 1);
-                // grab the first address.  in the future,
-                // may want to expose multiple, or filter
-                // for best.
-                mLastGeoAddress = addresses.get(0);
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createLocationEvent(mLocation, mLastGeoAddress));
-            } catch (Exception e) {
-                Log.w(LOGTAG, "GeocoderTask "+e);
-            }
-        }
-    }
-
     // geolocation
     public void onLocationChanged(Location location)
     {
         Log.w(LOGTAG, "onLocationChanged "+location);
-        if (mGeocoder == null)
-            mGeocoder = new Geocoder(mLayerController.getView().getContext(), Locale.getDefault());
 
-        if (mLastGeoAddress == null) {
-            GeckoAppShell.getHandler().post(new GeocoderRunnable(location));
-        }
-        else {
-            float[] results = new float[1];
-            Location.distanceBetween(location.getLatitude(),
-                                     location.getLongitude(),
-                                     mLastGeoAddress.getLatitude(),
-                                     mLastGeoAddress.getLongitude(),
-                                     results);
-            // pfm value.  don't want to slam the
-            // geocoder with very similar values, so
-            // only call after about 100m
-            if (results[0] > 100)
-                GeckoAppShell.getHandler().post(new GeocoderRunnable(location));
-        }
-
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createLocationEvent(location, mLastGeoAddress));
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createLocationEvent(location));
     }
 
     public void onProviderDisabled(String provider)
@@ -2700,7 +2645,7 @@ abstract public class GeckoApp
             mPlaceholderLayerClient.destroy();
 
         LayerController layerController = getLayerController();
-        layerController.setLayerClient(mSoftwareLayerClient);
+        layerController.setLayerClient(mLayerClient);
     }
 
     public class GeckoAppHandler extends Handler {
@@ -2731,20 +2676,20 @@ class PluginLayoutParams extends AbsoluteLayout.LayoutParams
     private int mOriginalY;
     private int mOriginalWidth;
     private int mOriginalHeight;
-    private ViewportMetrics mOriginalViewport;
+    private ImmutableViewportMetrics mOriginalViewport;
     private float mLastResolution;
 
-    public PluginLayoutParams(int aX, int aY, int aWidth, int aHeight, ViewportMetrics aViewport) {
+    public PluginLayoutParams(int aX, int aY, int aWidth, int aHeight, ImmutableViewportMetrics aViewport) {
         super(aWidth, aHeight, aX, aY);
 
-        Log.i(LOGTAG, "Creating plugin at " + aX + ", " + aY + ", " + aWidth + "x" + aHeight + ", (" + (aViewport.getZoomFactor() * 100) + "%)");
+        Log.i(LOGTAG, "Creating plugin at " + aX + ", " + aY + ", " + aWidth + "x" + aHeight + ", (" + (aViewport.zoomFactor * 100) + "%)");
 
         mOriginalX = aX;
         mOriginalY = aY;
         mOriginalWidth = aWidth;
         mOriginalHeight = aHeight;
         mOriginalViewport = aViewport;
-        mLastResolution = aViewport.getZoomFactor();
+        mLastResolution = aViewport.zoomFactor;
 
         clampToMaxSize();
     }
@@ -2761,15 +2706,15 @@ class PluginLayoutParams extends AbsoluteLayout.LayoutParams
         }
     }
 
-    public void reset(int aX, int aY, int aWidth, int aHeight, ViewportMetrics aViewport) {
-        PointF origin = aViewport.getDisplayportOrigin();
+    public void reset(int aX, int aY, int aWidth, int aHeight, ImmutableViewportMetrics aViewport) {
+        PointF origin = aViewport.getOrigin();
 
         x = mOriginalX = aX + (int)origin.x;
         y = mOriginalY = aY + (int)origin.y;
         width = mOriginalWidth = aWidth;
         height = mOriginalHeight = aHeight;
         mOriginalViewport = aViewport;
-        mLastResolution = aViewport.getZoomFactor();
+        mLastResolution = aViewport.zoomFactor;
 
         clampToMaxSize();
     }
@@ -2787,14 +2732,14 @@ class PluginLayoutParams extends AbsoluteLayout.LayoutParams
         }
     }
 
-    public void reposition(ViewportMetrics viewport) {
-        PointF targetOrigin = viewport.getDisplayportOrigin();
-        PointF originalOrigin = mOriginalViewport.getDisplayportOrigin();
+    public void reposition(ImmutableViewportMetrics viewport) {
+        PointF targetOrigin = viewport.getOrigin();
+        PointF originalOrigin = mOriginalViewport.getOrigin();
 
         Point offset = new Point(Math.round(originalOrigin.x - targetOrigin.x),
                                  Math.round(originalOrigin.y - targetOrigin.y));
 
-        reposition(offset, viewport.getZoomFactor());
+        reposition(offset, viewport.zoomFactor);
     }
 
     public float getLastResolution() {
