@@ -93,3 +93,5 @@ XPIDLSRCS =					\
 	$(NULL)
 
 include $(topsrcdir)/config/rules.mk
+
+XPIDL_FLAGS += -I$(topsrcdir)/dom/interfaces/events/

@@ -81,7 +81,7 @@ public:
   virtual nsSize ComputeSize(nsRenderingContext *aRenderingContext,
                              nsSize aCBSize, nscoord aAvailableWidth,
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
-                             bool aShrinkWrap);
+                             PRUint32 aFlags) MOZ_OVERRIDE;
 
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
@@ -150,6 +150,12 @@ public:
   }
 #endif
 
+  /**
+   * Return true only if the height is unspecified (defaulting to 100%) or else
+   * the height is explicitly set to a percentage value no greater than 100%.
+   */
+  bool VerticalScrollbarNotNeeded() const;
+
 protected:
 
   /* Returns true if our content is the document element and our document is
@@ -170,7 +176,7 @@ protected:
 
   nsAutoPtr<gfxMatrix> mCanvasTM;
 
-  PRUint32 mRedrawSuspendCount;
+  PRInt32 mRedrawSuspendCount;
   float mFullZoom;
 
   bool mViewportInitialized;
