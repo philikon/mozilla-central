@@ -25,7 +25,6 @@ MarionetteComponent.prototype = {
     let observerService = Services.obs;
     switch (aTopic) {
       case "profile-after-change":
-        Services.prefs.addObserver('marionette.defaultPrefs.enabled', this, false);
         if (Services.prefs.getBoolPref('marionette.defaultPrefs.enabled')) {
           // set up the logger
           Cu.import("resource://gre/modules/FileUtils.jsm");
@@ -46,10 +45,6 @@ MarionetteComponent.prototype = {
         else {
           logger.info("marionette not enabled");
         }
-        break;
-      case "nsPref:changed":
-        Services.prefs.setBoolPref("marionette.defaultPrefs.enabled", false);
-        logger.info("Something tried to change marionette.defaultPrefs.enabled; defaulting to false");
         break;
       case "final-ui-startup":
         observerService.removeObserver(this, "final-ui-startup");

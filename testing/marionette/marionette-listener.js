@@ -55,8 +55,6 @@ function startListeners() {
   addMessageListener("Marionette:findElementContent" + listenerId, findElementContent);
   addMessageListener("Marionette:findElementsContent" + listenerId, findElementsContent);
   addMessageListener("Marionette:clickElement" + listenerId, clickElement);
-  addMessageListener("Marionette:isElementSelected" + listenerId, isElementSelected);
-  addMessageListener("Marionette:getAttributeValue" + listenerId, getAttributeValue);
   addMessageListener("Marionette:switchToFrame" + listenerId, switchToFrame);
   addMessageListener("Marionette:deleteSession" + listenerId, deleteSession);
   addMessageListener("Marionette:sleepSession" + listenerId, sleepSession);
@@ -107,8 +105,6 @@ function deleteSession(msg) {
   removeMessageListener("Marionette:findElementContent" + listenerId, findElementContent);
   removeMessageListener("Marionette:findElementsContent" + listenerId, findElementsContent);
   removeMessageListener("Marionette:clickElement" + listenerId, clickElement);
-  removeMessageListener("Marionette:isElementSelected" + listenerId, isElementSelected);
-  removeMessageListener("Marionette:getAttributeValue" + listenerId, getAttributeValue);
   removeMessageListener("Marionette:switchToFrame" + listenerId, switchToFrame);
   removeMessageListener("Marionette:deleteSession" + listenerId, deleteSession);
   removeMessageListener("Marionette:sleepSession" + listenerId, sleepSession);
@@ -425,14 +421,15 @@ function refresh(msg) {
  * Find an element in the document using requested search strategy 
  */
 function findElementContent(msg) {
+  //Todo: extend to support findChildElement
   let id;
   try {
     let notify = function(id) { sendResponse({value:id});};
-    let curWin = activeFrame ? win.frames[activeFrame] : win;
-    id = elementManager.find(curWin, msg.json, notify, false);
+    id = elementManager.find(msg.json, win.document, notify, false);
   }
   catch (e) {
     sendError(e.message, e.num, e.stack);
+    return;
   }
 }
 
@@ -440,14 +437,15 @@ function findElementContent(msg) {
  * Find elements in the document using requested search strategy 
  */
 function findElementsContent(msg) {
+  //Todo: extend to support findChildElement
   let id;
   try {
     let notify = function(id) { sendResponse({value:id});};
-    let curWin = activeFrame ? win.frames[activeFrame] : win;
-    id = elementManager.find(curWin, msg.json, notify, true);
+    id = elementManager.find(msg.json, win.document, notify, true);
   }
   catch (e) {
     sendError(e.message, e.num, e.stack);
+    return;
   }
 }
 
@@ -457,58 +455,14 @@ function findElementsContent(msg) {
 function clickElement(msg) {
   let el;
   try {
-    el = elementManager.click(msg.json.element, win);
-    sendOk();
-  }
-  catch (e) {
-    sendError(e.message, e.num, e.stack);
-  }
-}
-
-/**
- * Check if given input/option/radio button element is selected
- */
-function isElementSelected(msg) {
-  let el;
-  try {
-    el = elementManager.getKnownElement([msg.json.element], win);
+    el = elementManager.getKnownElement(msg.json.element, win);
   }
   catch (e) {
     sendError(e.message, e.num, e.stack);
     return;
   }
-  let selected = false;
-
-  // force to option element and check
-  try {
-    let option =
-        el.QueryInterface(Components.interfaces.nsIDOMHTMLOptionElement);
-    selected = option.selected;
-  } catch(e) {
-  }
-
-  // force to input element and check
-  try {
-    let inputElement =
-        el.QueryInterface(Components.interfaces.nsIDOMHTMLInputElement);
-    if (inputElement.type == "checkbox" || inputElement.type == "radio") {
-      selected = inputElement.checked;
-    }
-  } catch(e) {
-  }
-  sendResponse({value: selected});
-}
-
-/**
- * Get a given attribute of an element
- */
-function getAttributeValue(msg) {
-  try {
-    sendResponse({value: elementManager.getAttribute(msg.json, win)});
-  }
-  catch (e) {
-    sendError(e.message, e.num, e.stack);
-  }
+  el.click();
+  sendOk();
 }
 
 /**
