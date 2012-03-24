@@ -1455,8 +1455,6 @@ function Tab(aURL, aParams) {
   this.create(aURL, aParams);
   this._zoom = 1.0;
   this.userScrollPos = { x: 0, y: 0 };
-  this._pluginCount = 0;
-  this._pluginOverlayShowing = false;
   this.contentDocumentIsDisplayed = true;
   this.clickToPlayPluginDoorhangerShown = false;
   this.clickToPlayPluginsActivated = false;
@@ -1514,6 +1512,7 @@ Tab.prototype = {
     this.browser.sessionHistory.addSHistoryListener(this);
 
     this.browser.addEventListener("DOMContentLoaded", this, true);
+    this.browser.addEventListener("load", this, true);
     this.browser.addEventListener("DOMLinkAdded", this, true);
     this.browser.addEventListener("DOMTitleChanged", this, true);
     this.browser.addEventListener("DOMWindowClose", this, true);
@@ -1521,8 +1520,6 @@ Tab.prototype = {
     this.browser.addEventListener("scroll", this, true);
     this.browser.addEventListener("MozScrolledAreaChanged", this, true);
     this.browser.addEventListener("PluginClickToPlay", this, true);
-    this.browser.addEventListener("pagehide", this, true);
-    this.browser.addEventListener("pageshow", this, true);
 
     Services.obs.addObserver(this, "before-first-paint", false);
 
@@ -1561,6 +1558,7 @@ Tab.prototype = {
 
     this.browser.removeProgressListener(this);
     this.browser.removeEventListener("DOMContentLoaded", this, true);
+    this.browser.removeEventListener("load", this, true);
     this.browser.removeEventListener("DOMLinkAdded", this, true);
     this.browser.removeEventListener("DOMTitleChanged", this, true);
     this.browser.removeEventListener("DOMWindowClose", this, true);
@@ -1568,8 +1566,6 @@ Tab.prototype = {
     this.browser.removeEventListener("scroll", this, true);
     this.browser.removeEventListener("PluginClickToPlay", this, true);
     this.browser.removeEventListener("MozScrolledAreaChanged", this, true);
-    this.browser.removeEventListener("pagehide", this, true);
-    this.browser.removeEventListener("pageshow", this, true);
 
     Services.obs.removeObserver(this, "before-first-paint");
 
@@ -1766,6 +1762,8 @@ Tab.prototype = {
             this.browser.removeEventListener("pagehide", listener, true);
           }.bind(this), true);
         }
+        break;
+      }
 
       case "load": {
         this.loadEventProcessed = true;
@@ -1783,7 +1781,6 @@ Tab.prototype = {
         }
         if (plugins && plugins.length && !isAnyPluginVisible)
           PluginHelper.showDoorHanger(this);
-
         break;
       }
 
@@ -1891,10 +1888,6 @@ Tab.prototype = {
       }
 
       case "PluginClickToPlay": {
-        // Keep track of the number of plugins to know whether or not to show
-        // the hidden plugins doorhanger
-        this._pluginCount++;
-
         let plugin = aEvent.target;
 
         if (this.clickToPlayPluginsActivated) {
@@ -3880,7 +3873,7 @@ var PluginHelper = {
       {
         label: Strings.browser.GetStringFromName("clickToPlayPlugins.yes"),
         callback: function() {
-          PluginHelper.playAllPlugins(aTab);
+          PluginHelper.playAllPlugins(aTab.browser.contentWindow);
         }
       },
       {
@@ -3893,23 +3886,13 @@ var PluginHelper = {
     NativeWindow.doorhanger.show(message, "ask-to-play-plugins", buttons, aTab.id);
   },
 
-  playAllPlugins: function(aTab, aEvent) {
-    if (aEvent) {
-      if (!aEvent.isTrusted)
-        return;
-      aEvent.preventDefault();
-    }
-
-    this._findAndPlayAllPlugins(aTab.browser.contentWindow);
-  },
-
-  // Helper function that recurses through sub-frames to find all plugin objects
-  _findAndPlayAllPlugins: function _findAndPlayAllPlugins(aWindow) {
-    let embeds = aWindow.document.getElementsByTagName("embed");
-    for (let i = 0; i < embeds.length; i++) {
-      if (!embeds[i].hasAttribute("played"))
-        this._playPlugin(embeds[i]);
-    }
+  playAllPlugins: function(aContentWindow) {
+    let cwu = aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                            .getInterface(Ci.nsIDOMWindowUtils);
+    // XXX not sure if we should enable plugins for the parent documents...
+    let plugins = cwu.plugins;
+    if (!plugins || !plugins.length)
+      return;
 
     plugins.forEach(this.playPlugin);
   },
