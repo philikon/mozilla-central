@@ -50,11 +50,9 @@
 #include <OMX.h>
 #include <HardwareAPI.h>
 #include <ui/GraphicBuffer.h>
-#include <ui/Overlay.h>
 #include <ui/Rect.h>
 #include <ui/Region.h>
 #include <binder/IMemory.h>
-#include <hardware/overlay.h>
 
 #include <OMX_Types.h>
 #include <OMX_Core.h>
@@ -81,8 +79,17 @@ public:
   MediaStreamSource(PluginHost *aPluginHost, Decoder *aDecoder);
 
   virtual status_t initCheck() const;
-  virtual ssize_t readAt(off_t offset, void *data, size_t size);
-  virtual status_t getSize(off_t *size);
+  virtual ssize_t readAt(off64_t offset, void *data, size_t size);
+  virtual ssize_t readAt(off_t offset, void *data, size_t size) {
+    return readAt(static_cast<off64_t>(offset), data, size);
+  }
+  virtual status_t getSize(off_t *size) {
+    off64_t size64;
+    status_t status = getSize(&size64);
+    *size = size64;
+    return status;
+  }
+  virtual status_t getSize(off64_t *size);
   virtual uint32_t flags() {
     return kWantsPrefetching;
   }
@@ -111,7 +118,7 @@ status_t MediaStreamSource::initCheck() const
   return OK;
 }
 
-ssize_t MediaStreamSource::readAt(off_t offset, void *data, size_t size)
+ssize_t MediaStreamSource::readAt(off64_t offset, void *data, size_t size)
 {
   char *ptr = reinterpret_cast<char *>(data);
   size_t todo = size;
@@ -127,7 +134,7 @@ ssize_t MediaStreamSource::readAt(off_t offset, void *data, size_t size)
   return size;
 }
 
-status_t MediaStreamSource::getSize(off_t *size)
+status_t MediaStreamSource::getSize(off64_t *size)
 {
   uint64_t length = mPluginHost->GetLength(mDecoder);
   if (length == static_cast<uint64_t>(-1))
