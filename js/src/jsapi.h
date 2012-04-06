@@ -629,10 +629,11 @@ class Value
 #endif
     }
 
-#ifndef _MSC_VER
+#if !defined(_MSC_VER) && !defined(__sparc)
   /* To make jsval binary compatible when linking across C and C++ with MSVC,
    * JS::Value needs to be POD. Otherwise, jsval will be passed in memory
    * in C++ but by value in C (bug 645111).
+   * Same issue for SPARC ABI. (bug 737344).
    */
   private:
 #endif
@@ -808,7 +809,18 @@ class JS_PUBLIC_API(AutoCheckRequestDepth)
 # define CHECK_REQUEST(cx) \
     ((void) 0)
 
-#endif
+#endif /* JS_THREADSAFE && DEBUG */
+
+#ifdef DEBUG
+/* Assert that we're not doing GC on cx, that we're in a request as
+   needed, and that the compartments for cx and v are correct. */
+JS_PUBLIC_API(void)
+AssertArgumentsAreSane(JSContext *cx, const Value &v);
+#else
+inline void AssertArgumentsAreSane(JSContext *cx, const Value &v) {
+    /* Do nothing */
+}
+#endif /* DEBUG */
 
 class JS_PUBLIC_API(AutoGCRooter) {
   public:
@@ -1332,13 +1344,33 @@ typedef JSBool
 typedef JSType
 (* JSTypeOfOp)(JSContext *cx, JSObject *obj);
 
+typedef struct JSFreeOp JSFreeOp;
+
+struct JSFreeOp {
+#ifndef __cplusplus
+    JSRuntime   *runtime;
+#else
+  private:
+    JSRuntime   *runtime_;
+
+  protected:
+    JSFreeOp(JSRuntime *rt)
+      : runtime_(rt) { }
+
+  public:
+    JSRuntime *runtime() const {
+        return runtime_;
+    }
+#endif
+};
+
 /*
  * Finalize obj, which the garbage collector has determined to be unreachable
  * from other live objects or from GC roots.  Obviously, finalizers must never
  * store a reference to obj.
  */
 typedef void
-(* JSFinalizeOp)(JSContext *cx, JSObject *obj);
+(* JSFinalizeOp)(JSFreeOp *fop, JSObject *obj);
 
 /*
  * Finalizes external strings created by JS_NewExternalString.
@@ -1443,7 +1475,7 @@ typedef enum JSFinalizeStatus {
 } JSFinalizeStatus;
 
 typedef void
-(* JSFinalizeCallback)(JSContext *cx, JSFinalizeStatus status);
+(* JSFinalizeCallback)(JSFreeOp *fop, JSFinalizeStatus status);
 
 /*
  * Generic trace operation that calls JS_CallTracer on each traceable thing
@@ -1565,12 +1597,8 @@ typedef JSObject *
 typedef JSObject *
 (* JSPreWrapCallback)(JSContext *cx, JSObject *scope, JSObject *obj, unsigned flags);
 
-typedef enum {
-    JSCOMPARTMENT_DESTROY
-} JSCompartmentOp;
-
-typedef JSBool
-(* JSCompartmentCallback)(JSContext *cx, JSCompartment *compartment, unsigned compartmentOp);
+typedef void
+(* JSDestroyCompartmentCallback)(JSFreeOp *fop, JSCompartment *compartment);
 
 /*
  * Read structured data from the reader r. This hook is used to read a value
@@ -2243,6 +2271,32 @@ JS_ValueToSource(JSContext *cx, jsval v);
 extern JS_PUBLIC_API(JSBool)
 JS_ValueToNumber(JSContext *cx, jsval v, double *dp);
 
+#ifdef __cplusplus
+namespace js {
+/*
+ * DO NOT CALL THIS.  Use JS::ToNumber
+ */
+extern JS_PUBLIC_API(bool)
+ToNumberSlow(JSContext *cx, JS::Value v, double *dp);
+} /* namespace js */
+
+namespace JS {
+
+/* ES5 9.3 ToNumber. */
+JS_ALWAYS_INLINE bool
+ToNumber(JSContext *cx, const Value &v, double *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    if (v.isNumber()) {
+        *out = v.toNumber();
+        return true;
+    }
+    return js::ToNumberSlow(cx, v, out);
+}
+
+} /* namespace JS */
+#endif /* __cplusplus */
+
 extern JS_PUBLIC_API(JSBool)
 JS_DoubleIsInt32(double d, int32_t *ip);
 
@@ -2258,6 +2312,31 @@ JS_DoubleToUint32(double d);
  */
 extern JS_PUBLIC_API(JSBool)
 JS_ValueToECMAInt32(JSContext *cx, jsval v, int32_t *ip);
+
+#ifdef __cplusplus
+namespace js {
+/*
+ * DO NOT CALL THIS.  Use JS::ToInt32
+ */
+extern JS_PUBLIC_API(bool)
+ToInt32Slow(JSContext *cx, const JS::Value &v, int32_t *out);
+} /* namespace js */
+
+namespace JS {
+
+JS_ALWAYS_INLINE bool
+ToInt32(JSContext *cx, const js::Value &v, int32_t *out)
+{
+    AssertArgumentsAreSane(cx, v);
+    if (v.isInt32()) {
+        *out = v.toInt32();
+        return true;
+    }
+    return js::ToInt32Slow(cx, v, out);
+}
+
+} /* namespace JS */
+#endif /* __cplusplus */
 
 /*
  * Convert a value to a number, then to a uint32_t, according to the ECMA rules
@@ -2598,8 +2677,8 @@ JS_SetJitHardening(JSRuntime *rt, JSBool enabled);
 extern JS_PUBLIC_API(const char *)
 JS_GetImplementationVersion(void);
 
-extern JS_PUBLIC_API(JSCompartmentCallback)
-JS_SetCompartmentCallback(JSRuntime *rt, JSCompartmentCallback callback);
+extern JS_PUBLIC_API(void)
+JS_SetDestroyCompartmentCallback(JSRuntime *rt, JSDestroyCompartmentCallback callback);
 
 extern JS_PUBLIC_API(JSWrapObjectCallback)
 JS_SetWrapObjectCallbacks(JSRuntime *rt,
@@ -2891,8 +2970,22 @@ JS_malloc(JSContext *cx, size_t nbytes);
 extern JS_PUBLIC_API(void *)
 JS_realloc(JSContext *cx, void *p, size_t nbytes);
 
+/*
+ * A wrapper for js_free(p) that may delay js_free(p) invocation as a
+ * performance optimization.
+ */
 extern JS_PUBLIC_API(void)
 JS_free(JSContext *cx, void *p);
+
+/*
+ * A wrapper for js_free(p) that may delay js_free(p) invocation as a
+ * performance optimization as specified by the given JSFreeOp instance.
+ */
+extern JS_PUBLIC_API(void)
+JS_freeop(JSFreeOp *fop, void *p);
+
+extern JS_PUBLIC_API(JSFreeOp *)
+JS_GetDefaultFreeOp(JSRuntime *rt);    
 
 extern JS_PUBLIC_API(void)
 JS_updateMallocCounter(JSContext *cx, size_t nbytes);
@@ -2964,20 +3057,32 @@ JS_AddNamedScriptRoot(JSContext *cx, JSScript **rp, const char *name);
 extern JS_PUBLIC_API(JSBool)
 JS_AddNamedGCThingRoot(JSContext *cx, void **rp, const char *name);
 
-extern JS_PUBLIC_API(JSBool)
+extern JS_PUBLIC_API(void)
 JS_RemoveValueRoot(JSContext *cx, jsval *vp);
 
-extern JS_PUBLIC_API(JSBool)
+extern JS_PUBLIC_API(void)
 JS_RemoveStringRoot(JSContext *cx, JSString **rp);
 
-extern JS_PUBLIC_API(JSBool)
+extern JS_PUBLIC_API(void)
 JS_RemoveObjectRoot(JSContext *cx, JSObject **rp);
 
-extern JS_PUBLIC_API(JSBool)
+extern JS_PUBLIC_API(void)
 JS_RemoveScriptRoot(JSContext *cx, JSScript **rp);
 
-extern JS_PUBLIC_API(JSBool)
+extern JS_PUBLIC_API(void)
 JS_RemoveGCThingRoot(JSContext *cx, void **rp);
+
+extern JS_PUBLIC_API(void)
+JS_RemoveValueRootRT(JSRuntime *rt, jsval *vp);
+
+extern JS_PUBLIC_API(void)
+JS_RemoveStringRootRT(JSRuntime *rt, JSString **rp);
+
+extern JS_PUBLIC_API(void)
+JS_RemoveObjectRootRT(JSRuntime *rt, JSObject **rp);
+
+extern JS_PUBLIC_API(void)
+JS_RemoveScriptRootRT(JSRuntime *rt, JSScript **rp);
 
 /* TODO: remove these APIs */
 
@@ -2987,7 +3092,7 @@ js_AddRootRT(JSRuntime *rt, jsval *vp, const char *name);
 extern JS_FRIEND_API(JSBool)
 js_AddGCThingRootRT(JSRuntime *rt, void **rp, const char *name);
 
-extern JS_FRIEND_API(JSBool)
+extern JS_FRIEND_API(void)
 js_RemoveRoot(JSRuntime *rt, void *rp);
 
 /*
@@ -3426,6 +3531,7 @@ struct JSClass {
 #define JSCLASS_IMPLEMENTS_BARRIERS     (1<<5)  /* Correctly implements GC read
                                                    and write barriers */
 #define JSCLASS_DOCUMENT_OBSERVER       (1<<6)  /* DOM document observer */
+#define JSCLASS_USERBIT1                (1<<7)  /* Reserved for embeddings. */
 
 /*
  * To reserve slots fetched and stored via JS_Get/SetReservedSlot, bitwise-or
@@ -3461,6 +3567,15 @@ struct JSClass {
 
 #define JSCLASS_XPCONNECT_GLOBAL        (1<<(JSCLASS_HIGH_FLAGS_SHIFT+7))
 
+/* Reserved for embeddings. */
+#define JSCLASS_USERBIT2                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+8))
+#define JSCLASS_USERBIT3                (1<<(JSCLASS_HIGH_FLAGS_SHIFT+9))
+
+/*
+ * Bits 26 through 31 are reserved for the CACHED_PROTO_KEY mechanism, see
+ * below.
+ */
+
 /* Global flags. */
 #define JSGLOBAL_FLAGS_CLEARED          0x1
 
@@ -3485,8 +3600,8 @@ struct JSClass {
    && JSCLASS_RESERVED_SLOTS(clasp) >= JSCLASS_GLOBAL_SLOT_COUNT)
 
 /* Fast access to the original value of each standard class's prototype. */
-#define JSCLASS_CACHED_PROTO_SHIFT      (JSCLASS_HIGH_FLAGS_SHIFT + 8)
-#define JSCLASS_CACHED_PROTO_WIDTH      8
+#define JSCLASS_CACHED_PROTO_SHIFT      (JSCLASS_HIGH_FLAGS_SHIFT + 10)
+#define JSCLASS_CACHED_PROTO_WIDTH      6
 #define JSCLASS_CACHED_PROTO_MASK       JS_BITMASK(JSCLASS_CACHED_PROTO_WIDTH)
 #define JSCLASS_HAS_CACHED_PROTO(key)   ((key) << JSCLASS_CACHED_PROTO_SHIFT)
 #define JSCLASS_CACHED_PROTO_KEY(clasp) ((JSProtoKey)                         \
@@ -5367,12 +5482,12 @@ JS_IsConstructing(JSContext *cx, const jsval *vp)
 }
 
 /*
- * If a constructor does not have any static knowledge about the type of
- * object to create, it can request that the JS engine create a default new
- * 'this' object, as is done for non-constructor natives when called with new.
+ * A constructor can request that the JS engine create a default new 'this'
+ * object of the given class, using the callee to determine parentage and
+ * [[Prototype]].
  */
 extern JS_PUBLIC_API(JSObject *)
-JS_NewObjectForConstructor(JSContext *cx, const jsval *vp);
+JS_NewObjectForConstructor(JSContext *cx, JSClass *clasp, const jsval *vp);
 
 /************************************************************************/
 

@@ -1630,13 +1630,15 @@ if test "$OS_TARGET" = "Android" -a -z "$gonkdir"; then
        STLPORT_LDFLAGS="-L$android_ndk/sources/cxx-stl/gnu-libstdc++/libs/$ANDROID_CPU_ARCH"
        STLPORT_LIBS="-lstdc++"
     elif test -e "$android_ndk/sources/cxx-stl/stlport/src/iostream.cpp" ; then
+       if test -e "$android_ndk/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/libstlport_static.a"; then
+          STLPORT_LDFLAGS="-L$_objdir/build/stlport -L$android_ndk/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/"
+       elif test -e "$android_ndk/tmp/ndk-digit/build/install/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/libstlport_static.a"; then
+          STLPORT_LDFLAGS="-L$_objdir/build/stlport -L$android_ndk/tmp/ndk-digit/build/install/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/"
+       else
+          AC_MSG_ERROR([Couldn't find path to stlport in the android ndk])
+       fi
        STLPORT_SOURCES="$android_ndk/sources/cxx-stl/stlport"
        STLPORT_CPPFLAGS="-I$_objdir/build/stlport -I$android_ndk/sources/cxx-stl/stlport/stlport"
-       STLPORT_LDFLAGS="-L$_objdir/build/stlport -L$android_ndk/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/"
-       STLPORT_LIBS="-lstlport_static"
-    elif  test -e "$android_ndk/tmp/ndk-digit/build/install/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH/libstlport_static.a" ; then
-       STLPORT_CPPFLAGS="-I$android_ndk/sources/cxx-stl/stlport/stlport"
-       STLPORT_LDFLAGS="-L$android_ndk/tmp/ndk-digit/build/install/sources/cxx-stl/stlport/libs/$ANDROID_CPU_ARCH"
        STLPORT_LIBS="-lstlport_static"
     elif test "$target" != "arm-android-eabi"; then
        dnl fail if we're not building with NDKr4
@@ -1712,15 +1714,27 @@ if test "$GNU_CC"; then
     _MOZ_RTTI_FLAGS_ON=-frtti
     _MOZ_RTTI_FLAGS_OFF=-fno-rtti
 
-    # Turn on GNU specific features
-    # -Wall - turn on all warnings
-    # -pedantic - make compiler warn about non-ANSI stuff, and
-    #             be a little bit stricter
+    # Turn on GNU-specific warnings:
+    # -Wall - turn on a lot of warnings
+    # -pedantic - this is turned on below
+    # -Wpointer-arith - enabled with -pedantic, but good to have even if not
     # -Wdeclaration-after-statement - MSVC doesn't like these
-    # Warnings slamm took out for now (these were giving more noise than help):
-    # -Wbad-function-cast - warns when casting a function to a new return type
-    # -Wshadow - removed because it generates more noise than help --pete
-    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wall -W -Wno-unused -Wpointer-arith -Wdeclaration-after-statement"
+    # -Werror=return-type - catches missing returns, zero false positives
+    # -Wtype-limits - catches overflow bugs, few false positives
+    # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    #
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wall -Wpointer-arith -Wdeclaration-after-statement"
+    MOZ_C_SUPPORTS_WARNING(-W, error=return-type, ac_c_has_werror_return_type)
+    MOZ_C_SUPPORTS_WARNING(-W, type-limits, ac_c_has_wtype_limits)
+    MOZ_C_SUPPORTS_WARNING(-W, empty-body, ac_c_has_wempty_body)
+    
+    # Turn off the following warnings that -Wall/-pedantic turn on:
+    # -Wno-unused - lots of violations in third-party code
+    # -Wno-overlength-strings - we exceed the minimum maximum length frequently
+    #
+    _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wno-unused"
+    MOZ_C_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_c_has_wno_overlength_strings)
+
     if test -z "$INTEL_CC" -a -z "$CLANG_CC"; then
        # Don't use -Wcast-align with ICC or clang
        case "$CPU_ARCH" in
@@ -1736,12 +1750,9 @@ if test "$GNU_CC"; then
     dnl Turn pedantic on but disable the warnings for long long
     _PEDANTIC=1
 
-    if test -z "$INTEL_CC"; then
-      _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -W"
-    fi
-
     _DEFINES_CFLAGS='-include $(DEPTH)/mozilla-config.h -DMOZILLA_CLIENT'
     _USE_CPP_INCLUDE_FLAG=1
+
 elif test "$SOLARIS_SUNPRO_CC"; then
     DSO_CFLAGS=''
     if test "$CPU_ARCH" = "sparc"; then
@@ -1769,8 +1780,32 @@ fi
 if test "$GNU_CXX"; then
     # FIXME: Let us build with strict aliasing. bug 414641.
     CXXFLAGS="$CXXFLAGS -fno-exceptions -fno-strict-aliasing"
-    # Turn on GNU specific features
-    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual -Wsynth -Wno-ctor-dtor-privacy -Wno-non-virtual-dtor"
+
+    # Turn on GNU-specific warnings:
+    # -Wall - turn on a lot of warnings
+    # -pedantic - this is turned on below
+    # -Wpointer-arith - enabled with -pedantic, but good to have even if not
+    # -Woverloaded-virtual - ???
+    # -Werror=return-type - catches missing returns, zero false positives
+    # -Wtype-limits - catches overflow bugs, few false positives
+    # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    #
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual"
+    MOZ_CXX_SUPPORTS_WARNING(-W, error=return-type, ac_cxx_has_werror_return_type)
+    MOZ_CXX_SUPPORTS_WARNING(-W, type-limits, ac_cxx_has_wtype_limits)
+    MOZ_CXX_SUPPORTS_WARNING(-W, empty-body, ac_cxx_has_wempty_body)
+
+    # Turn off the following warnings that -Wall/-pedantic turn on:
+    # -Wno-ctor-dtor-privacy - ???
+    # -Wno-overlength-strings - we exceed the minimum maximum length frequently 
+    # -Wno-invalid-offsetof - we use offsetof on non-POD types frequently
+    # -Wno-variadic-macros - ???
+    #
+    _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-ctor-dtor-privacy"
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_cxx_has_wno_overlength_strings)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, invalid-offsetof, ac_cxx_has_wno_invalid_offsetof)
+    MOZ_CXX_SUPPORTS_WARNING(-Wno-, variadic-macros, ac_cxx_has_wno_variadic_macros)
+
     if test -z "$INTEL_CXX" -a -z "$CLANG_CXX"; then
        # Don't use -Wcast-align with ICC or clang
        case "$CPU_ARCH" in
@@ -1794,81 +1829,7 @@ if test "$GNU_CXX"; then
     # deleted function syntax.
     if test "$CLANG_CXX"; then
         _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-c++0x-extensions"
-    fi
-
-    AC_CACHE_CHECK(whether the compiler supports -Wno-extended-offsetof,
-                   ac_has_wno_extended_offsetof,
-        [
-            AC_LANG_SAVE
-            AC_LANG_CPLUSPLUS
-            _SAVE_CXXFLAGS="$CXXFLAGS"
-            CXXFLAGS="$CXXFLAGS -Wno-extended-offsetof"
-            AC_TRY_COMPILE([$configure_static_assert_macros
-                            #ifndef __has_warning
-                            #define __has_warning(x) 0
-                            #endif],
-                           [CONFIGURE_STATIC_ASSERT(__has_warning("-Wextended-offsetof"))],
-                           ac_has_wno_extended_offsetof="yes",
-                           ac_has_wno_extended_offsetof="no")
-            CXXFLAGS="$_SAVE_CXXFLAGS"
-            AC_LANG_RESTORE
-        ])
-    if test "$ac_has_wno_extended_offsetof" = "yes"; then
-        _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-extended-offsetof"
-    fi
-
-    AC_CACHE_CHECK(whether the compiler supports -Wno-invalid-offsetof,
-                   ac_has_wno_invalid_offsetof,
-        [
-            AC_LANG_SAVE
-            AC_LANG_CPLUSPLUS
-            _SAVE_CXXFLAGS="$CXXFLAGS"
-            CXXFLAGS="$CXXFLAGS -Wno-invalid-offsetof"
-            AC_TRY_COMPILE([],
-                           [return(0);],
-                           ac_has_wno_invalid_offsetof="yes",
-                           ac_has_wno_invalid_offsetof="no")
-            CXXFLAGS="$_SAVE_CXXFLAGS"
-            AC_LANG_RESTORE
-        ])
-    if test "$ac_has_wno_invalid_offsetof" = "yes"; then
-        _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-invalid-offsetof"
-    fi
-
-    AC_CACHE_CHECK(whether the compiler supports -Wno-variadic-macros,
-                   ac_has_wno_variadic_macros,
-        [
-            AC_LANG_SAVE
-            AC_LANG_CPLUSPLUS
-            _SAVE_CXXFLAGS="$CXXFLAGS"
-            CXXFLAGS="$CXXFLAGS -Wno-variadic-macros"
-            AC_TRY_COMPILE([],
-                           [return(0);],
-                           ac_has_wno_variadic_macros="yes",
-                           ac_has_wno_variadic_macros="no")
-            CXXFLAGS="$_SAVE_CXXFLAGS"
-            AC_LANG_RESTORE
-        ])
-    if test "$ac_has_wno_variadic_macros" = "yes"; then
-        _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-variadic-macros"
-    fi
-
-    AC_CACHE_CHECK(whether the compiler supports -Werror=return-type,
-                   ac_has_werror_return_type,
-        [
-            AC_LANG_SAVE
-            AC_LANG_CPLUSPLUS
-            _SAVE_CXXFLAGS="$CXXFLAGS"
-            CXXFLAGS="$CXXFLAGS -Werror=return-type"
-            AC_TRY_COMPILE([],
-                           [return(0);],
-                           ac_has_werror_return_type="yes",
-                           ac_has_werror_return_type="no")
-            CXXFLAGS="$_SAVE_CXXFLAGS"
-            AC_LANG_RESTORE
-        ])
-    if test "$ac_has_werror_return_type" = "yes"; then
-        _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Werror=return-type"
+        MOZ_CXX_SUPPORTS_WARNING(-Wno-, extended-offsetof, ac_cxx_has_wno_extended_offsetof)
     fi
 
 else
@@ -4976,6 +4937,15 @@ then
 
     if test -z "$QTDIR"; then
         PKG_CHECK_MODULES(MOZ_QT, QtGui QtNetwork QtCore QtOpenGL)
+        PKG_CHECK_MODULES(MOZ_QT5, QtWidgets QtMultimedia QtPrintSupport QtQuick1,
+                      MOZ_ENABLE_QT5=1,
+                      MOZ_ENABLE_QT5=)
+        if test "$MOZ_ENABLE_QT5"; then
+            echo "Using qt5"
+            MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS $MOZ_QT5_CFLAGS"
+            MOZ_QT_LIBS="$MOZ_QT_LIBS $MOZ_QT5_LIBS"
+        fi
+
         AC_CHECK_PROGS(HOST_MOC, $MOC moc, "")
         AC_CHECK_PROGS(HOST_RCC, $RCC rcc, "")
     else
@@ -4988,8 +4958,19 @@ then
         MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtCore"
         MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtNetwork"
         MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtXml"
+        MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtDeclarative"
         HOST_MOC="$QTDIR/bin/moc"
         HOST_RCC="$QTDIR/bin/rcc"
+
+        # QtWidgets was introduced only in Qt5
+        if test -d $QTDIR/include/QtWidgets; then
+            echo "Using qt5"
+            MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtWidgets"
+            MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtMultimedia"
+            MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtPrintSupport"
+            MOZ_QT_CFLAGS="$MOZ_QT_CFLAGS -I$QTDIR/include/QtQuick1"
+            MOZ_QT_LIBS="$MOZ_QT_LIBS -lQtWidgets -lQtMultimedia -lQtPrintSupport -lQtQuick1"
+        fi
     fi
     if test -z "$HOST_MOC"; then
         AC_MSG_ERROR([No acceptable moc preprocessor found. Qt SDK is not installed or --with-qt is
@@ -6334,29 +6315,38 @@ dnl ========================================================
 dnl Installer
 dnl ========================================================
 dnl Abort Windows build if the required major version and
-dnl minimum minor version of Unicode NSIS isn't in the path.
+dnl minimum minor version of Unicode NSIS isn't in the path
+dnl (unless in case of cross compiling, for which Unicode
+dnl is not yet sufficient).
 if test "$OS_ARCH" = "WINNT"; then
     REQ_NSIS_MAJOR_VER=2
     MIN_NSIS_MINOR_VER=33
     MOZ_PATH_PROGS(MAKENSISU, $MAKENSISU makensisu-2.46 makensisu makensis)
-    if test -z "$MAKENSISU" -o "$MAKENSISU" = ":"; then
-        AC_MSG_ERROR([To build the installer you must have the latest MozillaBuild or Unicode NSIS with a major version of $REQ_NSIS_MAJOR_VER and a minimum minor version of $MIN_NSIS_MINOR_VER in your path.])
+    if test -n "$MAKENSISU" -a "$MAKENSISU" != ":"; then
+      AC_MSG_RESULT([yes])
+      changequote(,)
+      MAKENSISU_VER=`"$MAKENSISU" -version 2>/dev/null | sed -e '/-Unicode/!s/.*//g' -e 's/^v\([0-9]\+\.[0-9]\+\)\-Unicode$/\1/g'`
+      changequote([,])
+      if test ! "$MAKENSISU_VER" = ""; then
+          MAKENSISU_MAJOR_VER=`echo $MAKENSISU_VER | $AWK -F\. '{ print $1 }'`
+          MAKENSISU_MINOR_VER=`echo $MAKENSISU_VER | $AWK -F\. '{ print $2 }'`
+      fi
+      AC_MSG_CHECKING([for Unicode NSIS with major version == $REQ_NSIS_MAJOR_VER and minor version >= $MIN_NSIS_MINOR_VER])
+      if test "$MAKENSISU_VER" = "" || \
+         test ! "$MAKENSISU_MAJOR_VER" = "$REQ_NSIS_MAJOR_VER" -o \
+              ! "$MAKENSISU_MINOR_VER" -ge $MIN_NSIS_MINOR_VER; then
+          AC_MSG_RESULT([no])
+          if test -z "$CROSS_COMPILE"; then
+            AC_MSG_ERROR([To build the installer you must have the latest MozillaBuild or Unicode NSIS with a major version of $REQ_NSIS_MAJOR_VER and a minimum minor version of $MIN_NSIS_MINOR_VER in your path.])
+          else
+            MAKENSISU=
+          fi
+      fi
+    elif test -z "$CROSS_COMPILE"; then
+      AC_MSG_ERROR([To build the installer you must have the latest MozillaBuild or Unicode NSIS with a major version of $REQ_NSIS_MAJOR_VER and a minimum minor version of $MIN_NSIS_MINOR_VER in your path.])
+    else
+      MAKENSISU=
     fi
-    changequote(,)
-    MAKENSISU_VER=`"$MAKENSISU" -version 2>/dev/null | sed -e '/-Unicode/!s/.*//g' -e 's/^v\([0-9]\+\.[0-9]\+\)\-Unicode$/\1/g'`
-    changequote([,])
-    if test ! "$MAKENSISU_VER" = ""; then
-        MAKENSISU_MAJOR_VER=`echo $MAKENSISU_VER | $AWK -F\. '{ print $1 }'`
-        MAKENSISU_MINOR_VER=`echo $MAKENSISU_VER | $AWK -F\. '{ print $2 }'`
-    fi
-    AC_MSG_CHECKING([for Unicode NSIS with major version == $REQ_NSIS_MAJOR_VER and minor version >= $MIN_NSIS_MINOR_VER])
-    if test "$MAKENSISU_VER" = "" ||
-       test ! "$MAKENSISU_MAJOR_VER" = "$REQ_NSIS_MAJOR_VER" -o \
-            ! "$MAKENSISU_MINOR_VER" -ge $MIN_NSIS_MINOR_VER; then
-        AC_MSG_RESULT([no])
-        AC_MSG_ERROR([To build the installer you must have the latest MozillaBuild or Unicode NSIS with a major version of $REQ_NSIS_MAJOR_VER and a minimum minor version of $MIN_NSIS_MINOR_VER in your path.])
-    fi
-    AC_MSG_RESULT([yes])
 fi
 
 AC_MSG_CHECKING([for tar archiver])
@@ -6472,14 +6462,6 @@ MOZ_ARG_DISABLE_BOOL(tests,
 [  --disable-tests         Do not build test libraries & programs],
     ENABLE_TESTS=,
     ENABLE_TESTS=1 )
-
-dnl ========================================================
-dnl Marionette
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(marionette,
-[  --enable-marionette     Enable Marionette for remote testing and control],
-    ENABLE_MARIONETTE=1,
-    ENABLE_MARIONETTE)
 
 dnl ========================================================
 dnl parental controls (for Windows Vista)
@@ -7269,13 +7251,6 @@ else
     AC_MSG_ERROR([--enable-jemalloc not supported on ${target}])
     ;;
   esac
-
-  if test "$OS_ARCH" != "WINNT"; then
-    dnl NB: this must be kept in sync with jemalloc.h
-    AC_DEFINE(HAVE_JEMALLOC_VALLOC)
-  fi
-  AC_DEFINE(HAVE_JEMALLOC_POSIX_MEMALIGN)
-  AC_DEFINE(HAVE_JEMALLOC_MEMALIGN)
 fi # MOZ_MEMORY
 AC_SUBST(MOZ_MEMORY)
 AC_SUBST(MOZ_GLUE_LDFLAGS)

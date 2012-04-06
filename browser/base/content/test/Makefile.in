@@ -226,6 +226,7 @@ _BROWSER_FILES = \
                  browser_urlbarCopying.js \
                  browser_urlbarEnter.js \
                  browser_urlbarRevert.js \
+                 browser_urlbarStop.js \
                  browser_urlbarTrimURLs.js \
                  browser_urlHighlight.js \
                  browser_visibleFindSelection.js \
@@ -246,6 +247,8 @@ _BROWSER_FILES = \
                  feed_tab.html \
                  plugin_unknown.html \
                  plugin_test.html \
+                 plugin_test2.html \
+                 plugin_test3.html \
                  plugin_both.html \
                  plugin_both2.html \
                  alltabslistener.html \

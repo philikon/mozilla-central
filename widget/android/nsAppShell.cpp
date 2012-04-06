@@ -95,8 +95,7 @@ nsAppShell::nsAppShell()
       mCondLock("nsAppShell.mCondLock"),
       mQueueCond(mCondLock, "nsAppShell.mQueueCond"),
       mNumDraws(0),
-      mNumViewports(0),
-      mPendingSensorEvents(false)
+      mNumViewports(0)
 {
     gAppShell = this;
 }
@@ -333,22 +332,16 @@ nsAppShell::ProcessNextNativeEvent(bool mayWait)
 
     case AndroidGeckoEvent::SENSOR_EVENT:
       {
-        mPendingSensorEvents = false;
         InfallibleTArray<float> values;
         mozilla::hal::SensorType type = (mozilla::hal::SensorType) curEvent->Flags();
 
         switch (type) {
           case hal::SENSOR_ORIENTATION:
-            values.AppendElement(curEvent->X());
-            values.AppendElement(-curEvent->Y()); 
-            values.AppendElement(-curEvent->Z());
-            break;
-
-          case hal::SENSOR_ACCELERATION:
           case hal::SENSOR_LINEAR_ACCELERATION:
+          case hal::SENSOR_ACCELERATION:
           case hal::SENSOR_GYROSCOPE:
-            values.AppendElement(-curEvent->X());
-            values.AppendElement(curEvent->Y());
+            values.AppendElement(curEvent->X());
+            values.AppendElement(curEvent->Y()); 
             values.AppendElement(curEvent->Z());
             break;
 
@@ -616,10 +609,16 @@ nsAppShell::PostEvent(AndroidGeckoEvent *ae)
                     delete event;
                 }
             }
-        } else if (ae->Type() == AndroidGeckoEvent::SENSOR_EVENT) {
-            if (!mPendingSensorEvents)
-                mEventQueue.AppendElement(ae);
-            mPendingSensorEvents = true;
+        } else if (ae->Type() == AndroidGeckoEvent::COMPOSITOR_PAUSE ||
+                   ae->Type() == AndroidGeckoEvent::COMPOSITOR_RESUME) {
+            // Give priority to these events, but maintain their order wrt each other.
+            int i = 0;
+            while (i < mEventQueue.Length() &&
+                   (mEventQueue[i]->Type() == AndroidGeckoEvent::COMPOSITOR_PAUSE ||
+                    mEventQueue[i]->Type() == AndroidGeckoEvent::COMPOSITOR_RESUME)) {
+                i++;
+            }
+            mEventQueue.InsertElementAt(i, ae);
         } else {
             mEventQueue.AppendElement(ae);
         }

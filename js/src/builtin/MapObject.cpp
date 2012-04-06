@@ -63,7 +63,7 @@ InitClass(JSContext *cx, GlobalObject *global, Class *clasp, JSProtoKey key, Nat
     proto->setPrivate(NULL);
 
     JSAtom *atom = cx->runtime->atomState.classAtoms[key];
-    JSFunction *ctor = global->createConstructor(cx, construct, clasp, atom, 1);
+    JSFunction *ctor = global->createConstructor(cx, construct, atom, 1);
     if (!ctor ||
         !LinkConstructorAndPrototype(cx, ctor, proto) ||
         !DefinePropertiesAndBrand(cx, proto, NULL, methods) ||
@@ -196,11 +196,11 @@ MapObject::mark(JSTracer *trc, JSObject *obj)
 }
 
 void
-MapObject::finalize(JSContext *cx, JSObject *obj)
+MapObject::finalize(FreeOp *fop, JSObject *obj)
 {
     MapObject *mapobj = static_cast<MapObject *>(obj);
     if (ValueMap *map = mapobj->getData())
-        cx->delete_(map);
+        fop->delete_(map);
 }
 
 class AddToMap {
@@ -397,11 +397,11 @@ SetObject::mark(JSTracer *trc, JSObject *obj)
 }
 
 void
-SetObject::finalize(JSContext *cx, JSObject *obj)
+SetObject::finalize(FreeOp *fop, JSObject *obj)
 {
     SetObject *setobj = static_cast<SetObject *>(obj);
     if (ValueSet *set = setobj->getData())
-        cx->delete_(set);
+        fop->delete_(set);
 }
 
 class AddToSet {

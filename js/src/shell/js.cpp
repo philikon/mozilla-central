@@ -2170,8 +2170,7 @@ DumpStack(JSContext *cx, unsigned argc, Value *vp)
         Value v;
         if (iter.isScript()) {
             if (iter.fp()->isNonEvalFunctionFrame()) {
-                if (!iter.fp()->getValidCalleeObject(cx, &v))
-                    return false;
+                v = ObjectValue(iter.fp()->callee());
             } else if (iter.fp()->isEvalFrame()) {
                 v = StringValue(evalStr);
             } else {
@@ -2782,11 +2781,7 @@ CopyProperty(JSContext *cx, JSObject *obj, JSObject *referent, jsid id,
             return true;
 
         const Shape *shape = (Shape *) prop;
-        if (shape->isMethod()) {
-            shape = referent->methodReadBarrier(cx, *shape, &desc.value);
-            if (!shape)
-                return false;
-        } else if (shape->hasSlot()) {
+        if (shape->hasSlot()) {
             desc.value = referent->nativeGetSlot(shape->slot());
         } else {
             desc.value.setUndefined();
@@ -4092,16 +4087,16 @@ its_convert(JSContext *cx, JSObject *obj, JSType type, jsval *vp)
 }
 
 static void
-its_finalize(JSContext *cx, JSObject *obj)
+its_finalize(JSFreeOp *fop, JSObject *obj)
 {
     jsval *rootedVal;
     if (its_noisy)
         fprintf(gOutFile, "finalizing it\n");
     rootedVal = (jsval *) JS_GetPrivate(obj);
     if (rootedVal) {
-      JS_RemoveValueRoot(cx, rootedVal);
-      JS_SetPrivate(obj, NULL);
-      delete rootedVal;
+        JS_RemoveValueRootRT(fop->runtime(), rootedVal);
+        JS_SetPrivate(obj, NULL);
+        delete rootedVal;
     }
 }
 

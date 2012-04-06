@@ -99,7 +99,7 @@ ic::GetGlobalName(VMFrame &f, ic::GetGlobalNameIC *ic)
     }
 
     if (!shape ||
-        !shape->hasDefaultGetterOrIsMethod() ||
+        !shape->hasDefaultGetter() ||
         !shape->hasSlot())
     {
         if (shape)
@@ -165,8 +165,7 @@ UpdateSetGlobalName(VMFrame &f, ic::SetGlobalNameIC *ic, JSObject *obj, const Sh
     if (!shape)
         return Lookup_Uncacheable;
 
-    if (shape->isMethod() ||
-        !shape->hasDefaultSetter() ||
+    if (!shape->hasDefaultSetter() ||
         !shape->writable() ||
         !shape->hasSlot() ||
         obj->watched())
@@ -556,6 +555,9 @@ mjit::NativeStubEpilogue(VMFrame &f, Assembler &masm, NativeStubLinker::FinalJum
  * scripted native, then a small stub is generated which inlines the native
  * invocation.
  */
+namespace js {
+namespace mjit {
+
 class CallCompiler : public BaseCompiler
 {
     VMFrame &f;
@@ -608,16 +610,20 @@ class CallCompiler : public BaseCompiler
         Address scriptAddr(ic.funObjReg, JSFunction::offsetOfNativeOrScript());
         masm.loadPtr(scriptAddr, t0);
 
-        /*
-         * Test if script->nmap is NULL - same as checking ncode, but faster
-         * here since ncode has two failure modes and we need to load out of
-         * nmap anyway.
-         */
-        size_t offset = callingNew
-                        ? offsetof(JSScript, jitArityCheckCtor)
-                        : offsetof(JSScript, jitArityCheckNormal);
+        // Test that:
+        // - script->jitHandle{Ctor,Normal}->value is neither NULL nor UNJITTABLE, and
+        // - script->jitHandle{Ctor,Normal}->value->arityCheckEntry is not NULL.
+        //
+        size_t offset = JSScript::jitHandleOffset(callingNew);
         masm.loadPtr(Address(t0, offset), t0);
-        Jump hasCode = masm.branchPtr(Assembler::Above, t0, ImmPtr(JS_UNJITTABLE_SCRIPT));
+        Jump hasNoJitCode = masm.branchPtr(Assembler::BelowOrEqual, t0,
+                                           ImmPtr(JSScript::JITScriptHandle::UNJITTABLE));
+
+        masm.loadPtr(Address(t0, offsetof(JITScript, arityCheckEntry)), t0);
+
+        Jump hasCode = masm.branchPtr(Assembler::NotEqual, t0, ImmPtr(0));
+
+        hasNoJitCode.linkTo(masm.label(), &masm);
 
         /*
          * Write the rejoin state to indicate this is a compilation call made
@@ -627,7 +633,7 @@ class CallCompiler : public BaseCompiler
         masm.storePtr(ImmPtr((void *) ic.frameSize.rejoinState(f.pc(), false)),
                       FrameAddress(offsetof(VMFrame, stubRejoin)));
 
-        masm.bumpStubCounter(f.script(), f.pc(), Registers::tempCallReg());
+        masm.bumpStubCount(f.script(), f.pc(), Registers::tempCallReg());
 
         /* Try and compile. On success we get back the nmap pointer. */
         void *compilePtr = JS_FUNC_TO_DATA_PTR(void *, stubs::CompileFunction);
@@ -802,7 +808,7 @@ class CallCompiler : public BaseCompiler
 
         RecompilationMonitor monitor(cx);
 
-        if (!CallJSNative(cx, fun->u.n.native, args))
+        if (!CallJSNative(cx, fun->native(), args))
             THROWV(true);
 
         types::TypeScript::Monitor(f.cx, f.script(), f.pc(), args.rval());
@@ -851,7 +857,7 @@ class CallCompiler : public BaseCompiler
 
         /* N.B. After this call, the frame will have a dynamic frame size. */
         if (ic.frameSize.isDynamic()) {
-            masm.bumpStubCounter(f.script(), f.pc(), Registers::tempCallReg());
+            masm.bumpStubCount(f.script(), f.pc(), Registers::tempCallReg());
             masm.fallibleVMCall(cx->typeInferenceEnabled(),
                                 JS_FUNC_TO_DATA_PTR(void *, ic::SplatApplyArgs),
                                 f.regs.pc, NULL, initialFrameDepth);
@@ -859,7 +865,7 @@ class CallCompiler : public BaseCompiler
 
         Registers tempRegs = Registers::tempCallRegMask();
         RegisterID t0 = tempRegs.takeAnyReg().reg();
-        masm.bumpStubCounter(f.script(), f.pc(), t0);
+        masm.bumpStubCount(f.script(), f.pc(), t0);
 
         int32_t storeFrameDepth = ic.frameSize.isStatic() ? initialFrameDepth : -1;
         masm.setupFallibleABICall(cx->typeInferenceEnabled(), f.regs.pc, storeFrameDepth);
@@ -905,7 +911,7 @@ class CallCompiler : public BaseCompiler
             masm.storeArg(1, argcReg.reg());
         masm.storeArg(0, cxReg);
 
-        js::Native native = fun->u.n.native;
+        js::Native native = fun->native();
 
         /*
          * Call RegExp.test instead of exec if the result will not be used or
@@ -1011,6 +1017,9 @@ class CallCompiler : public BaseCompiler
     }
 };
 
+} // namespace mjit
+} // namespace js
+
 void * JS_FASTCALL
 ic::Call(VMFrame &f, CallICInfo *ic)
 {
@@ -1093,7 +1102,7 @@ ic::SplatApplyArgs(VMFrame &f)
     }
 
     Value *vp = f.regs.sp - 4;
-    JS_ASSERT(JS_CALLEE(cx, vp).toObject().toFunction()->u.n.native == js_fun_apply);
+    JS_ASSERT(JS_CALLEE(cx, vp).toObject().toFunction()->native() == js_fun_apply);
 
     /*
      * This stub should mimic the steps taken by js_fun_apply. Step 1 and part

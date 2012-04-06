@@ -231,37 +231,6 @@ const uint32_t Arena::FirstThingOffsets[] = {
 
 #undef OFFSET
 
-class GCCompartmentsIter {
-  private:
-    JSCompartment **it, **end;
-
-  public:
-    GCCompartmentsIter(JSRuntime *rt) {
-        if (rt->gcCurrentCompartment) {
-            it = &rt->gcCurrentCompartment;
-            end = &rt->gcCurrentCompartment + 1;
-        } else {
-            it = rt->compartments.begin();
-            end = rt->compartments.end();
-        }
-    }
-
-    bool done() const { return it == end; }
-
-    void next() {
-        JS_ASSERT(!done());
-        it++;
-    }
-
-    JSCompartment *get() const {
-        JS_ASSERT(!done());
-        return *it;
-    }
-
-    operator JSCompartment *() const { return get(); }
-    JSCompartment *operator->() const { return get(); }
-};
-
 #ifdef DEBUG
 void
 ArenaHeader::checkSynchronizedWithFreeList() const
@@ -305,7 +274,7 @@ Arena::staticAsserts()
 
 template<typename T>
 inline bool
-Arena::finalize(JSContext *cx, AllocKind thingKind, size_t thingSize, bool background)
+Arena::finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize)
 {
     /* Enforce requirements on size of T. */
     JS_ASSERT(thingSize % Cell::CellSize == 0);
@@ -356,7 +325,7 @@ Arena::finalize(JSContext *cx, AllocKind thingKind, size_t thingSize, bool backg
             } else {
                 if (!newFreeSpanStart)
                     newFreeSpanStart = thing;
-                t->finalize(cx, background);
+                t->finalize(fop);
                 JS_POISON(t, JS_FREE_PATTERN, thingSize);
             }
         }
@@ -391,7 +360,7 @@ Arena::finalize(JSContext *cx, AllocKind thingKind, size_t thingSize, bool backg
 
 template<typename T>
 inline void
-FinalizeTypedArenas(JSContext *cx, ArenaLists::ArenaList *al, AllocKind thingKind, bool background)
+FinalizeTypedArenas(FreeOp *fop, ArenaLists::ArenaList *al, AllocKind thingKind)
 {
     /*
      * Release empty arenas and move non-full arenas with some free things into
@@ -403,7 +372,7 @@ FinalizeTypedArenas(JSContext *cx, ArenaLists::ArenaList *al, AllocKind thingKin
     ArenaHeader **ap = &al->head;
     size_t thingSize = Arena::thingSize(thingKind);
     while (ArenaHeader *aheader = *ap) {
-        bool allClear = aheader->getArena()->finalize<T>(cx, thingKind, thingSize, background);
+        bool allClear = aheader->getArena()->finalize<T>(fop, thingKind, thingSize);
         if (allClear) {
             *ap = aheader->next;
             aheader->chunk()->releaseArena(aheader);
@@ -428,7 +397,7 @@ FinalizeTypedArenas(JSContext *cx, ArenaLists::ArenaList *al, AllocKind thingKin
  * after the al->head.
  */
 static void
-FinalizeArenas(JSContext *cx, ArenaLists::ArenaList *al, AllocKind thingKind, bool background)
+FinalizeArenas(FreeOp *fop, ArenaLists::ArenaList *al, AllocKind thingKind)
 {
     switch(thingKind) {
       case FINALIZE_OBJECT0:
@@ -443,33 +412,33 @@ FinalizeArenas(JSContext *cx, ArenaLists::ArenaList *al, AllocKind thingKind, bo
       case FINALIZE_OBJECT12_BACKGROUND:
       case FINALIZE_OBJECT16:
       case FINALIZE_OBJECT16_BACKGROUND:
-        FinalizeTypedArenas<JSObject>(cx, al, thingKind, background);
+        FinalizeTypedArenas<JSObject>(fop, al, thingKind);
         break;
       case FINALIZE_SCRIPT:
-	FinalizeTypedArenas<JSScript>(cx, al, thingKind, background);
+	FinalizeTypedArenas<JSScript>(fop, al, thingKind);
         break;
       case FINALIZE_SHAPE:
-	FinalizeTypedArenas<Shape>(cx, al, thingKind, background);
+	FinalizeTypedArenas<Shape>(fop, al, thingKind);
         break;
       case FINALIZE_BASE_SHAPE:
-        FinalizeTypedArenas<BaseShape>(cx, al, thingKind, background);
+        FinalizeTypedArenas<BaseShape>(fop, al, thingKind);
         break;
       case FINALIZE_TYPE_OBJECT:
-	FinalizeTypedArenas<types::TypeObject>(cx, al, thingKind, background);
+	FinalizeTypedArenas<types::TypeObject>(fop, al, thingKind);
         break;
 #if JS_HAS_XML_SUPPORT
       case FINALIZE_XML:
-	FinalizeTypedArenas<JSXML>(cx, al, thingKind, background);
+	FinalizeTypedArenas<JSXML>(fop, al, thingKind);
         break;
 #endif
       case FINALIZE_STRING:
-	FinalizeTypedArenas<JSString>(cx, al, thingKind, background);
+	FinalizeTypedArenas<JSString>(fop, al, thingKind);
         break;
       case FINALIZE_SHORT_STRING:
-	FinalizeTypedArenas<JSShortString>(cx, al, thingKind, background);
+	FinalizeTypedArenas<JSShortString>(fop, al, thingKind);
         break;
       case FINALIZE_EXTERNAL_STRING:
-	FinalizeTypedArenas<JSExternalString>(cx, al, thingKind, background);
+	FinalizeTypedArenas<JSExternalString>(fop, al, thingKind);
         break;
     }
 }
@@ -889,8 +858,7 @@ JS_FRIEND_API(bool)
 IsAboutToBeFinalized(const Cell *thing)
 {
     JSCompartment *thingCompartment = reinterpret_cast<const Cell *>(thing)->compartment();
-    JSRuntime *rt = thingCompartment->rt;
-    if (rt->gcCurrentCompartment != NULL && rt->gcCurrentCompartment != thingCompartment)
+    if (!thingCompartment->isCollecting())
         return false;
     return !reinterpret_cast<const Cell *>(thing)->isMarked();
 }
@@ -1032,8 +1000,7 @@ IsAddressableGCThing(JSRuntime *rt, uintptr_t w,
     if (!aheader->allocated())
         return CGCT_FREEARENA;
 
-    JSCompartment *curComp = rt->gcCurrentCompartment;
-    if (curComp && curComp != aheader->compartment)
+    if (rt->gcRunning && !aheader->compartment->isCollecting())
         return CGCT_OTHERCOMPARTMENT;
 
     AllocKind thingKind = aheader->getAllocKind();
@@ -1168,24 +1135,6 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
 void
 MarkStackRangeConservatively(JSTracer *trc, Value *beginv, Value *endv)
 {
-    /*
-     * Normally, the drainMarkStack phase of marking will never trace outside
-     * of the compartment currently being collected. However, conservative
-     * scanning during drainMarkStack (as is done for generators) can break
-     * this invariant. So we disable the compartment assertions in this
-     * situation.
-     */
-    struct AutoSkipChecking {
-        JSRuntime *runtime;
-        JSCompartment *savedCompartment;
-
-        AutoSkipChecking(JSRuntime *rt)
-          : runtime(rt), savedCompartment(rt->gcCheckCompartment) {
-            rt->gcCheckCompartment = NULL;
-        }
-        ~AutoSkipChecking() { runtime->gcCheckCompartment = savedCompartment; }
-    } as(trc->runtime);
-
     const uintptr_t *begin = beginv->payloadWord();
     const uintptr_t *end = endv->payloadWord();
 #ifdef JS_NUNBOX32
@@ -1321,12 +1270,11 @@ js_AddGCThingRootRT(JSRuntime *rt, void **rp, const char *name)
                                  RootInfo(name, JS_GC_ROOT_GCTHING_PTR));
 }
 
-JS_FRIEND_API(JSBool)
+JS_FRIEND_API(void)
 js_RemoveRoot(JSRuntime *rt, void *rp)
 {
     rt->gcRootsHash.remove(rp);
-    rt->gcPoke = JS_TRUE;
-    return JS_TRUE;
+    rt->gcPoke = true;
 }
 
 typedef RootedValueMap::Range RootRange;
@@ -1418,7 +1366,7 @@ void
 JSCompartment::reduceGCTriggerBytes(size_t amount)
 {
     JS_ASSERT(amount > 0);
-    JS_ASSERT(gcTriggerBytes - amount >= 0);
+    JS_ASSERT(gcTriggerBytes >= amount);
     if (gcTriggerBytes - amount < GC_ALLOCATION_THRESHOLD * GC_HEAP_GROWTH_FACTOR)
         return;
     gcTriggerBytes -= amount;
@@ -1542,16 +1490,17 @@ ArenaLists::allocateFromArena(JSCompartment *comp, AllocKind thingKind)
 }
 
 void
-ArenaLists::finalizeNow(JSContext *cx, AllocKind thingKind)
+ArenaLists::finalizeNow(FreeOp *fop, AllocKind thingKind)
 {
+    JS_ASSERT(!fop->onBackgroundThread());
 #ifdef JS_THREADSAFE
     JS_ASSERT(backgroundFinalizeState[thingKind] == BFS_DONE);
 #endif
-    FinalizeArenas(cx, &arenaLists[thingKind], thingKind, false);
+    FinalizeArenas(fop, &arenaLists[thingKind], thingKind);
 }
 
 inline void
-ArenaLists::finalizeLater(JSContext *cx, AllocKind thingKind)
+ArenaLists::finalizeLater(FreeOp *fop, AllocKind thingKind)
 {
     JS_ASSERT(thingKind == FINALIZE_OBJECT0_BACKGROUND  ||
               thingKind == FINALIZE_OBJECT2_BACKGROUND  ||
@@ -1561,9 +1510,10 @@ ArenaLists::finalizeLater(JSContext *cx, AllocKind thingKind)
               thingKind == FINALIZE_OBJECT16_BACKGROUND ||
               thingKind == FINALIZE_SHORT_STRING        ||
               thingKind == FINALIZE_STRING);
+    JS_ASSERT(!fop->onBackgroundThread());
 
 #ifdef JS_THREADSAFE
-    JS_ASSERT(!cx->runtime->gcHelperThread.sweeping());
+    JS_ASSERT(!fop->runtime()->gcHelperThread.sweeping());
 
     ArenaList *al = &arenaLists[thingKind];
     if (!al->head) {
@@ -1579,37 +1529,38 @@ ArenaLists::finalizeLater(JSContext *cx, AllocKind thingKind)
     JS_ASSERT(backgroundFinalizeState[thingKind] == BFS_DONE ||
               backgroundFinalizeState[thingKind] == BFS_JUST_FINISHED);
 
-    if (cx->gcBackgroundFree) {
+    if (fop->shouldFreeLater()) {
         /*
          * To ensure the finalization order even during the background GC we
          * must use infallibleAppend so arenas scheduled for background
          * finalization would not be finalized now if the append fails.
          */
-        cx->gcBackgroundFree->finalizeVector.infallibleAppend(al->head);
+        fop->runtime()->gcHelperThread.finalizeVector.infallibleAppend(al->head);
         al->clear();
         backgroundFinalizeState[thingKind] = BFS_RUN;
     } else {
-        FinalizeArenas(cx, al, thingKind, false);
+        FinalizeArenas(fop, al, thingKind);
         backgroundFinalizeState[thingKind] = BFS_DONE;
     }
 
 #else /* !JS_THREADSAFE */
 
-    finalizeNow(cx, thingKind);
+    finalizeNow(fop, thingKind);
 
 #endif
 }
 
 #ifdef JS_THREADSAFE
 /*static*/ void
-ArenaLists::backgroundFinalize(JSContext *cx, ArenaHeader *listHead)
+ArenaLists::backgroundFinalize(FreeOp *fop, ArenaHeader *listHead)
 {
+    JS_ASSERT(fop->onBackgroundThread());
     JS_ASSERT(listHead);
     AllocKind thingKind = listHead->getAllocKind();
     JSCompartment *comp = listHead->compartment;
     ArenaList finalized;
     finalized.head = listHead;
-    FinalizeArenas(cx, &finalized, thingKind, true);
+    FinalizeArenas(fop, &finalized, thingKind);
 
     /*
      * After we finish the finalization al->cursor must point to the end of
@@ -1619,7 +1570,7 @@ ArenaLists::backgroundFinalize(JSContext *cx, ArenaHeader *listHead)
     ArenaLists *lists = &comp->arenas;
     ArenaList *al = &lists->arenaLists[thingKind];
 
-    AutoLockGC lock(cx->runtime);
+    AutoLockGC lock(fop->runtime());
     JS_ASSERT(lists->backgroundFinalizeState[thingKind] == BFS_RUN);
     JS_ASSERT(!*al->cursor);
 
@@ -1644,60 +1595,60 @@ ArenaLists::backgroundFinalize(JSContext *cx, ArenaHeader *listHead)
 #endif /* JS_THREADSAFE */
 
 void
-ArenaLists::finalizeObjects(JSContext *cx)
+ArenaLists::finalizeObjects(FreeOp *fop)
 {
-    finalizeNow(cx, FINALIZE_OBJECT0);
-    finalizeNow(cx, FINALIZE_OBJECT2);
-    finalizeNow(cx, FINALIZE_OBJECT4);
-    finalizeNow(cx, FINALIZE_OBJECT8);
-    finalizeNow(cx, FINALIZE_OBJECT12);
-    finalizeNow(cx, FINALIZE_OBJECT16);
+    finalizeNow(fop, FINALIZE_OBJECT0);
+    finalizeNow(fop, FINALIZE_OBJECT2);
+    finalizeNow(fop, FINALIZE_OBJECT4);
+    finalizeNow(fop, FINALIZE_OBJECT8);
+    finalizeNow(fop, FINALIZE_OBJECT12);
+    finalizeNow(fop, FINALIZE_OBJECT16);
 
 #ifdef JS_THREADSAFE
-    finalizeLater(cx, FINALIZE_OBJECT0_BACKGROUND);
-    finalizeLater(cx, FINALIZE_OBJECT2_BACKGROUND);
-    finalizeLater(cx, FINALIZE_OBJECT4_BACKGROUND);
-    finalizeLater(cx, FINALIZE_OBJECT8_BACKGROUND);
-    finalizeLater(cx, FINALIZE_OBJECT12_BACKGROUND);
-    finalizeLater(cx, FINALIZE_OBJECT16_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT0_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT2_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT4_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT8_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT12_BACKGROUND);
+    finalizeLater(fop, FINALIZE_OBJECT16_BACKGROUND);
 #endif
 
 #if JS_HAS_XML_SUPPORT
-    finalizeNow(cx, FINALIZE_XML);
+    finalizeNow(fop, FINALIZE_XML);
 #endif
 }
 
 void
-ArenaLists::finalizeStrings(JSContext *cx)
+ArenaLists::finalizeStrings(FreeOp *fop)
 {
-    finalizeLater(cx, FINALIZE_SHORT_STRING);
-    finalizeLater(cx, FINALIZE_STRING);
+    finalizeLater(fop, FINALIZE_SHORT_STRING);
+    finalizeLater(fop, FINALIZE_STRING);
 
-    finalizeNow(cx, FINALIZE_EXTERNAL_STRING);
+    finalizeNow(fop, FINALIZE_EXTERNAL_STRING);
 }
 
 void
-ArenaLists::finalizeShapes(JSContext *cx)
+ArenaLists::finalizeShapes(FreeOp *fop)
 {
-    finalizeNow(cx, FINALIZE_SHAPE);
-    finalizeNow(cx, FINALIZE_BASE_SHAPE);
-    finalizeNow(cx, FINALIZE_TYPE_OBJECT);
+    finalizeNow(fop, FINALIZE_SHAPE);
+    finalizeNow(fop, FINALIZE_BASE_SHAPE);
+    finalizeNow(fop, FINALIZE_TYPE_OBJECT);
 }
 
 void
-ArenaLists::finalizeScripts(JSContext *cx)
+ArenaLists::finalizeScripts(FreeOp *fop)
 {
-    finalizeNow(cx, FINALIZE_SCRIPT);
+    finalizeNow(fop, FINALIZE_SCRIPT);
 }
 
 static void
-RunLastDitchGC(JSContext *cx, gcreason::Reason reason)
+RunLastDitchGC(JSContext *cx, gcreason::Reason reason, bool full)
 {
     JSRuntime *rt = cx->runtime;
 
     /* The last ditch GC preserves all atoms. */
     AutoKeepAtoms keep(rt);
-    GC(cx, rt->gcTriggerCompartment, GC_NORMAL, reason);
+    GC(cx, full, GC_NORMAL, reason);
 }
 
 /* static */ void *
@@ -1712,7 +1663,8 @@ ArenaLists::refillFreeList(JSContext *cx, AllocKind thingKind)
     bool runGC = rt->gcIncrementalState != NO_INCREMENTAL && comp->gcBytes > comp->gcTriggerBytes;
     for (;;) {
         if (JS_UNLIKELY(runGC)) {
-            RunLastDitchGC(cx, gcreason::LAST_DITCH);
+            PrepareCompartmentForGC(comp);
+            RunLastDitchGC(cx, gcreason::LAST_DITCH, rt->gcFullIsNeeded);
 
             /*
              * The JSGC_END callback can legitimately allocate new GC
@@ -2017,12 +1969,7 @@ void
 GCMarker::checkCompartment(void *p)
 {
     JS_ASSERT(started);
-
-    Cell *cell = static_cast<Cell *>(p);
-    if (runtime->gcRunning && runtime->gcCurrentCompartment)
-        JS_ASSERT(cell->compartment() == runtime->gcCurrentCompartment);
-    else if (runtime->gcIncrementalCompartment)
-        JS_ASSERT(cell->compartment() == runtime->gcIncrementalCompartment);
+    JS_ASSERT(static_cast<Cell *>(p)->compartment()->isCollecting());
 }
 #endif
 
@@ -2111,44 +2058,9 @@ SetMarkStackLimit(JSRuntime *rt, size_t limit)
 
 } /* namespace js */
 
-#ifdef DEBUG
-static void
-EmptyMarkCallback(JSTracer *trc, void **thingp, JSGCTraceKind kind)
-{
-}
-#endif
-
 static void
 gc_root_traversal(JSTracer *trc, const RootEntry &entry)
 {
-#ifdef DEBUG
-    void *ptr;
-    if (entry.value.type == JS_GC_ROOT_GCTHING_PTR) {
-        ptr = *reinterpret_cast<void **>(entry.key);
-    } else {
-        Value *vp = reinterpret_cast<Value *>(entry.key);
-        ptr = vp->isGCThing() ? vp->toGCThing() : NULL;
-    }
-
-    if (ptr && !trc->runtime->gcCurrentCompartment) {
-        /*
-         * Use conservative machinery to find if ptr is a valid GC thing.
-         * We only do this during global GCs, to preserve the invariant
-         * that mark callbacks are not in place during compartment GCs.
-         */
-        JSTracer checker;
-        JS_TracerInit(&checker, trc->runtime, EmptyMarkCallback);
-        ConservativeGCTest test = MarkIfGCThingWord(&checker, reinterpret_cast<uintptr_t>(ptr));
-        if (test != CGCT_VALID && entry.value.name) {
-            fprintf(stderr,
-"JS API usage error: the address passed to JS_AddNamedRoot currently holds an\n"
-"invalid gcthing.  This is usually caused by a missing call to JS_RemoveRoot.\n"
-"The root's name is \"%s\".\n",
-                    entry.value.name);
-        }
-        JS_ASSERT(test == CGCT_VALID);
-    }
-#endif
     const char *name = entry.value.name ? entry.value.name : "root";
     if (entry.value.type == JS_GC_ROOT_GCTHING_PTR)
         MarkGCThingRoot(trc, reinterpret_cast<void **>(entry.key), name);
@@ -2327,9 +2239,12 @@ MarkRuntime(JSTracer *trc, bool useSavedRoots = false)
 {
     JSRuntime *rt = trc->runtime;
     JS_ASSERT(trc->callback != GCMarker::GrayCallback);
-    if (rt->gcCurrentCompartment) {
-        for (CompartmentsIter c(rt); !c.done(); c.next())
-            c->markCrossCompartmentWrappers(trc);
+
+    if (IS_GC_MARKING_TRACER(trc) && !rt->gcIsFull) {
+        for (CompartmentsIter c(rt); !c.done(); c.next()) {
+            if (!c->isCollecting())
+                c->markCrossCompartmentWrappers(trc);
+        }
         Debugger::markCrossCompartmentDebuggerObjectReferents(trc);
     }
 
@@ -2344,10 +2259,10 @@ MarkRuntime(JSTracer *trc, bool useSavedRoots = false)
     for (GCLocks::Range r = rt->gcLocksHash.all(); !r.empty(); r.popFront())
         gc_lock_traversal(r.front(), trc);
 
-    if (rt->scriptPCCounters) {
-        ScriptOpcodeCountsVector &vec = *rt->scriptPCCounters;
+    if (rt->scriptAndCountsVector) {
+        ScriptAndCountsVector &vec = *rt->scriptAndCountsVector;
         for (size_t i = 0; i < vec.length(); i++)
-            MarkScriptRoot(trc, &vec[i].script, "scriptPCCounters");
+            MarkScriptRoot(trc, &vec[i].script, "scriptAndCountsVector");
     }
 
     js_TraceAtomState(trc);
@@ -2356,7 +2271,11 @@ MarkRuntime(JSTracer *trc, bool useSavedRoots = false)
     for (ContextIter acx(rt); !acx.done(); acx.next())
         acx->mark(trc);
 
-    for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
+    /* We can't use GCCompartmentsIter if we're called from TraceRuntime. */
+    for (CompartmentsIter c(rt); !c.done(); c.next()) {
+        if (IS_GC_MARKING_TRACER(trc) && !c->isCollecting())
+            continue;
+
         if (c->activeAnalysis)
             c->markTypes(trc);
 
@@ -2366,11 +2285,11 @@ MarkRuntime(JSTracer *trc, bool useSavedRoots = false)
                 c->watchpointMap->markAll(trc);
         }
 
-        /* Do not discard scripts with counters while profiling. */
+        /* Do not discard scripts with counts while profiling. */
         if (rt->profilingScripts) {
             for (CellIterUnderGC i(c, FINALIZE_SCRIPT); !i.done(); i.next()) {
                 JSScript *script = i.get<JSScript>();
-                if (script->pcCounters) {
+                if (script->scriptCounts) {
                     MarkScriptRoot(trc, &script, "profilingScripts");
                     JS_ASSERT(script == i.get<JSScript>());
                 }
@@ -2413,7 +2332,7 @@ TriggerGC(JSRuntime *rt, gcreason::Reason reason)
 
     /* Trigger the GC when it is safe to call an operation callback. */
     rt->gcIsNeeded = true;
-    rt->gcTriggerCompartment = NULL;
+    rt->gcFullIsNeeded = true;
     rt->gcTriggerReason = reason;
     rt->triggerOperationCallback();
 }
@@ -2429,25 +2348,22 @@ TriggerCompartmentGC(JSCompartment *comp, gcreason::Reason reason)
         return;
     }
 
-    if (rt->gcMode == JSGC_MODE_GLOBAL || comp == rt->atomsCompartment) {
+    if (comp == rt->atomsCompartment) {
         /* We can't do a compartmental GC of the default compartment. */
         TriggerGC(rt, reason);
         return;
     }
 
-    if (rt->gcIsNeeded) {
-        /* If we need to GC more than one compartment, run a full GC. */
-        if (rt->gcTriggerCompartment != comp)
-            rt->gcTriggerCompartment = NULL;
+    PrepareCompartmentForGC(comp);
+
+    if (rt->gcIsNeeded)
         return;
-    }
 
     /*
      * Trigger the GC when it is safe to call an operation callback on any
      * thread.
      */
     rt->gcIsNeeded = true;
-    rt->gcTriggerCompartment = comp;
     rt->gcTriggerReason = reason;
     rt->triggerOperationCallback();
 }
@@ -2459,14 +2375,13 @@ MaybeGC(JSContext *cx)
     JS_ASSERT(rt->onOwnerThread());
 
     if (rt->gcZeal() == ZealAllocValue || rt->gcZeal() == ZealPokeValue) {
-        GC(cx, NULL, GC_NORMAL, gcreason::MAYBEGC);
+        GC(cx, true, GC_NORMAL, gcreason::MAYBEGC);
         return;
     }
 
     JSCompartment *comp = cx->compartment;
     if (rt->gcIsNeeded) {
-        GCSlice(cx, (comp == rt->gcTriggerCompartment) ? comp : NULL,
-                GC_NORMAL, gcreason::MAYBEGC);
+        GCSlice(cx, rt->gcFullIsNeeded, GC_NORMAL, gcreason::MAYBEGC);
         return;
     }
 
@@ -2474,12 +2389,14 @@ MaybeGC(JSContext *cx)
         comp->gcBytes >= 3 * (comp->gcTriggerBytes / 4) &&
         rt->gcIncrementalState == NO_INCREMENTAL)
     {
-        GCSlice(cx, NULL, GC_NORMAL, gcreason::MAYBEGC);
+        PrepareCompartmentForGC(comp);
+        GCSlice(cx, false, GC_NORMAL, gcreason::MAYBEGC);
         return;
     }
 
     if (comp->gcMallocAndFreeBytes > comp->gcTriggerMallocAndFreeBytes) {
-        GCSlice(cx, rt->gcMode == JSGC_MODE_GLOBAL ? NULL : comp, GC_NORMAL, gcreason::MAYBEGC);
+        PrepareCompartmentForGC(comp);
+        GCSlice(cx, false, GC_NORMAL, gcreason::MAYBEGC);
         return;
     }
 
@@ -2493,7 +2410,7 @@ MaybeGC(JSContext *cx)
         if (rt->gcChunkAllocationSinceLastGC ||
             rt->gcNumArenasFreeCommitted > FreeCommittedArenasThreshold)
         {
-            GCSlice(cx, NULL, GC_SHRINK, gcreason::MAYBEGC);
+            GCSlice(cx, true, GC_SHRINK, gcreason::MAYBEGC);
         } else {
             rt->gcNextFullGCTime = now + GC_IDLE_FULL_SPAN;
         }
@@ -2848,7 +2765,7 @@ GCHelperThread::replenishAndFreeLater(void *ptr)
 void
 GCHelperThread::doSweep()
 {
-    if (JSContext *cx = finalizationContext) {
+    if (finalizationContext) {
         finalizationContext = NULL;
         AutoUnlockGC unlock(rt);
 
@@ -2856,8 +2773,9 @@ GCHelperThread::doSweep()
          * We must finalize in the insert order, see comments in
          * finalizeObjects.
          */
+        FreeOp fop(rt, false, true);
         for (ArenaHeader **i = finalizeVector.begin(); i != finalizeVector.end(); ++i)
-            ArenaLists::backgroundFinalize(cx, *i);
+            ArenaLists::backgroundFinalize(&fop, *i);
         finalizeVector.resize(0);
 
         if (freeCursor) {
@@ -2890,6 +2808,12 @@ GCHelperThread::doSweep()
 
 #endif /* JS_THREADSAFE */
 
+void
+PrepareCompartmentForGC(JSCompartment *comp)
+{
+    comp->scheduleGC();
+}
+
 } /* namespace js */
 
 static bool
@@ -2906,10 +2830,10 @@ ReleaseObservedTypes(JSRuntime *rt)
 }
 
 static void
-SweepCompartments(JSContext *cx, JSGCInvocationKind gckind)
+SweepCompartments(FreeOp *fop, JSGCInvocationKind gckind)
 {
-    JSRuntime *rt = cx->runtime;
-    JSCompartmentCallback callback = rt->compartmentCallback;
+    JSRuntime *rt = fop->runtime();
+    JSDestroyCompartmentCallback callback = rt->destroyCompartmentCallback;
 
     /* Skip the atomsCompartment. */
     JSCompartment **read = rt->compartments.begin() + 1;
@@ -2926,10 +2850,10 @@ SweepCompartments(JSContext *cx, JSGCInvocationKind gckind)
         {
             compartment->arenas.checkEmptyFreeLists();
             if (callback)
-                JS_ALWAYS_TRUE(callback(cx, compartment, JSCOMPARTMENT_DESTROY));
+                callback(fop, compartment);
             if (compartment->principals)
                 JS_DropPrincipals(rt, compartment->principals);
-            cx->delete_(compartment);
+            fop->delete_(compartment);
             continue;
         }
         *write++ = compartment;
@@ -2938,10 +2862,15 @@ SweepCompartments(JSContext *cx, JSGCInvocationKind gckind)
 }
 
 static void
-PurgeRuntime(JSRuntime *rt)
+PurgeRuntime(JSTracer *trc)
 {
-    for (GCCompartmentsIter c(rt); !c.done(); c.next())
-        c->purge();
+    JSRuntime *rt = trc->runtime;
+
+    for (CompartmentsIter c(rt); !c.done(); c.next()) {
+        /* We can be called from StartVerifyBarriers with a non-GC marker. */
+        if (c->isCollecting() || !IS_GC_MARKING_TRACER(trc))
+            c->purge();
+    }
 
     rt->tempLifoAlloc.freeUnused();
     rt->gsnCache.purge();
@@ -2974,7 +2903,7 @@ BeginMarkPhase(JSRuntime *rt)
      */
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_PURGE);
-        PurgeRuntime(rt);
+        PurgeRuntime(gcmarker);
     }
 
     /*
@@ -3049,9 +2978,9 @@ EndMarkPhase(JSContext *cx)
 
 #ifdef DEBUG
     /* Make sure that we didn't mark an object in another compartment */
-    if (rt->gcCurrentCompartment) {
+    if (!rt->gcIsFull) {
         for (CompartmentsIter c(rt); !c.done(); c.next()) {
-            JS_ASSERT_IF(c != rt->gcCurrentCompartment && c != rt->atomsCompartment,
+            JS_ASSERT_IF(!c->isCollecting() && c != rt->atomsCompartment,
                          c->arenas.checkArenaListAllUnmarked());
         }
     }
@@ -3121,10 +3050,12 @@ ValidateIncrementalMarking(JSContext *cx)
         js_free(entry);
 
         for (size_t i = 0; i < ArenasPerChunk; i++) {
+            if (chunk->decommittedArenas.get(i))
+                continue;
             Arena *arena = &chunk->arenas[i];
             if (!arena->aheader.allocated())
                 continue;
-            if (rt->gcCurrentCompartment && arena->aheader.compartment != rt->gcCurrentCompartment)
+            if (!arena->aheader.compartment->isCollecting())
                 continue;
             if (arena->aheader.allocatedDuringIncremental)
                 continue;
@@ -3184,10 +3115,15 @@ SweepPhase(JSContext *cx, JSGCInvocationKind gckind)
     for (GCCompartmentsIter c(rt); !c.done(); c.next())
         c->arenas.purge();
 
+#ifdef JS_THREADSAFE
+    FreeOp fop(rt, !!cx->gcBackgroundFree, false);
+#else
+    FreeOp fop(rt, false, false);
+#endif
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_FINALIZE_START);
         if (rt->gcFinalizeCallback)
-            rt->gcFinalizeCallback(cx, JSFINALIZE_START);
+            rt->gcFinalizeCallback(&fop, JSFINALIZE_START);
     }
 
     /* Finalize unreachable (key,value) pairs in all weak maps. */
@@ -3198,15 +3134,15 @@ SweepPhase(JSContext *cx, JSGCInvocationKind gckind)
     /* Collect watch points associated with unreachable objects. */
     WatchpointMap::sweepAll(rt);
 
-    if (!rt->gcCurrentCompartment)
-        Debugger::sweepAll(cx);
+    /* Detach unreachable debuggers and global objects from each other. */
+    Debugger::sweepAll(&fop);
 
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_COMPARTMENTS);
 
-        bool releaseTypes = !rt->gcCurrentCompartment && ReleaseObservedTypes(rt);
+        bool releaseTypes = rt->gcIsFull && ReleaseObservedTypes(rt);
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->sweep(cx, releaseTypes);
+            c->sweep(&fop, releaseTypes);
     }
 
     {
@@ -3217,29 +3153,29 @@ SweepPhase(JSContext *cx, JSGCInvocationKind gckind)
          * finalizer can access the other things even if they will be freed.
          */
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.finalizeObjects(cx);
+            c->arenas.finalizeObjects(&fop);
     }
 
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_STRING);
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.finalizeStrings(cx);
+            c->arenas.finalizeStrings(&fop);
     }
 
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_SCRIPT);
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.finalizeScripts(cx);
+            c->arenas.finalizeScripts(&fop);
     }
 
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_SHAPE);
         for (GCCompartmentsIter c(rt); !c.done(); c.next())
-            c->arenas.finalizeShapes(cx);
+            c->arenas.finalizeShapes(&fop);
     }
 
 #ifdef DEBUG
-     PropertyTree::dumpShapes(cx);
+     PropertyTree::dumpShapes(rt);
 #endif
 
     {
@@ -3258,8 +3194,8 @@ SweepPhase(JSContext *cx, JSGCInvocationKind gckind)
          * This removes compartments from rt->compartment, so we do it last to make
          * sure we don't miss sweeping any compartments.
          */
-        if (!rt->gcCurrentCompartment)
-            SweepCompartments(cx, gckind);
+        if (rt->gcIsFull)
+            SweepCompartments(&fop, gckind);
 
 #ifndef JS_THREADSAFE
         /*
@@ -3274,7 +3210,7 @@ SweepPhase(JSContext *cx, JSGCInvocationKind gckind)
     {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_FINALIZE_END);
         if (rt->gcFinalizeCallback)
-            rt->gcFinalizeCallback(cx, JSFINALIZE_END);
+            rt->gcFinalizeCallback(&fop, JSFINALIZE_END);
     }
 
     for (CompartmentsIter c(rt); !c.done(); c.next())
@@ -3324,7 +3260,7 @@ class AutoHeapSession {
 /* ...while this class is to be used only for garbage collection. */
 class AutoGCSession : AutoHeapSession {
   public:
-    explicit AutoGCSession(JSRuntime *rt, JSCompartment *comp);
+    explicit AutoGCSession(JSRuntime *rt, bool full);
     ~AutoGCSession();
 };
 
@@ -3343,14 +3279,21 @@ AutoHeapSession::~AutoHeapSession()
     runtime->gcRunning = false;
 }
 
-AutoGCSession::AutoGCSession(JSRuntime *rt, JSCompartment *comp)
+AutoGCSession::AutoGCSession(JSRuntime *rt, bool full)
   : AutoHeapSession(rt)
 {
-    JS_ASSERT(!runtime->gcCurrentCompartment);
-    runtime->gcCurrentCompartment = comp;
+    rt->gcIsFull = full;
+    DebugOnly<bool> any = false;
+    for (CompartmentsIter c(rt); !c.done(); c.next()) {
+        if (full || c->isGCScheduled()) {
+            c->setCollecting(true);
+            any = true;
+        }
+    }
+    JS_ASSERT(any);
 
     runtime->gcIsNeeded = false;
-    runtime->gcTriggerCompartment = NULL;
+    runtime->gcFullIsNeeded = false;
     runtime->gcInterFrameGC = true;
 
     runtime->gcNumber++;
@@ -3364,7 +3307,10 @@ AutoGCSession::AutoGCSession(JSRuntime *rt, JSCompartment *comp)
 
 AutoGCSession::~AutoGCSession()
 {
-    runtime->gcCurrentCompartment = NULL;
+    runtime->gcIsFull = false;
+    for (GCCompartmentsIter c(runtime); !c.done(); c.next())
+        c->setCollecting(false);
+
     runtime->gcNextFullGCTime = PRMJ_Now() + GC_IDLE_FULL_SPAN;
     runtime->gcChunkAllocationSinceLastGC = false;
 }
@@ -3375,17 +3321,15 @@ ResetIncrementalGC(JSRuntime *rt, const char *reason)
     if (rt->gcIncrementalState == NO_INCREMENTAL)
         return;
 
-    for (CompartmentsIter c(rt); !c.done(); c.next()) {
-        if (!rt->gcIncrementalCompartment || rt->gcIncrementalCompartment == c)
-            c->needsBarrier_ = false;
+    for (CompartmentsIter c(rt); !c.done(); c.next())
+        c->needsBarrier_ = false;
 
-        JS_ASSERT(!c->needsBarrier_);
-    }
-
-    rt->gcIncrementalCompartment = NULL;
+    rt->gcIncrementalIsFull = false;
     rt->gcMarker.reset();
     rt->gcMarker.stop();
     rt->gcIncrementalState = NO_INCREMENTAL;
+
+    JS_ASSERT(!rt->gcStrictCompartmentChecking);
 
     rt->gcStats.reset(reason);
 }
@@ -3464,8 +3408,8 @@ IncrementalGCSlice(JSContext *cx, int64_t budget, JSGCInvocationKind gckind)
     gc::State initialState = rt->gcIncrementalState;
 
     if (rt->gcIncrementalState == NO_INCREMENTAL) {
-        JS_ASSERT(!rt->gcIncrementalCompartment);
-        rt->gcIncrementalCompartment = rt->gcCurrentCompartment;
+        JS_ASSERT(!rt->gcIncrementalIsFull);
+        rt->gcIncrementalIsFull = rt->gcIsFull;
         rt->gcIncrementalState = MARK_ROOTS;
         rt->gcLastMarkSlice = false;
     }
@@ -3476,7 +3420,7 @@ IncrementalGCSlice(JSContext *cx, int64_t budget, JSGCInvocationKind gckind)
 
         for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
             gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_DISCARD_CODE);
-            c->discardJitCode(cx);
+            c->discardJitCode(rt->defaultFreeOp());
         }
 
         BeginMarkPhase(rt);
@@ -3511,7 +3455,7 @@ IncrementalGCSlice(JSContext *cx, int64_t budget, JSGCInvocationKind gckind)
 
         /* JIT code was already discarded during sweeping. */
 
-        rt->gcIncrementalCompartment = NULL;
+        rt->gcIncrementalIsFull = false;
 
         rt->gcIncrementalState = NO_INCREMENTAL;
     }
@@ -3551,7 +3495,7 @@ IsIncrementalGCSafe(JSRuntime *rt)
     if (rt->gcKeepAtoms)
         return IncrementalSafety::Unsafe("gcKeepAtoms set");
 
-    for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
+    for (CompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->activeAnalysis)
             return IncrementalSafety::Unsafe("activeAnalysis set");
     }
@@ -3587,17 +3531,15 @@ BudgetIncrementalGC(JSRuntime *rt, int64_t *budget)
     return;
 #endif
 
-    if (rt->gcIncrementalState != NO_INCREMENTAL &&
-        rt->gcCurrentCompartment != rt->gcIncrementalCompartment)
-    {
-        ResetIncrementalGC(rt, "compartment change");
-        return;
-    }
-
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
         if (c->gcBytes > c->gcTriggerBytes) {
             *budget = SliceBudget::Unlimited;
             rt->gcStats.nonincremental("allocation trigger");
+            return;
+        }
+
+        if (c->isCollecting() != c->needsBarrier()) {
+            ResetIncrementalGC(rt, "compartment change");
             return;
         }
     }
@@ -3610,18 +3552,18 @@ BudgetIncrementalGC(JSRuntime *rt, int64_t *budget)
  * marking implementation.
  */
 static JS_NEVER_INLINE void
-GCCycle(JSContext *cx, JSCompartment *comp, int64_t budget, JSGCInvocationKind gckind)
+GCCycle(JSContext *cx, bool full, int64_t budget, JSGCInvocationKind gckind)
 {
     JSRuntime *rt = cx->runtime;
 
-    JS_ASSERT_IF(comp, comp != rt->atomsCompartment);
-    JS_ASSERT_IF(comp, rt->gcMode != JSGC_MODE_GLOBAL);
+    JS_ASSERT_IF(!full, !rt->atomsCompartment->isCollecting());
+    JS_ASSERT_IF(!full, rt->gcMode != JSGC_MODE_GLOBAL);
 
     /* Recursive GC is no-op. */
     if (rt->gcRunning)
         return;
 
-    AutoGCSession gcsession(rt, comp);
+    AutoGCSession gcsession(rt, full);
 
     /* Don't GC if we are reporting an OOM. */
     if (rt->inOOMReport)
@@ -3689,7 +3631,7 @@ IsDeterministicGCReason(gcreason::Reason reason)
 #endif
 
 static void
-Collect(JSContext *cx, JSCompartment *comp, int64_t budget,
+Collect(JSContext *cx, bool full, int64_t budget,
         JSGCInvocationKind gckind, gcreason::Reason reason)
 {
     JSRuntime *rt = cx->runtime;
@@ -3725,11 +3667,14 @@ Collect(JSContext *cx, JSCompartment *comp, int64_t budget,
 
     RecordNativeStackTopForGC(rt);
 
-    /* This is a heuristic to avoid resets. */
-    if (rt->gcIncrementalState != NO_INCREMENTAL && !rt->gcIncrementalCompartment)
-        comp = NULL;
+    if (rt->gcMode == JSGC_MODE_GLOBAL)
+        full = true;
 
-    gcstats::AutoGCSlice agc(rt->gcStats, comp, reason);
+    /* This is a heuristic to avoid resets. */
+    if (rt->gcIncrementalState != NO_INCREMENTAL && rt->gcIncrementalIsFull)
+        full = true;
+
+    gcstats::AutoGCSlice agc(rt->gcStats, full, reason);
 
     do {
         /*
@@ -3746,7 +3691,7 @@ Collect(JSContext *cx, JSCompartment *comp, int64_t budget,
             /* Lock out other GC allocator and collector invocations. */
             AutoLockGC lock(rt);
             rt->gcPoke = false;
-            GCCycle(cx, comp, budget, gckind);
+            GCCycle(cx, full, budget, gckind);
         }
 
         if (rt->gcIncrementalState == NO_INCREMENTAL) {
@@ -3765,15 +3710,15 @@ Collect(JSContext *cx, JSCompartment *comp, int64_t budget,
 namespace js {
 
 void
-GC(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, gcreason::Reason reason)
+GC(JSContext *cx, bool full, JSGCInvocationKind gckind, gcreason::Reason reason)
 {
-    Collect(cx, comp, SliceBudget::Unlimited, gckind, reason);
+    Collect(cx, full, SliceBudget::Unlimited, gckind, reason);
 }
 
 void
-GCSlice(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, gcreason::Reason reason)
+GCSlice(JSContext *cx, bool full, JSGCInvocationKind gckind, gcreason::Reason reason)
 {
-    Collect(cx, comp, cx->runtime->gcSliceBudget, gckind, reason);
+    Collect(cx, full, cx->runtime->gcSliceBudget, gckind, reason);
 }
 
 void
@@ -3986,11 +3931,9 @@ RunDebugGC(JSContext *cx)
      * If rt->gcDebugCompartmentGC is true, only GC the current
      * compartment. But don't GC the atoms compartment.
      */
-    rt->gcTriggerCompartment = rt->gcDebugCompartmentGC ? cx->compartment : NULL;
-    if (rt->gcTriggerCompartment == rt->atomsCompartment)
-        rt->gcTriggerCompartment = NULL;
-
-    RunLastDitchGC(cx, gcreason::DEBUG_GC);
+    if (rt->gcDebugCompartmentGC)
+        PrepareCompartmentForGC(cx->compartment);
+    RunLastDitchGC(cx, gcreason::DEBUG_GC, !rt->gcDebugCompartmentGC);
 #endif
 }
 
@@ -4236,9 +4179,7 @@ StartVerifyBarriers(JSContext *cx)
         r.front()->bitmap.clear();
 
     for (CompartmentsIter c(rt); !c.done(); c.next())
-        c->discardJitCode(cx);
-
-    PurgeRuntime(rt);
+        c->discardJitCode(rt->defaultFreeOp());
 
     VerifyTracer *trc = new (js_malloc(sizeof(VerifyTracer))) VerifyTracer;
 
@@ -4247,6 +4188,8 @@ StartVerifyBarriers(JSContext *cx)
     trc->count = 0;
 
     JS_TracerInit(trc, rt, AccumulateEdge);
+
+    PurgeRuntime(trc);
 
     const size_t size = 64 * 1024 * 1024;
     trc->root = (VerifyNode *)js_malloc(size);
@@ -4390,7 +4333,7 @@ EndVerifyBarriers(JSContext *cx)
         c->needsBarrier_ = false;
 
     for (CompartmentsIter c(rt); !c.done(); c.next())
-        c->discardJitCode(cx);
+        c->discardJitCode(rt->defaultFreeOp());
 
     rt->gcVerifyData = NULL;
     rt->gcIncrementalState = NO_INCREMENTAL;
@@ -4484,7 +4427,7 @@ static void ReleaseAllJITCode(JSContext *cx)
         mjit::ClearAllFrames(c);
         for (CellIter i(c, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
-            mjit::ReleaseScriptCode(cx, script);
+            mjit::ReleaseScriptCode(cx->runtime->defaultFreeOp(), script);
         }
     }
 #endif
@@ -4493,12 +4436,12 @@ static void ReleaseAllJITCode(JSContext *cx)
 /*
  * There are three possible PCCount profiling states:
  *
- * 1. None: Neither scripts nor the runtime have counter information.
- * 2. Profile: Active scripts have counter information, the runtime does not.
- * 3. Query: Scripts do not have counter information, the runtime does.
+ * 1. None: Neither scripts nor the runtime have count information.
+ * 2. Profile: Active scripts have count information, the runtime does not.
+ * 3. Query: Scripts do not have count information, the runtime does.
  *
  * When starting to profile scripts, counting begins immediately, with all JIT
- * code discarded and recompiled with counters as necessary. Active interpreter
+ * code discarded and recompiled with counts as necessary. Active interpreter
  * frames will not begin profiling until they begin executing another script
  * (via a call or return).
  *
@@ -4515,18 +4458,18 @@ static void ReleaseAllJITCode(JSContext *cx)
  */
 
 static void
-ReleaseScriptPCCounters(JSContext *cx)
+ReleaseScriptCounts(JSContext *cx)
 {
     JSRuntime *rt = cx->runtime;
-    JS_ASSERT(rt->scriptPCCounters);
+    JS_ASSERT(rt->scriptAndCountsVector);
 
-    ScriptOpcodeCountsVector &vec = *rt->scriptPCCounters;
+    ScriptAndCountsVector &vec = *rt->scriptAndCountsVector;
 
     for (size_t i = 0; i < vec.length(); i++)
-        vec[i].counters.destroy(cx);
+        vec[i].scriptCounts.destroy(cx);
 
-    cx->delete_(rt->scriptPCCounters);
-    rt->scriptPCCounters = NULL;
+    cx->delete_(rt->scriptAndCountsVector);
+    rt->scriptAndCountsVector = NULL;
 }
 
 JS_FRIEND_API(void)
@@ -4537,8 +4480,8 @@ StartPCCountProfiling(JSContext *cx)
     if (rt->profilingScripts)
         return;
 
-    if (rt->scriptPCCounters)
-        ReleaseScriptPCCounters(cx);
+    if (rt->scriptAndCountsVector)
+        ReleaseScriptCounts(cx);
 
     ReleaseAllJITCode(cx);
 
@@ -4552,29 +4495,29 @@ StopPCCountProfiling(JSContext *cx)
 
     if (!rt->profilingScripts)
         return;
-    JS_ASSERT(!rt->scriptPCCounters);
+    JS_ASSERT(!rt->scriptAndCountsVector);
 
     ReleaseAllJITCode(cx);
 
-    ScriptOpcodeCountsVector *vec = cx->new_<ScriptOpcodeCountsVector>(SystemAllocPolicy());
+    ScriptAndCountsVector *vec = cx->new_<ScriptAndCountsVector>(SystemAllocPolicy());
     if (!vec)
         return;
 
     for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
         for (CellIter i(c, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
-            if (script->pcCounters && script->types) {
-                ScriptOpcodeCountsPair info;
+            if (script->scriptCounts && script->types) {
+                ScriptAndCounts info;
                 info.script = script;
-                info.counters.steal(script->pcCounters);
+                info.scriptCounts.steal(script->scriptCounts);
                 if (!vec->append(info))
-                    info.counters.destroy(cx);
+                    info.scriptCounts.destroy(cx);
             }
         }
     }
 
     rt->profilingScripts = false;
-    rt->scriptPCCounters = vec;
+    rt->scriptAndCountsVector = vec;
 }
 
 JS_FRIEND_API(void)
@@ -4582,11 +4525,11 @@ PurgePCCounts(JSContext *cx)
 {
     JSRuntime *rt = cx->runtime;
 
-    if (!rt->scriptPCCounters)
+    if (!rt->scriptAndCountsVector)
         return;
     JS_ASSERT(!rt->profilingScripts);
 
-    ReleaseScriptPCCounters(cx);
+    ReleaseScriptCounts(cx);
 }
 
 } /* namespace js */

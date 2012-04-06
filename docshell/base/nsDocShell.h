@@ -520,11 +520,14 @@ protected:
      * @param aChannelRedirectFlags
      *        For redirects, the redirect flags from nsIChannelEventSink
      *        (0 otherwise)
+     * @param aResponseStatus
+     *        For HTTP channels, the response code (0 otherwise).
      */
     void AddURIVisit(nsIURI* aURI,
                      nsIURI* aReferrerURI,
                      nsIURI* aPreviousURI,
-                     PRUint32 aChannelRedirectFlags);
+                     PRUint32 aChannelRedirectFlags,
+                     PRUint32 aResponseStatus=0);
 
     // Helper Routines
     nsresult   ConfirmRepost(bool * aRepost);
@@ -672,11 +675,6 @@ protected:
     nsresult EnsureCommandHandler();
 
     nsIChannel* GetCurrentDocChannel();
-
-    // If our load group contains a LOAD_DOCUMENT_URI channel that's not our
-    // document's channel, cancel it.
-    void StopOutstandingOtherDocumentLoad();
-
 protected:
     // Override the parent setter from nsDocLoader
     virtual nsresult SetDocLoaderParent(nsDocLoader * aLoader);

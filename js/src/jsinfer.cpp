@@ -800,7 +800,7 @@ static inline const Shape *
 GetSingletonShape(JSContext *cx, JSObject *obj, jsid id)
 {
     const Shape *shape = obj->nativeLookup(cx, id);
-    if (shape && shape->hasDefaultGetterOrIsMethod() && shape->hasSlot())
+    if (shape && shape->hasDefaultGetter() && shape->hasSlot())
         return shape;
     return NULL;
 }
@@ -2082,7 +2082,7 @@ TypeCompartment::growPendingArray(JSContext *cx)
 }
 
 void
-TypeCompartment::processPendingRecompiles(JSContext *cx)
+TypeCompartment::processPendingRecompiles(FreeOp *fop)
 {
     /* Steal the list of scripts to recompile, else we will try to recursively recompile them. */
     Vector<RecompileInfo> *pending = pendingRecompiles;
@@ -2092,18 +2092,18 @@ TypeCompartment::processPendingRecompiles(JSContext *cx)
 
 #ifdef JS_METHODJIT
 
-    mjit::ExpandInlineFrames(cx->compartment);
+    mjit::ExpandInlineFrames(compartment());
 
     for (unsigned i = 0; i < pending->length(); i++) {
         const RecompileInfo &info = (*pending)[i];
         mjit::JITScript *jit = info.script->getJIT(info.constructing);
         if (jit && jit->chunkDescriptor(info.chunkIndex).chunk)
-            mjit::Recompiler::clearStackReferencesAndChunk(cx, info.script, jit, info.chunkIndex);
+            mjit::Recompiler::clearStackReferencesAndChunk(fop, info.script, jit, info.chunkIndex);
     }
 
 #endif /* JS_METHODJIT */
 
-    cx->delete_(pending);
+    fop->delete_(pending);
 }
 
 void
@@ -2118,10 +2118,16 @@ TypeCompartment::setPendingNukeTypes(JSContext *cx)
 }
 
 void
-TypeCompartment::nukeTypes(JSContext *cx)
+TypeCompartment::setPendingNukeTypesNoReport()
 {
-    JS_ASSERT(this == &cx->compartment->types);
+    JS_ASSERT(compartment()->activeInference);
+    if (!pendingNukeTypes)
+        pendingNukeTypes = true;
+}
 
+void
+TypeCompartment::nukeTypes(FreeOp *fop)
+{
     /*
      * This is the usual response if we encounter an OOM while adding a type
      * or resolving type constraints. Reset the compartment to not use type
@@ -2135,28 +2141,28 @@ TypeCompartment::nukeTypes(JSContext *cx)
      */
     JS_ASSERT(pendingNukeTypes);
     if (pendingRecompiles) {
-        cx->free_(pendingRecompiles);
+        fop->free_(pendingRecompiles);
         pendingRecompiles = NULL;
     }
 
     inferenceEnabled = false;
 
     /* Update the cached inferenceEnabled bit in all contexts. */
-    for (ContextIter acx(cx->runtime); !acx.done(); acx.next())
+    for (ContextIter acx(fop->runtime()); !acx.done(); acx.next())
         acx->setCompartment(acx->compartment);
 
 #ifdef JS_METHODJIT
 
-    JSCompartment *compartment = cx->compartment;
+    JSCompartment *compartment = this->compartment();
     mjit::ExpandInlineFrames(compartment);
     mjit::ClearAllFrames(compartment);
 
     /* Throw away all JIT code in the compartment, but leave everything else alone. */
 
-    for (gc::CellIter i(cx->compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+    for (gc::CellIter i(compartment, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
         if (script->hasJITCode())
-            mjit::ReleaseScriptCode(cx, script);
+            mjit::ReleaseScriptCode(fop, script);
     }
 #endif /* JS_METHODJIT */
 
@@ -2199,15 +2205,15 @@ TypeCompartment::addPendingRecompile(JSContext *cx, JSScript *script, jsbytecode
     RecompileInfo info;
     info.script = script;
 
-    if (script->jitNormal) {
+    if (script->jitHandleNormal.isValid()) {
         info.constructing = false;
-        info.chunkIndex = script->jitNormal->chunkIndex(pc);
+        info.chunkIndex = script->jitHandleNormal.getValid()->chunkIndex(pc);
         addPendingRecompile(cx, info);
     }
 
-    if (script->jitCtor) {
+    if (script->jitHandleCtor.isValid()) {
         info.constructing = true;
-        info.chunkIndex = script->jitCtor->chunkIndex(pc);
+        info.chunkIndex = script->jitHandleCtor.getValid()->chunkIndex(pc);
         addPendingRecompile(cx, info);
     }
 #endif
@@ -2739,7 +2745,7 @@ UpdatePropertyType(JSContext *cx, TypeSet *types, JSObject *obj, const Shape *sh
     if (shape->hasGetterValue() || shape->hasSetterValue()) {
         types->setOwnProperty(cx, true);
         types->addType(cx, Type::UnknownType());
-    } else if (shape->hasDefaultGetterOrIsMethod() && shape->hasSlot()) {
+    } else if (shape->hasDefaultGetter() && shape->hasSlot()) {
         const Value &value = obj->nativeGetSlot(shape->slot());
 
         /*
@@ -3621,8 +3627,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
       }
 
       case JSOP_SETARG:
-      case JSOP_SETLOCAL:
-      case JSOP_SETLOCALPOP: {
+      case JSOP_SETLOCAL: {
         uint32_t slot = GetBytecodeSlot(script, pc);
         if (!trackSlot(slot) && slot < TotalSlots(script)) {
             TypeSet *types = TypeScript::SlotTypes(script, slot);
@@ -3667,8 +3672,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
             pushed[0].addType(cx, Type::LazyArgsType());
         break;
 
-      case JSOP_SETPROP:
-      case JSOP_SETMETHOD: {
+      case JSOP_SETPROP: {
         jsid id = GetAtomId(cx, script, pc, 0);
         poppedTypes(pc, 1)->addSetProperty(cx, script, pc, poppedTypes(pc, 0), id);
         poppedTypes(pc, 0)->addSubset(cx, &pushed[0]);
@@ -3752,24 +3756,12 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
         break;
 
       case JSOP_LAMBDA:
-      case JSOP_DEFFUN:
-      case JSOP_DEFLOCALFUN: {
-        unsigned off = op == JSOP_DEFLOCALFUN ? SLOTNO_LEN : 0;
-        JSObject *obj = script->getObject(GET_UINT32_INDEX(pc + off));
+      case JSOP_DEFFUN: {
+        JSObject *obj = script->getObject(GET_UINT32_INDEX(pc));
 
         TypeSet *res = NULL;
-        if (op == JSOP_LAMBDA) {
+        if (op == JSOP_LAMBDA)
             res = &pushed[0];
-        } else if (op == JSOP_DEFLOCALFUN) {
-            uint32_t slot = GetBytecodeSlot(script, pc);
-            if (trackSlot(slot)) {
-                res = &pushed[0];
-            } else {
-                /* Should not see 'let' vars here. */
-                JS_ASSERT(slot < TotalSlots(script));
-                res = TypeScript::SlotTypes(script, slot);
-            }
-        }
 
         if (res) {
             if (script->hasGlobal())
@@ -3887,8 +3879,7 @@ ScriptAnalysis::analyzeTypesBytecode(JSContext *cx, unsigned offset,
         state.hasHole = true;
         break;
 
-      case JSOP_INITPROP:
-      case JSOP_INITMETHOD: {
+      case JSOP_INITPROP: {
         const SSAValue &objv = poppedValue(pc, 1);
         jsbytecode *initpc = script->code + objv.pushedOffset();
         TypeObject *initializer = GetInitializerType(cx, script, initpc);
@@ -5745,7 +5736,7 @@ JSCompartment::getLazyType(JSContext *cx, JSObject *proto)
 /////////////////////////////////////////////////////////////////////
 
 void
-TypeSet::sweep(JSContext *cx, JSCompartment *compartment)
+TypeSet::sweep(JSCompartment *compartment)
 {
     /*
      * Purge references to type objects that are no longer live. Type sets hold
@@ -5769,7 +5760,7 @@ TypeSet::sweep(JSContext *cx, JSCompartment *compartment)
                 if (pentry)
                     *pentry = object;
                 else
-                    compartment->types.setPendingNukeTypes(cx);
+                    compartment->types.setPendingNukeTypesNoReport();
             }
         }
         setBaseObjectCount(objectCount);
@@ -5804,7 +5795,7 @@ TypeObject::clearProperties()
  * so that type objects do not need later finalization.
  */
 inline void
-TypeObject::sweep(JSContext *cx)
+TypeObject::sweep(FreeOp *fop)
 {
     /*
      * We may be regenerating existing type sets containing this object,
@@ -5826,7 +5817,7 @@ TypeObject::sweep(JSContext *cx)
 
     if (!isMarked()) {
         if (newScript)
-            Foreground::free_(newScript);
+            fop->free_(newScript);
         return;
     }
 
@@ -5855,12 +5846,12 @@ TypeObject::sweep(JSContext *cx)
                             (compartment, propertySet, propertyCount, prop->id);
                     if (pentry) {
                         *pentry = newProp;
-                        newProp->types.sweep(cx, compartment);
+                        newProp->types.sweep(compartment);
                     } else {
-                        compartment->types.setPendingNukeTypes(cx);
+                        compartment->types.setPendingNukeTypesNoReport();
                     }
                 } else {
-                    compartment->types.setPendingNukeTypes(cx);
+                    compartment->types.setPendingNukeTypesNoReport();
                 }
             }
         }
@@ -5871,9 +5862,9 @@ TypeObject::sweep(JSContext *cx)
             Property *newProp = compartment->typeLifoAlloc.new_<Property>(*prop);
             if (newProp) {
                 propertySet = (Property **) newProp;
-                newProp->types.sweep(cx, compartment);
+                newProp->types.sweep(compartment);
             } else {
-                compartment->types.setPendingNukeTypes(cx);
+                compartment->types.setPendingNukeTypesNoReport();
             }
         } else {
             propertySet = NULL;
@@ -5897,27 +5888,27 @@ TypeObject::sweep(JSContext *cx)
 
 struct SweepTypeObjectOp
 {
-    JSContext *cx;
-    SweepTypeObjectOp(JSContext *cx) : cx(cx) {}
+    FreeOp *fop;
+    SweepTypeObjectOp(FreeOp *fop) : fop(fop) {}
     void operator()(gc::Cell *cell) {
         TypeObject *object = static_cast<TypeObject *>(cell);
-        object->sweep(cx);
+        object->sweep(fop);
     }
 };
 
 void
-SweepTypeObjects(JSContext *cx, JSCompartment *compartment)
+SweepTypeObjects(FreeOp *fop, JSCompartment *compartment)
 {
-    SweepTypeObjectOp op(cx);
+    SweepTypeObjectOp op(fop);
     gc::ForEachArenaAndCell(compartment, gc::FINALIZE_TYPE_OBJECT, gc::EmptyArenaOp, op);
 }
 
 void
-TypeCompartment::sweep(JSContext *cx)
+TypeCompartment::sweep(FreeOp *fop)
 {
     JSCompartment *compartment = this->compartment();
 
-    SweepTypeObjects(cx, compartment);
+    SweepTypeObjects(fop, compartment);
 
     /*
      * Iterate through the array/object type tables and remove all entries
@@ -5985,14 +5976,14 @@ TypeCompartment::sweep(JSContext *cx)
      * to reallocate if the compartment becomes active again.
      */
     if (pendingArray)
-        cx->free_(pendingArray);
+        fop->free_(pendingArray);
 
     pendingArray = NULL;
     pendingCapacity = 0;
 }
 
 void
-JSCompartment::sweepNewTypeObjectTable(JSContext *cx, TypeObjectSet &table)
+JSCompartment::sweepNewTypeObjectTable(TypeObjectSet &table)
 {
     if (table.initialized()) {
         for (TypeObjectSet::Enum e(table); !e.empty(); e.popFront()) {
@@ -6019,7 +6010,7 @@ TypeCompartment::~TypeCompartment()
 }
 
 /* static */ void
-TypeScript::Sweep(JSContext *cx, JSScript *script)
+TypeScript::Sweep(FreeOp *fop, JSScript *script)
 {
     JSCompartment *compartment = script->compartment();
     JS_ASSERT(compartment->types.inferenceEnabled);
@@ -6029,7 +6020,7 @@ TypeScript::Sweep(JSContext *cx, JSScript *script)
 
     /* Remove constraints and references to dead objects from the persistent type sets. */
     for (unsigned i = 0; i < num; i++)
-        typeArray[i].sweep(cx, compartment);
+        typeArray[i].sweep(compartment);
 
     TypeResult **presult = &script->types->dynamicList;
     while (*presult) {
@@ -6039,7 +6030,7 @@ TypeScript::Sweep(JSContext *cx, JSScript *script)
         if (!type.isUnknown() && !type.isAnyObject() && type.isObject() &&
             IsAboutToBeFinalized(type.objectKey())) {
             *presult = result->next;
-            cx->delete_(result);
+            fop->delete_(result);
         } else {
             presult = &result->next;
         }

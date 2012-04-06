@@ -43,6 +43,7 @@ import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoEventResponder;
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import android.content.Context;
@@ -59,8 +60,7 @@ import android.view.View;
 public class GeckoLayerClient implements GeckoEventResponder,
                                          FlexibleGLSurfaceView.Listener {
     private static final String LOGTAG = "GeckoLayerClient";
-
-    private static final int DEFAULT_DISPLAY_PORT_MARGIN = 300;
+    private static final String PREF_DISPLAYPORT_STRATEGY = "gfx.displayport.strategy";
 
     private LayerController mLayerController;
     private LayerRenderer mLayerRenderer;
@@ -68,8 +68,8 @@ public class GeckoLayerClient implements GeckoEventResponder,
 
     private IntSize mScreenSize;
     private IntSize mWindowSize;
-    private RectF mDisplayPort;
-    private RectF mReturnDisplayPort;
+    private DisplayPortMetrics mDisplayPort;
+    private DisplayPortMetrics mReturnDisplayPort;
 
     private VirtualLayer mRootLayer;
 
@@ -95,7 +95,7 @@ public class GeckoLayerClient implements GeckoEventResponder,
         // to before being read
         mScreenSize = new IntSize(0, 0);
         mWindowSize = new IntSize(0, 0);
-        mDisplayPort = new RectF();
+        mDisplayPort = new DisplayPortMetrics();
         mCurrentViewTransform = new ViewTransform(0, 0, 1);
     }
 
@@ -112,15 +112,17 @@ public class GeckoLayerClient implements GeckoEventResponder,
         GeckoAppShell.registerGeckoEventListener("Viewport:PageSize", this);
         GeckoAppShell.registerGeckoEventListener("Viewport:CalculateDisplayPort", this);
         GeckoAppShell.registerGeckoEventListener("Checkerboard:Toggle", this);
+        GeckoAppShell.registerGeckoEventListener("Preferences:Data", this);
 
         view.setListener(this);
         view.setLayerRenderer(mLayerRenderer);
         layerController.setRoot(mRootLayer);
 
         sendResizeEventIfNecessary(true);
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Preferences:Get", "[ \"" + PREF_DISPLAYPORT_STRATEGY + "\" ]"));
     }
 
-    RectF getDisplayPort() {
+    DisplayPortMetrics getDisplayPort() {
         return mDisplayPort;
     }
 
@@ -171,76 +173,21 @@ public class GeckoLayerClient implements GeckoEventResponder,
         GeckoAppShell.viewSizeChanged();
     }
 
-    private static RectF calculateDisplayPort(ImmutableViewportMetrics metrics) {
-        float desiredXMargins = 2 * DEFAULT_DISPLAY_PORT_MARGIN;
-        float desiredYMargins = 2 * DEFAULT_DISPLAY_PORT_MARGIN;
+    void adjustViewport(DisplayPortMetrics displayPort) {
+        ImmutableViewportMetrics metrics = mLayerController.getViewportMetrics();
 
-        // we need to avoid having a display port that is larger than the page, or we will end up
-        // painting things outside the page bounds (bug 729169). we simultaneously need to make
-        // the display port as large as possible so that we redraw less.
+        ViewportMetrics clampedMetrics = new ViewportMetrics(metrics);
+        clampedMetrics.setViewport(clampedMetrics.getClampedViewport());
 
-        // figure out how much of the desired buffer amount we can actually use on the horizontal axis
-        float xBufferAmount = Math.min(desiredXMargins, metrics.pageSizeWidth - metrics.getWidth());
-        // if we reduced the buffer amount on the horizontal axis, we should take that saved memory and
-        // use it on the vertical axis
-        float savedPixels = (desiredXMargins - xBufferAmount) * (metrics.getHeight() + desiredYMargins);
-        float extraYAmount = (float)Math.floor(savedPixels / (metrics.getWidth() + xBufferAmount));
-        float yBufferAmount = Math.min(desiredYMargins + extraYAmount, metrics.pageSizeHeight - metrics.getHeight());
-        // and the reverse - if we shrunk the buffer on the vertical axis we can add it to the horizontal
-        if (xBufferAmount == desiredXMargins && yBufferAmount < desiredYMargins) {
-            savedPixels = (desiredYMargins - yBufferAmount) * (metrics.getWidth() + xBufferAmount);
-            float extraXAmount = (float)Math.floor(savedPixels / (metrics.getHeight() + yBufferAmount));
-            xBufferAmount = Math.min(xBufferAmount + extraXAmount, metrics.pageSizeWidth - metrics.getWidth());
+        if (displayPort == null) {
+            displayPort = DisplayPortCalculator.calculate(metrics,
+                    mLayerController.getPanZoomController().getVelocityVector());
         }
 
-        // and now calculate the display port margins based on how much buffer we've decided to use and
-        // the page bounds, ensuring we use all of the available buffer amounts on one side or the other
-        // on any given axis. (i.e. if we're scrolled to the top of the page, the vertical buffer is
-        // entirely below the visible viewport, but if we're halfway down the page, the vertical buffer
-        // is split).
-        float leftMargin = Math.min(DEFAULT_DISPLAY_PORT_MARGIN, metrics.viewportRectLeft);
-        float rightMargin = Math.min(DEFAULT_DISPLAY_PORT_MARGIN, metrics.pageSizeWidth - (metrics.viewportRectLeft + metrics.getWidth()));
-        if (leftMargin < DEFAULT_DISPLAY_PORT_MARGIN) {
-            rightMargin = xBufferAmount - leftMargin;
-        } else if (rightMargin < DEFAULT_DISPLAY_PORT_MARGIN) {
-            leftMargin = xBufferAmount - rightMargin;
-        } else if (!FloatUtils.fuzzyEquals(leftMargin + rightMargin, xBufferAmount)) {
-            float delta = xBufferAmount - leftMargin - rightMargin;
-            leftMargin += delta / 2;
-            rightMargin += delta / 2;
-        }
+        mDisplayPort = displayPort;
+        mGeckoViewport = clampedMetrics;
 
-        float topMargin = Math.min(DEFAULT_DISPLAY_PORT_MARGIN, metrics.viewportRectTop);
-        float bottomMargin = Math.min(DEFAULT_DISPLAY_PORT_MARGIN, metrics.pageSizeHeight - (metrics.viewportRectTop + metrics.getHeight()));
-        if (topMargin < DEFAULT_DISPLAY_PORT_MARGIN) {
-            bottomMargin = yBufferAmount - topMargin;
-        } else if (bottomMargin < DEFAULT_DISPLAY_PORT_MARGIN) {
-            topMargin = yBufferAmount - bottomMargin;
-        } else if (!FloatUtils.fuzzyEquals(topMargin + bottomMargin, yBufferAmount)) {
-            float delta = yBufferAmount - topMargin - bottomMargin;
-            topMargin += delta / 2;
-            bottomMargin += delta / 2;
-        }
-
-        // note that unless the viewport size changes, or the page dimensions change (either because of
-        // content changes or zooming), the size of the display port should remain constant. this
-        // is intentional to avoid re-creating textures and all sorts of other reallocations in the
-        // draw and composition code.
-        return new RectF(metrics.viewportRectLeft - leftMargin,
-                         metrics.viewportRectTop - topMargin,
-                         metrics.viewportRectRight + rightMargin,
-                         metrics.viewportRectBottom + bottomMargin);
-    }
-
-    private void adjustViewport() {
-        ViewportMetrics viewportMetrics =
-            new ViewportMetrics(mLayerController.getViewportMetrics());
-
-        viewportMetrics.setViewport(viewportMetrics.getClampedViewport());
-
-        mDisplayPort = calculateDisplayPort(mLayerController.getViewportMetrics());
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createViewportEvent(viewportMetrics, mDisplayPort));
-        mGeckoViewport = viewportMetrics;
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createViewportEvent(clampedMetrics, displayPort));
     }
 
     /**
@@ -269,8 +216,12 @@ public class GeckoLayerClient implements GeckoEventResponder,
                 mLayerController.abortPanZoomAnimation();
                 break;
             case PAGE_SIZE:
+                // adjust the page dimensions to account for differences in zoom
+                // between the rendered content (which is what Gecko tells us)
+                // and our zoom level (which may have diverged).
+                float scaleFactor = oldMetrics.zoomFactor / messageMetrics.getZoomFactor();
                 newMetrics = new ViewportMetrics(oldMetrics);
-                newMetrics.setPageSize(messageMetrics.getPageSize());
+                newMetrics.setPageSize(messageMetrics.getPageSize().scale(scaleFactor));
                 break;
             }
 
@@ -280,7 +231,7 @@ public class GeckoLayerClient implements GeckoEventResponder,
                 }
             });
             mLayerController.setViewportMetrics(newMetrics);
-            mDisplayPort = calculateDisplayPort(mLayerController.getViewportMetrics());
+            mDisplayPort = DisplayPortCalculator.calculate(mLayerController.getViewportMetrics(), null);
         }
         mReturnDisplayPort = mDisplayPort;
     }
@@ -294,18 +245,23 @@ public class GeckoLayerClient implements GeckoEventResponder,
                 handleViewportMessage(message, ViewportMessageType.PAGE_SIZE);
             } else if ("Viewport:CalculateDisplayPort".equals(event)) {
                 ImmutableViewportMetrics newMetrics = new ImmutableViewportMetrics(new ViewportMetrics(message));
-                mReturnDisplayPort = calculateDisplayPort(newMetrics);
+                mReturnDisplayPort = DisplayPortCalculator.calculate(newMetrics, null);
             } else if ("Checkerboard:Toggle".equals(event)) {
-                try {
-                    boolean showChecks = message.getBoolean("value");
-                    mLayerController.setCheckerboardShowChecks(showChecks);
-                    Log.i(LOGTAG, "Showing checks: " + showChecks);
-                } catch(JSONException ex) {
-                    Log.e(LOGTAG, "Error decoding JSON", ex);
+                boolean showChecks = message.getBoolean("value");
+                mLayerController.setCheckerboardShowChecks(showChecks);
+                Log.i(LOGTAG, "Showing checks: " + showChecks);
+            } else if ("Preferences:Data".equals(event)) {
+                JSONArray jsonPrefs = message.getJSONArray("preferences");
+                for (int i = jsonPrefs.length() - 1; i >= 0; i--) {
+                    JSONObject pref = jsonPrefs.getJSONObject(i);
+                    if (pref.getString("name").equals(PREF_DISPLAYPORT_STRATEGY)) {
+                        DisplayPortCalculator.setStrategy(pref.getInt("value"));
+                        GeckoAppShell.unregisterGeckoEventListener("Preferences:Data", this);
+                    }
                 }
             }
         } catch (JSONException e) {
-            Log.e(LOGTAG, "Unable to create viewport metrics in " + event + " handler", e);
+            Log.e(LOGTAG, "Error decoding JSON in " + event + " handler", e);
         }
     }
 
@@ -320,7 +276,7 @@ public class GeckoLayerClient implements GeckoEventResponder,
             return "";
         }
         try {
-            return RectUtils.toJSON(mReturnDisplayPort);
+            return mReturnDisplayPort.toJSON();
         } finally {
             mReturnDisplayPort = null;
         }
@@ -330,7 +286,7 @@ public class GeckoLayerClient implements GeckoEventResponder,
         /* Let Gecko know if the screensize has changed */
         sendResizeEventIfNecessary(false);
         if (mLayerController.getRedrawHint())
-            adjustViewport();
+            adjustViewport(null);
     }
 
     /*
@@ -458,18 +414,28 @@ public class GeckoLayerClient implements GeckoEventResponder,
 
     /** Implementation of FlexibleGLSurfaceView.Listener */
     public void compositionPauseRequested() {
-        GeckoAppShell.schedulePauseComposition();
+        // We need to coordinate with Gecko when pausing composition, to ensure
+        // that Gecko never executes a draw event while the compositor is paused.
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createCompositorPauseEvent());
     }
 
     /** Implementation of FlexibleGLSurfaceView.Listener */
     public void compositionResumeRequested() {
+        // Asking Gecko to resume the compositor takes too long (see
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=735230#c23), so we
+        // resume the compositor directly. We still need to inform Gecko about
+        // the compositor resuming, so that Gecko knows that it can now draw.
         GeckoAppShell.scheduleResumeComposition();
+        GeckoAppShell.sendEventToGecko(GeckoEvent.createCompositorResumeEvent());
     }
 
     /** Implementation of FlexibleGLSurfaceView.Listener */
     public void surfaceChanged(int width, int height) {
-        compositionPauseRequested();
         mLayerController.setViewportSize(new FloatSize(width, height));
+
+        // We need to make this call even when the compositor isn't currently
+        // paused (e.g. during an orientation change), to make the compositor
+        // aware of the changed surface.
         compositionResumeRequested();
         renderRequested();
     }

@@ -7,13 +7,9 @@ package org.mozilla.gecko.sync.syncadapter;
 import java.io.IOException;
 import java.net.URI;
 import java.security.NoSuchAlgorithmException;
-import java.util.List;
 import java.util.concurrent.TimeUnit;
-
 import org.json.simple.parser.ParseException;
 import org.mozilla.gecko.sync.AlreadySyncingException;
-import org.mozilla.gecko.sync.CommandRunner;
-import org.mozilla.gecko.sync.CommandProcessor;
 import org.mozilla.gecko.sync.GlobalConstants;
 import org.mozilla.gecko.sync.GlobalSession;
 import org.mozilla.gecko.sync.Logger;
@@ -56,7 +52,8 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
 
   private static final int     SHARED_PREFERENCES_MODE = 0;
   private static final int     BACKOFF_PAD_SECONDS = 5;
-  private static final int     MINIMUM_SYNC_INTERVAL_MILLISECONDS = 5 * 60 * 1000;   // 5 minutes.
+  public  static final int     MULTI_DEVICE_INTERVAL_MILLISECONDS = 5 * 60 * 1000;         // 5 minutes.
+  public  static final int     SINGLE_DEVICE_INTERVAL_MILLISECONDS = 24 * 60 * 60 * 1000;  // 24 hours.
 
   private final AccountManager mAccountManager;
   private final Context        mContext;
@@ -66,15 +63,6 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
     mContext = context;
     Log.d(LOG_TAG, "AccountManager.get(" + mContext + ")");
     mAccountManager = AccountManager.get(context);
-
-    // Register the displayURI command here so our SyncService
-    // can receive notifications to open a URI.
-    CommandProcessor.getProcessor().registerCommand("displayURI", new CommandRunner() {
-      @Override
-      public void executeCommand(List<String> args) {
-        displayURI(args.get(0), args.get(1));
-      }
-    });
   }
 
   private SharedPreferences getGlobalPrefs() {
@@ -185,7 +173,7 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
   public Object syncMonitor = new Object();
   private SyncResult syncResult;
 
-  private Account localAccount;
+  public Account localAccount;
 
   /**
    * Return the number of milliseconds until we're allowed to sync again,
@@ -311,18 +299,26 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
       Log.i(LOG_TAG, "Waiting on sync monitor.");
       try {
         syncMonitor.wait();
-        long next = System.currentTimeMillis() + MINIMUM_SYNC_INTERVAL_MILLISECONDS;
+        long next = System.currentTimeMillis() + getSyncInterval();
         Log.i(LOG_TAG, "Setting minimum next sync time to " + next);
         extendEarliestNextSync(next);
-
-        // And we're done with HTTP stuff.
-        stale.shutdown();
-
       } catch (InterruptedException e) {
         Log.i(LOG_TAG, "Waiting on sync monitor interrupted.", e);
+      } finally {
+        // And we're done with HTTP stuff.
+        stale.shutdown();
       }
     }
  }
+
+  public int getSyncInterval() {
+    int clientsCount = this.getClientsCount();
+    if (clientsCount <= 1) {
+      return SINGLE_DEVICE_INTERVAL_MILLISECONDS;
+    }
+
+    return MULTI_DEVICE_INTERVAL_MILLISECONDS;
+  }
 
 
   /**
@@ -423,6 +419,7 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
   public synchronized String getAccountGUID() {
     String accountGUID = mAccountManager.getUserData(localAccount, Constants.ACCOUNT_GUID);
     if (accountGUID == null) {
+      Logger.info(LOG_TAG, "Account GUID was null. Creating a new one.");
       accountGUID = Utils.generateGuid();
       mAccountManager.setUserData(localAccount, Constants.ACCOUNT_GUID, accountGUID);
     }
@@ -492,10 +489,5 @@ public class SyncAdapter extends AbstractThreadedSyncAdapter implements GlobalSe
   @Override
   public void informUnauthorizedResponse(GlobalSession session, URI oldClusterURL) {
     setClusterURLIsStale(true);
-  }
-
-  public void displayURI(String uri, String clientId) {
-    Logger.info(LOG_TAG, "Received a URI for display: " + uri + " from " + clientId);
-    // TODO: Bug 732147 - Send tab to device: receiving pushed tabs
   }
 }

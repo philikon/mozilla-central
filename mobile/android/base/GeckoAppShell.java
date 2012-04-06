@@ -161,6 +161,14 @@ public class GeckoAppShell
             public void uncaughtException(Thread thread, Throwable e) {
                 Log.e(LOGTAG, ">>> REPORTING UNCAUGHT EXCEPTION FROM THREAD "
                               + thread.getId() + " (\"" + thread.getName() + "\")", e);
+
+                // If the uncaught exception was rethrown, walk the exception `cause` chain to find
+                // the original exception so Socorro can correctly collate related crash reports.
+                Throwable cause;
+                while ((cause = e.getCause()) != null) {
+                    e = cause;
+                }
+
                 reportJavaCrash(getStackTraceString(e));
             }
         });
@@ -461,16 +469,6 @@ public class GeckoAppShell
         final LayerController layerController = GeckoApp.mAppContext.getLayerController();
         LayerView v = layerController.getView();
         mInputConnection = v.setInputConnectionHandler();
-
-        layerController.setOnTouchListener(new View.OnTouchListener() {
-            public boolean onTouch(View view, MotionEvent event) {
-                if (event == null)
-                    return true;
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createMotionEvent(event));
-                return true;
-            }
-        });
-
         layerController.notifyLayerClientOfGeometryChange();
     }
 
@@ -694,7 +692,8 @@ public class GeckoAppShell
     }
 
     public static void returnIMEQueryResult(String result, int selectionStart, int selectionLength) {
-        mInputConnection.returnIMEQueryResult(result, selectionStart, selectionLength);
+        // This method may be called from JNI to report Gecko's current selection indexes, but
+        // Native Fennec doesn't care because the Java code already knows the selection indexes.
     }
 
     static void onXreExit() {
@@ -1765,7 +1764,7 @@ public class GeckoAppShell
                 return response;
 
         } catch (Exception e) {
-            Log.i(LOGTAG, "handleGeckoMessage throws " + e);
+            Log.e(LOGTAG, "handleGeckoMessage throws " + e, e);
         }
 
         return "";
@@ -2042,5 +2041,33 @@ public class GeckoAppShell
 
     public static void disableScreenOrientationNotifications() {
         GeckoScreenOrientationListener.getInstance().disableNotifications();
+    }
+
+    public static void lockScreenOrientation(int aOrientation) {
+        GeckoScreenOrientationListener.getInstance().lockScreenOrientation(aOrientation);
+    }
+
+    public static void unlockScreenOrientation() {
+        GeckoScreenOrientationListener.getInstance().unlockScreenOrientation();
+    }
+
+    static class AsyncResultHandler extends GeckoApp.FilePickerResultHandler {
+        private long mId;
+        AsyncResultHandler(long id) {
+            mId = id;
+        }
+
+        public void onActivityResult(int resultCode, Intent data) {
+            GeckoAppShell.notifyFilePickerResult(handleActivityResult(resultCode, data), mId);
+        }
+        
+    }
+
+    static native void notifyFilePickerResult(String filePath, long id);
+
+    /* Called by JNI from AndroidBridge */
+    public static void showFilePickerAsync(String aMimeType, long id) {
+        if (!GeckoApp.mAppContext.showFilePicker(aMimeType, new AsyncResultHandler(id)))
+            GeckoAppShell.notifyFilePickerResult("", id);
     }
 }

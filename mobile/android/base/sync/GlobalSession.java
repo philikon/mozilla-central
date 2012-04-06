@@ -11,6 +11,7 @@ import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.json.simple.parser.ParseException;
 import org.mozilla.gecko.sync.crypto.CryptoException;
@@ -23,11 +24,14 @@ import org.mozilla.gecko.sync.delegates.KeyUploadDelegate;
 import org.mozilla.gecko.sync.delegates.MetaGlobalDelegate;
 import org.mozilla.gecko.sync.delegates.WipeServerDelegate;
 import org.mozilla.gecko.sync.net.BaseResource;
+import org.mozilla.gecko.sync.net.HttpResponseObserver;
+import org.mozilla.gecko.sync.net.SyncResponse;
 import org.mozilla.gecko.sync.net.SyncStorageRecordRequest;
 import org.mozilla.gecko.sync.net.SyncStorageRequest;
 import org.mozilla.gecko.sync.net.SyncStorageRequestDelegate;
 import org.mozilla.gecko.sync.net.SyncStorageResponse;
 import org.mozilla.gecko.sync.stage.AndroidBrowserBookmarksServerSyncStage;
+import org.mozilla.gecko.sync.stage.FormHistoryServerSyncStage;
 import org.mozilla.gecko.sync.stage.AndroidBrowserHistoryServerSyncStage;
 import org.mozilla.gecko.sync.stage.CheckPreconditionsStage;
 import org.mozilla.gecko.sync.stage.CompletedStage;
@@ -47,14 +51,11 @@ import android.os.Bundle;
 import android.util.Log;
 import ch.boye.httpclientandroidlib.HttpResponse;
 
-public class GlobalSession implements CredentialsSource, PrefsSource {
+public class GlobalSession implements CredentialsSource, PrefsSource, HttpResponseObserver {
   private static final String LOG_TAG = "GlobalSession";
 
   public static final String API_VERSION   = "1.1";
   public static final long STORAGE_VERSION = 5;
-
-  private static final String HEADER_RETRY_AFTER     = "retry-after";
-  private static final String HEADER_X_WEAVE_BACKOFF = "x-weave-backoff";
 
   public SyncConfiguration config = null;
 
@@ -176,6 +177,13 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
         resetClient(null);
       }
     });
+
+    processor.registerCommand("displayURI", new CommandRunner() {
+      @Override
+      public void executeCommand(List<String> args) {
+        CommandProcessor.getProcessor().displayURI(args, getContext());
+      }
+    });
   }
 
   protected void prepareStages() {
@@ -191,6 +199,7 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
     stages.put(Stage.syncTabs,                new FennecTabsServerSyncStage());
     stages.put(Stage.syncBookmarks,           new AndroidBrowserBookmarksServerSyncStage());
     stages.put(Stage.syncHistory,             new AndroidBrowserHistoryServerSyncStage());
+    stages.put(Stage.syncFormHistory,         new FormHistoryServerSyncStage());
     stages.put(Stage.completed,               new CompletedStage());
   }
 
@@ -218,6 +227,13 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
    * Move to the next stage in the syncing process.
    */
   public void advance() {
+    // If we have a backoff, request a backoff and don't advance to next stage.
+    long existingBackoff = largestBackoffObserved.get();
+    if (existingBackoff > 0) {
+      this.abort(null, "Aborting sync because of backoff of " + existingBackoff + " milliseconds.");
+      return;
+    }
+
     this.callback.handleStageCompleted(this.currentState, this);
     Stage next = nextStage(this.currentState);
     GlobalSyncStage nextStage;
@@ -234,6 +250,7 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
     } catch (Exception ex) {
       Logger.warn(LOG_TAG, "Caught exception " + ex + " running stage " + next);
       this.abort(ex, "Uncaught exception in stage.");
+      return;
     }
   }
 
@@ -261,20 +278,21 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
 
   /**
    * Begin a sync.
-   *
+   * <p>
    * The caller is responsible for:
-   *
-   * * Verifying that any backoffs/minimum next sync are respected
-   * * Ensuring that the device is online
-   * * Ensuring that dependencies are ready
+   * <ul>
+   * <li>Verifying that any backoffs/minimum next sync requests are respected.</li>
+   * <li>Ensuring that the device is online.</li>
+   * <li>Ensuring that dependencies are ready.</li>
+   * </ul>
    *
    * @throws AlreadySyncingException
-   *
    */
   public void start() throws AlreadySyncingException {
     if (this.currentState != GlobalSyncStage.Stage.idle) {
       throw new AlreadySyncingException(this.currentState);
     }
+    installAsHttpResponseObserver(); // Uninstalled by completeSync or abort.
     this.advance();
   }
 
@@ -292,12 +310,18 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
   }
 
   public void completeSync() {
+    uninstallAsHttpResponseObserver();
     this.currentState = GlobalSyncStage.Stage.idle;
     this.callback.handleSuccess(this);
   }
 
   public void abort(Exception e, String reason) {
     Logger.warn(LOG_TAG, "Aborting sync: " + reason, e);
+    uninstallAsHttpResponseObserver();
+    long existingBackoff = largestBackoffObserved.get();
+    if (existingBackoff > 0) {
+      callback.requestBackoff(existingBackoff);
+    }
     this.callback.handleError(this, e);
   }
 
@@ -314,21 +338,9 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
    */
   public void interpretHTTPFailure(HttpResponse response) {
     // TODO: handle permanent rejection.
-    long retryAfter = 0;
-    long weaveBackoff = 0;
-    if (response.containsHeader(HEADER_RETRY_AFTER)) {
-      // Handles non-decimals just fine.
-      String headerValue = response.getFirstHeader(HEADER_RETRY_AFTER).getValue();
-      retryAfter = Utils.decimalSecondsToMilliseconds(headerValue);
-    }
-    if (response.containsHeader(HEADER_X_WEAVE_BACKOFF)) {
-      // Handles non-decimals just fine.
-      String headerValue = response.getFirstHeader(HEADER_X_WEAVE_BACKOFF).getValue();
-      weaveBackoff = Utils.decimalSecondsToMilliseconds(headerValue);
-    }
-    long backoff = Math.max(retryAfter, weaveBackoff);
-    if (backoff > 0) {
-      callback.requestBackoff(backoff);
+    long responseBackoff = (new SyncResponse(response)).totalBackoffInMilliseconds();
+    if (responseBackoff > 0) {
+      callback.requestBackoff(responseBackoff);
     }
 
     if (response.getStatusLine() != null && response.getStatusLine().getStatusCode() == 401) {
@@ -704,5 +716,50 @@ public class GlobalSession implements CredentialsSource, PrefsSource {
 
   public ClientsDataDelegate getClientsDelegate() {
     return this.clientsDelegate;
+  }
+
+  /**
+   * The longest backoff observed to date; -1 means no backoff observed.
+   */
+  protected final AtomicLong largestBackoffObserved = new AtomicLong(-1);
+
+  /**
+   * Reset any observed backoff and start observing HTTP responses for backoff
+   * requests.
+   */
+  protected void installAsHttpResponseObserver() {
+    Logger.debug(LOG_TAG, "Installing " + this + " as BaseResource HttpResponseObserver.");
+    BaseResource.setHttpResponseObserver(this);
+    largestBackoffObserved.set(-1);
+  }
+
+  /**
+   * Stop observing HttpResponses for backoff requests.
+   */
+  protected void uninstallAsHttpResponseObserver() {
+    Logger.debug(LOG_TAG, "Uninstalling " + this + " as BaseResource HttpResponseObserver.");
+    BaseResource.setHttpResponseObserver(null);
+  }
+
+  /**
+   * Observe all HTTP response for backoff requests on all status codes, not just errors.
+   */
+  @Override
+  public void observeHttpResponse(HttpResponse response) {
+    long responseBackoff = (new SyncResponse(response)).totalBackoffInMilliseconds(); // TODO: don't allocate object?
+    if (responseBackoff <= 0) {
+      return;
+    }
+
+    Logger.debug(LOG_TAG, "Observed " + responseBackoff + " millisecond backoff request.");
+    while (true) {
+      long existingBackoff = largestBackoffObserved.get();
+      if (existingBackoff >= responseBackoff) {
+        return;
+      }
+      if (largestBackoffObserved.compareAndSet(existingBackoff, responseBackoff)) {
+        return;
+      }
+    }
   }
 }

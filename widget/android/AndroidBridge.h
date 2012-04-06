@@ -111,6 +111,15 @@ typedef struct AndroidSystemColors {
     nscolor panelColorBackground;
 } AndroidSystemColors;
 
+class nsFilePickerCallback : nsISupports {
+public:
+    NS_DECL_ISUPPORTS
+    virtual void handleResult(nsAString& filePath) = 0;
+    nsFilePickerCallback() {}
+protected:
+    virtual ~nsFilePickerCallback() {}
+};
+
 class AndroidBridge
 {
 public:
@@ -242,6 +251,7 @@ public:
 
     void ShowFilePickerForExtensions(nsAString& aFilePath, const nsAString& aExtensions);
     void ShowFilePickerForMimeType(nsAString& aFilePath, const nsAString& aMimeType);
+    void ShowFilePickerAsync(const nsAString& aMimeType, nsFilePickerCallback* callback);
 
     void PerformHapticFeedback(bool aIsLongPress);
 
@@ -405,8 +415,6 @@ public:
     void EnableNetworkNotifications();
     void DisableNetworkNotifications();
 
-    void SetCompositorParent(mozilla::layers::CompositorParent* aCompositorParent,
-                             base::Thread* aCompositorThread);
     void SetFirstPaintViewport(float aOffsetX, float aOffsetY, float aZoom, float aPageWidth, float aPageHeight);
     void SetPageSize(float aZoom, float aPageWidth, float aPageHeight);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
@@ -424,6 +432,8 @@ public:
     void GetScreenOrientation(dom::ScreenOrientationWrapper& aOrientation);
     void EnableScreenOrientationNotifications();
     void DisableScreenOrientationNotifications();
+    void LockScreenOrientation(const dom::ScreenOrientationWrapper& aOrientation);
+    void UnlockScreenOrientation();
 
 protected:
     static AndroidBridge *sBridge;
@@ -482,6 +492,7 @@ protected:
     jmethodID jShowAlertNotification;
     jmethodID jShowFilePickerForExtensions;
     jmethodID jShowFilePickerForMimeType;
+    jmethodID jShowFilePickerAsync;
     jmethodID jAlertsProgressListener_OnProgress;
     jmethodID jAlertsProgressListener_OnCancel;
     jmethodID jGetDpi;
@@ -532,6 +543,8 @@ protected:
     jmethodID jGetScreenOrientation;
     jmethodID jEnableScreenOrientationNotifications;
     jmethodID jDisableScreenOrientationNotifications;
+    jmethodID jLockScreenOrientation;
+    jmethodID jUnlockScreenOrientation;
 
     // stuff we need for CallEglCreateWindowSurface
     jclass jEGLSurfaceImplClass;

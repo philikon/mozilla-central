@@ -46,7 +46,6 @@
 #include <string.h>
 #include "jstypes.h"
 #include "jsclist.h"
-#include "jsdhash.h"
 #include "jsutil.h"
 #include "jsapi.h"
 #include "jsatom.h"
@@ -89,7 +88,7 @@ PropertyTable::init(JSRuntime *rt, Shape *lastProp)
     if (!entries)
         return false;
 
-    hashShift = JS_DHASH_BITS - sizeLog2;
+    hashShift = HASH_BITS - sizeLog2;
     for (Shape::Range r = lastProp->all(); !r.empty(); r.popFront()) {
         const Shape &shape = r.front();
         Shape **spp = search(shape.propid(), true);
@@ -202,7 +201,7 @@ PropertyTable::search(jsid id, bool adding)
         return spp;
 
     /* Collision: double hash. */
-    sizeLog2 = JS_DHASH_BITS - hashShift;
+    sizeLog2 = HASH_BITS - hashShift;
     hash2 = HASH2(hash0, sizeLog2, hashShift);
     sizeMask = JS_BITMASK(sizeLog2);
 
@@ -261,7 +260,7 @@ PropertyTable::change(int log2Delta, JSContext *cx)
     /*
      * Grow, shrink, or compress by changing this->entries.
      */
-    int oldlog2 = JS_DHASH_BITS - hashShift;
+    int oldlog2 = HASH_BITS - hashShift;
     int newlog2 = oldlog2 + log2Delta;
     uint32_t oldsize = JS_BIT(oldlog2);
     uint32_t newsize = JS_BIT(newlog2);
@@ -270,7 +269,7 @@ PropertyTable::change(int log2Delta, JSContext *cx)
         return false;
 
     /* Now that we have newTable allocated, update members. */
-    hashShift = JS_DHASH_BITS - newlog2;
+    hashShift = HASH_BITS - newlog2;
     removedCount = 0;
     Shape **oldTable = entries;
     entries = newTable;
@@ -498,16 +497,9 @@ NormalizeGetterAndSetter(JSContext *cx, JSObject *obj,
         JS_ASSERT(!(attrs & JSPROP_SETTER));
         setter = NULL;
     }
-    if (flags & Shape::METHOD) {
-        JS_ASSERT_IF(getter, getter == JS_PropertyStub);
-        JS_ASSERT(!setter);
-        JS_ASSERT(!(attrs & (JSPROP_GETTER | JSPROP_SETTER)));
+    if (getter == JS_PropertyStub) {
+        JS_ASSERT(!(attrs & JSPROP_GETTER));
         getter = NULL;
-    } else {
-        if (getter == JS_PropertyStub) {
-            JS_ASSERT(!(attrs & JSPROP_GETTER));
-            getter = NULL;
-        }
     }
 
     return true;
@@ -808,9 +800,6 @@ JSObject::changeProperty(JSContext *cx, Shape *shape, unsigned attrs, unsigned m
     JS_ASSERT(!((attrs ^ shape->attrs) & JSPROP_SHARED) ||
               !(attrs & JSPROP_SHARED));
 
-    /* Don't allow method properties to be changed to have a getter or setter. */
-    JS_ASSERT_IF(shape->isMethod(), !getter && !setter);
-
     types::MarkTypePropertyConfigured(cx, this, shape->propid());
     if (attrs & (JSPROP_GETTER | JSPROP_SETTER))
         types::AddTypePropertyId(cx, this, shape->propid(), types::Type::UnknownType());
@@ -1041,44 +1030,6 @@ JSObject::replaceWithNewEquivalentShape(JSContext *cx, Shape *oldShape, Shape *n
     return newShape;
 }
 
-Shape *
-JSObject::methodShapeChange(JSContext *cx, const Shape &shape)
-{
-    JS_ASSERT(shape.isMethod());
-
-    if (!inDictionaryMode() && !toDictionaryMode(cx))
-        return NULL;
-
-    Shape *spare = js_NewGCShape(cx);
-    if (!spare)
-        return NULL;
-    new (spare) Shape(shape.base()->unowned(), 0);
-
-#ifdef DEBUG
-    JS_ASSERT(canHaveMethodBarrier());
-    JS_ASSERT(!shape.setter());
-    JS_ASSERT(!shape.hasShortID());
-#endif
-
-    /*
-     * Clear Shape::METHOD from flags as we are despecializing from a
-     * method memoized in the property tree to a plain old function-valued
-     * property.
-     */
-    Shape *result =
-        putProperty(cx, shape.propid(), NULL, NULL, shape.slot(),
-                    shape.attrs,
-                    shape.getFlags() & ~Shape::METHOD,
-                    0);
-    if (!result)
-        return NULL;
-
-    if (result != lastProperty())
-        JS_ALWAYS_TRUE(generateOwnShape(cx, spare));
-
-    return result;
-}
-
 bool
 JSObject::shadowingShapeChange(JSContext *cx, const Shape &shape)
 {
@@ -1199,7 +1150,7 @@ Shape::setObjectFlag(JSContext *cx, BaseShape::Flag flag, JSObject *proto, Shape
 /* static */ inline HashNumber
 StackBaseShape::hash(const StackBaseShape *base)
 {
-    JSDHashNumber hash = base->flags;
+    HashNumber hash = base->flags;
     hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(base->clasp) >> 3);
     hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(base->parent) >> 3);
     hash = JS_ROTATE_LEFT32(hash, 4) ^ uintptr_t(base->rawGetter);
@@ -1264,7 +1215,7 @@ BaseShape::getUnowned(JSContext *cx, const StackBaseShape &base)
 }
 
 void
-JSCompartment::sweepBaseShapeTable(JSContext *cx)
+JSCompartment::sweepBaseShapeTable()
 {
     if (baseShapes.initialized()) {
         for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
@@ -1276,10 +1227,10 @@ JSCompartment::sweepBaseShapeTable(JSContext *cx)
 }
 
 void
-BaseShape::finalize(JSContext *cx, bool background)
+BaseShape::finalize(FreeOp *fop)
 {
     if (table_) {
-        cx->delete_(table_);
+        fop->delete_(table_);
         table_ = NULL;
     }
 }
@@ -1336,7 +1287,7 @@ Bindings::setParent(JSContext *cx, JSObject *obj)
 /* static */ inline HashNumber
 InitialShapeEntry::hash(const Lookup &lookup)
 {
-    JSDHashNumber hash = uintptr_t(lookup.clasp) >> 3;
+    HashNumber hash = uintptr_t(lookup.clasp) >> 3;
     hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(lookup.proto) >> 3);
     hash = JS_ROTATE_LEFT32(hash, 4) ^ (uintptr_t(lookup.parent) >> 3);
     return hash + lookup.nfixed;
@@ -1446,7 +1397,7 @@ EmptyShape::insertInitialShape(JSContext *cx, Shape *shape, JSObject *proto)
 }
 
 void
-JSCompartment::sweepInitialShapeTable(JSContext *cx)
+JSCompartment::sweepInitialShapeTable()
 {
     if (initialShapes.initialized()) {
         for (InitialShapeSet::Enum e(initialShapes); !e.empty(); e.popFront()) {

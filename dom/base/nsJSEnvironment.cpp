@@ -108,6 +108,7 @@
 #include "mozilla/FunctionTimer.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/dom/bindings/Utils.h"
 
 #include "sampler.h"
 
@@ -943,16 +944,17 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   nsIScriptGlobalObject *global = context->GetGlobalObject();
   // XXX should we check for sysprin instead of a chrome window, to make
   // XXX components be covered by the chrome pref instead of the content one?
+  nsCOMPtr<nsIDOMWindow> contentWindow(do_QueryInterface(global));
   nsCOMPtr<nsIDOMChromeWindow> chromeWindow(do_QueryInterface(global));
 
-  bool useMethodJIT = Preferences::GetBool(chromeWindow ?
+  bool useMethodJIT = Preferences::GetBool(chromeWindow || !contentWindow ?
                                                js_methodjit_chrome_str :
                                                js_methodjit_content_str);
-  bool usePCCounts = Preferences::GetBool(chromeWindow ?
+  bool usePCCounts = Preferences::GetBool(chromeWindow || !contentWindow ?
                                             js_pccounts_chrome_str :
                                             js_pccounts_content_str);
   bool useMethodJITAlways = Preferences::GetBool(js_methodjit_always_str);
-  bool useTypeInference = !chromeWindow && Preferences::GetBool(js_typeinfer_str);
+  bool useTypeInference = !chromeWindow && contentWindow && Preferences::GetBool(js_typeinfer_str);
   bool useHardening = Preferences::GetBool(js_jit_hardening_str);
   nsCOMPtr<nsIXULRuntime> xr = do_GetService(XULRUNTIME_SERVICE_CONTRACTID);
   if (xr) {
@@ -992,7 +994,7 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
   // javascript.options.strict.debug is true
   bool strictDebug = Preferences::GetBool(js_strict_debug_option_str);
   if (strictDebug && (newDefaultJSOptions & JSOPTION_STRICT) == 0) {
-    if (chromeWindow)
+    if (chromeWindow || !contentWindow)
       newDefaultJSOptions |= JSOPTION_STRICT;
   }
 #endif
@@ -1185,6 +1187,8 @@ nsJSContext::EvaluateStringWithValue(const nsAString& aScript,
     return NS_OK;
   }
 
+  nsAutoMicroTask mt;
+
   // Safety first: get an object representing the script's principals, i.e.,
   // the entities who signed this script, or the fully-qualified-domain-name
   // or "codebase" from which it was loaded.
@@ -1357,7 +1361,7 @@ nsJSContext::EvaluateString(const nsAString& aScript,
                             nsIPrincipal *aOriginPrincipal,
                             const char *aURL,
                             PRUint32 aLineNo,
-                            PRUint32 aVersion,
+                            JSVersion aVersion,
                             nsAString *aRetValue,
                             bool* aIsUndefined)
 {
@@ -1378,6 +1382,8 @@ nsJSContext::EvaluateString(const nsAString& aScript,
 
     return NS_OK;
   }
+
+  nsAutoMicroTask mt;
 
   if (!aScopeObject) {
     aScopeObject = JS_GetGlobalObject(mContext);
@@ -1554,6 +1560,8 @@ nsJSContext::ExecuteScript(JSScript* aScriptObject,
 
     return NS_OK;
   }
+
+  nsAutoMicroTask mt;
 
   if (!aScopeObject) {
     aScopeObject = JS_GetGlobalObject(mContext);
@@ -1813,6 +1821,7 @@ nsJSContext::CallEventHandler(nsISupports* aTarget, JSObject* aScope,
 #endif
   SAMPLE_LABEL("JS", "CallEventHandler");
 
+  nsAutoMicroTask mt;
   JSAutoRequest ar(mContext);
   JSObject* target = nsnull;
   nsresult rv = JSObjectFromInterface(aTarget, aScope, &target);
@@ -2005,12 +2014,16 @@ nsJSContext::GetGlobalObject()
 
   JSClass *c = JS_GetClass(global);
 
-  if (!c || ((~c->flags) & (JSCLASS_HAS_PRIVATE |
-                            JSCLASS_PRIVATE_IS_NSISUPPORTS))) {
+  // Whenever we end up with globals that are JSCLASS_IS_DOMJSCLASS
+  // and have an nsISupports DOM object, we will need to modify this
+  // check here.
+  MOZ_ASSERT(!(c->flags & JSCLASS_IS_DOMJSCLASS));
+  if ((~c->flags) & (JSCLASS_HAS_PRIVATE |
+                     JSCLASS_PRIVATE_IS_NSISUPPORTS)) {
     return nsnull;
   }
-
-  nsISupports *priv = (nsISupports *)js::GetObjectPrivate(global);
+  
+  nsISupports *priv = static_cast<nsISupports*>(js::GetObjectPrivate(global));
 
   nsCOMPtr<nsIXPConnectWrappedNative> wrapped_native =
     do_QueryInterface(priv);
@@ -2746,7 +2759,7 @@ nsJSContext::InitClasses(JSObject* aGlobalObj)
 
   JSAutoRequest ar(mContext);
 
-  ::JS_SetOptions(mContext, mDefaultJSOptions);
+  JSOptionChangedCallback(js_options_dot_str, this);
 
   // Attempt to initialize profiling functions
   ::JS_DefineProfilingFunctions(mContext, aGlobalObj);
@@ -3562,8 +3575,8 @@ SetMemoryMaxPrefChangedCallback(const char* aPrefName, void* aClosure)
 static int
 SetMemoryGCModePrefChangedCallback(const char* aPrefName, void* aClosure)
 {
-  PRBool enableCompartmentGC = Preferences::GetBool("javascript.options.mem.gc_per_compartment");
-  PRBool enableIncrementalGC = Preferences::GetBool("javascript.options.mem.gc_incremental");
+  bool enableCompartmentGC = Preferences::GetBool("javascript.options.mem.gc_per_compartment");
+  bool enableIncrementalGC = Preferences::GetBool("javascript.options.mem.gc_incremental");
   JSGCMode mode;
   if (enableIncrementalGC) {
     mode = JSGC_MODE_INCREMENTAL;

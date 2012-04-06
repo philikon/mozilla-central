@@ -60,11 +60,11 @@
 /**
  * a11y telemetry
  */
-HISTOGRAM_BOOLEAN(A11Y_INSTANTIATED, "has accessibility support been instantiated")
+HISTOGRAM_FLAG(A11Y_INSTANTIATED_FLAG, "has accessibility support been instantiated")
 HISTOGRAM_ENUMERATED_VALUES(A11Y_CONSUMERS, 9, "Accessibility client by enum id")
-HISTOGRAM_BOOLEAN(A11Y_ISIMPLEDOM_USAGE, "have the ISimpleDOM* accessibility interfaces been used")
-HISTOGRAM_BOOLEAN(A11Y_IATABLE_USAGE, "has the IAccessibleTable accessibility interface been used")
-HISTOGRAM_BOOLEAN(A11Y_XFORMS_USAGE, "has XForms accessibility been instantiated")
+HISTOGRAM_FLAG(A11Y_ISIMPLEDOM_USAGE_FLAG, "have the ISimpleDOM* accessibility interfaces been used")
+HISTOGRAM_FLAG(A11Y_IATABLE_USAGE_FLAG, "has the IAccessibleTable accessibility interface been used")
+HISTOGRAM_FLAG(A11Y_XFORMS_USAGE_FLAG, "has XForms accessibility been instantiated")
 
 /**
  * Cycle collector telemetry
@@ -102,6 +102,7 @@ HISTOGRAM(MEMORY_STORAGE_SQLITE, 1024, 512 * 1024, 50, EXPONENTIAL, "Memory used
 HISTOGRAM(MEMORY_IMAGES_CONTENT_USED_UNCOMPRESSED, 1024, 1024 * 1024, 50, EXPONENTIAL, "Memory used for uncompressed, in-use content images (KB)")
 HISTOGRAM(MEMORY_HEAP_ALLOCATED, 1024, 1024 * 1024, 50, EXPONENTIAL, "Heap memory allocated (KB)")
 HISTOGRAM(MEMORY_EXPLICIT, 1024, 1024 * 1024, 50, EXPONENTIAL, "Explicit memory allocations (KB)")
+HISTOGRAM(GHOST_WINDOWS, 1, 128, 8, EXPONENTIAL, "Number of ghost windows")
 #if defined(XP_MACOSX)
 HISTOGRAM(MEMORY_FREE_PURGED_PAGES_MS, 1, 1024, 10, EXPONENTIAL, "Time(ms) to purge MADV_FREE'd heap pages.")
 #elif defined(XP_WIN)
@@ -391,6 +392,7 @@ HISTOGRAM(HTML_FOREGROUND_REFLOW_MS, 1, 3000, 10, EXPONENTIAL, "HTML reflows in 
 HISTOGRAM(HTML_BACKGROUND_REFLOW_MS, 1, 3000, 10, EXPONENTIAL, "HTML reflows in background windows (ms)")
 HISTOGRAM(XUL_INITIAL_FRAME_CONSTRUCTION, 1, 3000, 10, EXPONENTIAL, "initial xul frame construction")
 HISTOGRAM_BOOLEAN(XMLHTTPREQUEST_ASYNC_OR_SYNC, "Type of XMLHttpRequest, async or sync")
+HISTOGRAM_BOOLEAN(MULTIPART_XHR_RESPONSE, "XMLHttpRequest response was of type multipart/x-mixed-replace.")
 
 /**
  * DOM telemetry.

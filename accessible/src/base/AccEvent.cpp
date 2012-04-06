@@ -44,9 +44,6 @@
 #include "nsApplicationAccessibleWrap.h"
 #include "nsDocAccessible.h"
 #include "nsIAccessibleText.h"
-#ifdef MOZ_XUL
-#include "nsXULTreeAccessible.h"
-#endif
 #include "nsAccEvent.h"
 #include "States.h"
 
@@ -104,7 +101,10 @@ AccEvent::GetNode()
 nsDocAccessible*
 AccEvent::GetDocAccessible()
 {
-  nsINode *node = GetNode();
+  if (mAccessible)
+    return mAccessible->Document();
+
+  nsINode* node = GetNode();
   if (node)
     return GetAccService()->GetDocAccessible(node->OwnerDoc());
 

@@ -279,7 +279,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             };
 
             if (!LoadSymbols(&symbols_ES2[0], trygl, prefix)) {
-                NS_RUNTIMEABORT("OpenGL ES 2.0 supported, but symbols could not be loaded.");
+                NS_ERROR("OpenGL ES 2.0 supported, but symbols could not be loaded.");
                 mInitialized = false;
             }
         } else {
@@ -293,7 +293,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             };
 
             if (!LoadSymbols(&symbols_desktop[0], trygl, prefix)) {
-                NS_RUNTIMEABORT("Desktop symbols failed to load.");
+                NS_ERROR("Desktop symbols failed to load.");
                 mInitialized = false;
             }
         }
@@ -370,25 +370,31 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         if (SupportsRobustness()) {
             if (IsExtensionSupported(ARB_robustness)) {
                 SymLoadStruct robustnessSymbols[] = {
-                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusARB", NULL } },
-                    { NULL, { NULL } },
+                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusARB", nsnull } },
+                    { nsnull, { nsnull } },
                 };
 
                 if (!LoadSymbols(&robustnessSymbols[0], trygl, prefix)) {
-                    NS_RUNTIMEABORT("GL supports ARB_robustness without supplying GetGraphicsResetStatusARB.");
-                    mInitialized = false;
+                    NS_ERROR("GL supports ARB_robustness without supplying GetGraphicsResetStatusARB.");
+
+                    MarkExtensionUnsupported(ARB_robustness);
+                    mSymbols.fGetGraphicsResetStatus = nsnull;
                 } else {
                     mHasRobustness = true;
                 }
-            } else if (IsExtensionSupported(EXT_robustness)) {
+            }
+            if (!IsExtensionSupported(ARB_robustness) &&
+                IsExtensionSupported(EXT_robustness)) {
                 SymLoadStruct robustnessSymbols[] = {
-                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusEXT", NULL } },
-                    { NULL, { NULL } },
+                    { (PRFuncPtr*) &mSymbols.fGetGraphicsResetStatus, { "GetGraphicsResetStatusEXT", nsnull } },
+                    { nsnull, { nsnull } },
                 };
 
                 if (!LoadSymbols(&robustnessSymbols[0], trygl, prefix)) {
-                    NS_RUNTIMEABORT("GL supports EGL_robustness without supplying GetGraphicsResetStatusEXT.");
-                    mInitialized = false;
+                    NS_ERROR("GL supports EXT_robustness without supplying GetGraphicsResetStatusEXT.");
+
+                    MarkExtensionUnsupported(EXT_robustness);
+                    mSymbols.fGetGraphicsResetStatus = nsnull;
                 } else {
                     mHasRobustness = true;
                 }
@@ -397,34 +403,59 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 
         // Check for aux symbols based on extensions
         if (IsExtensionSupported(GLContext::ANGLE_framebuffer_blit) ||
-            IsExtensionSupported(GLContext::EXT_framebuffer_blit)) {
+            IsExtensionSupported(GLContext::EXT_framebuffer_blit))
+        {
             SymLoadStruct auxSymbols[] = {
-                    { (PRFuncPtr*) &mSymbols.fBlitFramebuffer, { "BlitFramebuffer", "BlitFramebufferEXT", "BlitFramebufferANGLE", NULL } },
-                    { NULL, { NULL } },
+                {
+                    (PRFuncPtr*) &mSymbols.fBlitFramebuffer,
+                    {
+                        "BlitFramebuffer",
+                        "BlitFramebufferEXT",
+                        "BlitFramebufferANGLE",
+                        nsnull
+                    }
+                },
+                { nsnull, { nsnull } },
             };
             if (!LoadSymbols(&auxSymbols[0], trygl, prefix)) {
-                NS_RUNTIMEABORT("GL supports framebuffer_blit without supplying glBlitFramebuffer");
-                mInitialized = false;
+                NS_ERROR("GL supports framebuffer_blit without supplying glBlitFramebuffer");
+
+                MarkExtensionUnsupported(ANGLE_framebuffer_blit);
+                MarkExtensionUnsupported(EXT_framebuffer_blit);
+                mSymbols.fBlitFramebuffer = nsnull;
             }
         }
 
-        if (IsExtensionSupported(GLContext::ANGLE_framebuffer_multisample) ||
-            IsExtensionSupported(GLContext::EXT_framebuffer_multisample)) {
+        if (SupportsOffscreenSplit() &&
+            ( IsExtensionSupported(GLContext::ANGLE_framebuffer_multisample) ||
+              IsExtensionSupported(GLContext::EXT_framebuffer_multisample) ))
+        {
             SymLoadStruct auxSymbols[] = {
-                    { (PRFuncPtr*) &mSymbols.fRenderbufferStorageMultisample, { "RenderbufferStorageMultisample", "RenderbufferStorageMultisampleEXT", "RenderbufferStorageMultisampleANGLE", NULL } },
-                    { NULL, { NULL } },
+                {
+                    (PRFuncPtr*) &mSymbols.fRenderbufferStorageMultisample,
+                    {
+                        "RenderbufferStorageMultisample",
+                        "RenderbufferStorageMultisampleEXT",
+                        "RenderbufferStorageMultisampleANGLE",
+                        nsnull
+                    }
+                },
+                { nsnull, { nsnull } },
             };
             if (!LoadSymbols(&auxSymbols[0], trygl, prefix)) {
-                NS_RUNTIMEABORT("GL supports framebuffer_multisample without supplying glRenderbufferStorageMultisample");
-                mInitialized = false;
+                NS_ERROR("GL supports framebuffer_multisample without supplying glRenderbufferStorageMultisample");
+
+                MarkExtensionUnsupported(ANGLE_framebuffer_multisample);
+                MarkExtensionUnsupported(EXT_framebuffer_multisample);
+                mSymbols.fRenderbufferStorageMultisample = nsnull;
             }
         }
        
         // Load developer symbols, don't fail if we can't find them.
         SymLoadStruct auxSymbols[] = {
-                { (PRFuncPtr*) &mSymbols.fGetTexImage, { "GetTexImage", NULL } },
-                { (PRFuncPtr*) &mSymbols.fGetTexLevelParameteriv, { "GetTexLevelParameteriv", NULL } },
-                { NULL, { NULL } },
+                { (PRFuncPtr*) &mSymbols.fGetTexImage, { "GetTexImage", nsnull } },
+                { (PRFuncPtr*) &mSymbols.fGetTexLevelParameteriv, { "GetTexLevelParameteriv", nsnull } },
+                { nsnull, { nsnull } },
         };
         LoadSymbols(&auxSymbols[0], trygl, prefix);
     }
@@ -439,7 +470,19 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         mViewportStack.AppendElement(nsIntRect(v[0], v[1], v[2], v[3]));
 
         fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE, &mMaxTextureSize);
+        fGetIntegerv(LOCAL_GL_MAX_CUBE_MAP_TEXTURE_SIZE, &mMaxCubeMapTextureSize);
         fGetIntegerv(LOCAL_GL_MAX_RENDERBUFFER_SIZE, &mMaxRenderbufferSize);
+
+#ifdef XP_MACOSX
+        if (mVendor == VendorIntel) {
+            // see bug 737182 for 2D textures, bug 684822 for cube map textures.
+            mMaxTextureSize        = NS_MIN(mMaxTextureSize,        4096);
+            mMaxCubeMapTextureSize = NS_MIN(mMaxCubeMapTextureSize, 512);
+            // for good measure, we align renderbuffers on what we do for 2D textures
+            mMaxRenderbufferSize   = NS_MIN(mMaxRenderbufferSize,   4096);
+        }
+#endif
+
         mMaxTextureImageSize = mMaxTextureSize;
 
         UpdateActualFormat();
@@ -553,12 +596,6 @@ CopyAndPadTextureData(const GLvoid* srcBuffer,
             rowDest += dstWidth * pixelsize;
         }
     }
-}
-
-bool
-GLContext::IsExtensionSupported(const char *extension)
-{
-    return ListHasExtension(fGetString(LOCAL_GL_EXTENSIONS), extension);
 }
 
 // In both of these cases (for the Adreno at least) it is impossible
@@ -916,11 +953,16 @@ TiledTextureImage::DirectUpdate(gfxASurface* aSurf, const nsIntRegion& aRegion, 
         result &= mImages[mCurrentImage]->
           DirectUpdate(aSurf, tileRegion, aFrom + nsIntPoint(xPos, yPos));
 
+        if (mCurrentImage == mImages.Length() - 1) {
+            // We know we're done, but we still need to ensure that the callback
+            // gets called (e.g. to update the uploaded region).
+            NextTile();
+            break;
+        }
         // Override a callback cancelling iteration if the texture wasn't valid.
         // We need to force the update in that situation, or we may end up
         // showing invalid/out-of-date texture data.
-    } while (NextTile() ||
-             (mTextureState != Valid && mCurrentImage < mImages.Length()));
+    } while (NextTile() || (mTextureState != Valid));
     mCurrentImage = oldCurrentImage;
 
     mShaderType = mImages[0]->GetShaderProgramType();
@@ -1079,8 +1121,11 @@ bool TiledTextureImage::NextTile()
         continueIteration = mIterationCallback(this, mCurrentImage,
                                                mIterationCallbackData);
 
-    mCurrentImage++;
-    return continueIteration && (mCurrentImage < mImages.Length());
+    if (mCurrentImage + 1 < mImages.Length()) {
+        mCurrentImage++;
+        return continueIteration;
+    }
+    return false;
 }
 
 void TiledTextureImage::SetIterationCallback(TileIterationCallback aCallback,
@@ -1205,6 +1250,7 @@ void TiledTextureImage::Resize(const nsIntSize& aSize)
     mColumns = columns;
     mSize = aSize;
     mTextureState = Allocated;
+    mCurrentImage = 0;
 }
 
 PRUint32 TiledTextureImage::GetTileCount()

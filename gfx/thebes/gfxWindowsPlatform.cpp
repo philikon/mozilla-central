@@ -88,6 +88,12 @@ using namespace mozilla::gfx;
 #include "nsMemory.h"
 #endif
 
+/*
+ * Required headers are not available in the current consumer preview Win8
+ * dev kit, disabling for now.
+ */
+#undef MOZ_WINSDK_TARGETVER
+
 /**
  * XXX below should be >= MOZ_NTDDI_WIN8 or such which is not defined yet
  */
@@ -725,7 +731,9 @@ gfxWindowsPlatform::GetScaledFontForFont(gfxFont *aFont)
 
   NativeFont nativeFont;
   nativeFont.mType = NATIVE_FONT_GDI_FONT_FACE;
-  nativeFont.mFont = aFont;
+  LOGFONT lf;
+  GetObject(static_cast<gfxGDIFont*>(aFont)->GetHFONT(), sizeof(LOGFONT), &lf);
+  nativeFont.mFont = &lf;
   RefPtr<ScaledFont> scaledFont =
     Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
 

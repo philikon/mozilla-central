@@ -51,7 +51,6 @@
 #include "jstypes.h"
 #include "jsprvtd.h"
 #include "jspubtd.h"
-#include "jsdhash.h"
 #include "jslock.h"
 #include "jsutil.h"
 #include "jsversion.h"
@@ -593,7 +592,7 @@ struct Arena {
     }
 
     template <typename T>
-    bool finalize(JSContext *cx, AllocKind thingKind, size_t thingSize, bool background);
+    bool finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize);
 };
 
 /* The chunk header (located at the end of the chunk to preserve arena alignment). */
@@ -1252,18 +1251,18 @@ struct ArenaLists {
         JS_ASSERT(freeLists[kind].isEmpty());
     }
 
-    void finalizeObjects(JSContext *cx);
-    void finalizeStrings(JSContext *cx);
-    void finalizeShapes(JSContext *cx);
-    void finalizeScripts(JSContext *cx);
+    void finalizeObjects(FreeOp *fop);
+    void finalizeStrings(FreeOp *fop);
+    void finalizeShapes(FreeOp *fop);
+    void finalizeScripts(FreeOp *fop);
 
 #ifdef JS_THREADSAFE
-    static void backgroundFinalize(JSContext *cx, ArenaHeader *listHead);
+    static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead);
 #endif
 
   private:
-    inline void finalizeNow(JSContext *cx, AllocKind thingKind);
-    inline void finalizeLater(JSContext *cx, AllocKind thingKind);
+    inline void finalizeNow(FreeOp *fop, AllocKind thingKind);
+    inline void finalizeLater(FreeOp *fop, AllocKind thingKind);
 
     inline void *allocateFromArena(JSCompartment *comp, AllocKind thingKind);
 };
@@ -1384,6 +1383,9 @@ MaybeGC(JSContext *cx);
 extern void
 ShrinkGCBuffers(JSRuntime *rt);
 
+extern void
+PrepareCompartmentForGC(JSCompartment *comp);
+
 /*
  * Kinds of js_GC invocation.
  */
@@ -1397,10 +1399,10 @@ typedef enum JSGCInvocationKind {
 
 /* Pass NULL for |comp| to get a full GC. */
 extern void
-GC(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, js::gcreason::Reason reason);
+GC(JSContext *cx, bool full, JSGCInvocationKind gckind, js::gcreason::Reason reason);
 
 extern void
-GCSlice(JSContext *cx, JSCompartment *comp, JSGCInvocationKind gckind, js::gcreason::Reason reason);
+GCSlice(JSContext *cx, bool full, JSGCInvocationKind gckind, js::gcreason::Reason reason);
 
 extern void
 GCDebugSlice(JSContext *cx, int64_t objCount);

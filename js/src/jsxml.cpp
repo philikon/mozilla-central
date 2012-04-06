@@ -926,15 +926,15 @@ JSXMLArray<T>::trim()
 
 template<class T>
 void
-JSXMLArray<T>::finish(JSContext *cx)
+JSXMLArray<T>::finish(FreeOp *fop)
 {
-    if (!cx->runtime->gcRunning) {
+    if (!fop->runtime()->gcRunning) {
         /* We need to clear these to trigger a write barrier. */
         for (uint32_t i = 0; i < length; i++)
             vector[i].~HeapPtr<T>();
     }
 
-    cx->free_(vector);
+    fop->free_(vector);
 
     while (JSXMLArrayCursor<T> *cursor = cursors)
         cursor->disconnect();
@@ -1175,13 +1175,13 @@ static const char xml_namespace_str[] = "http://www.w3.org/XML/1998/namespace";
 static const char xmlns_namespace_str[] = "http://www.w3.org/2000/xmlns/";
 
 void
-JSXML::finalize(JSContext *cx, bool builtin)
+JSXML::finalize(FreeOp *fop)
 {
     if (JSXML_HAS_KIDS(this)) {
-        xml_kids.finish(cx);
+        xml_kids.finish(fop);
         if (xml_class == JSXML_CLASS_ELEMENT) {
-            xml_namespaces.finish(cx);
-            xml_attrs.finish(cx);
+            xml_namespaces.finish(fop);
+            xml_attrs.finish(fop);
         }
     }
 #ifdef DEBUG_notme
@@ -4485,7 +4485,7 @@ PutProperty(JSContext *cx, JSObject *obj, jsid id, JSBool strict, jsval *vp)
             cursor.index = matchIndex;
             kid = cursor.getCurrent();
             if (JSXML_HAS_KIDS(kid)) {
-                kid->xml_kids.finish(cx);
+                kid->xml_kids.finish(cx->runtime->defaultFreeOp());
                 kid->xml_kids.init();
                 ok = kid->xml_kids.setCapacity(cx, 1);
             }
@@ -7408,8 +7408,7 @@ js_InitNamespaceClass(JSContext *cx, JSObject *obj)
     namespaceProto->setNameURI(empty);
 
     const unsigned NAMESPACE_CTOR_LENGTH = 2;
-    JSFunction *ctor = global->createConstructor(cx, Namespace, &NamespaceClass,
-                                                 CLASS_ATOM(cx, Namespace),
+    JSFunction *ctor = global->createConstructor(cx, Namespace, CLASS_ATOM(cx, Namespace),
                                                  NAMESPACE_CTOR_LENGTH);
     if (!ctor)
         return NULL;
@@ -7441,8 +7440,8 @@ js_InitQNameClass(JSContext *cx, JSObject *obj)
         return NULL;
 
     const unsigned QNAME_CTOR_LENGTH = 2;
-    JSFunction *ctor = global->createConstructor(cx, QName, &QNameClass,
-                                                 CLASS_ATOM(cx, QName), QNAME_CTOR_LENGTH);
+    JSFunction *ctor = global->createConstructor(cx, QName, CLASS_ATOM(cx, QName),
+                                                 QNAME_CTOR_LENGTH);
     if (!ctor)
         return NULL;
 
@@ -7481,8 +7480,7 @@ js_InitXMLClass(JSContext *cx, JSObject *obj)
     }
 
     const unsigned XML_CTOR_LENGTH = 1;
-    JSFunction *ctor = global->createConstructor(cx, XML, &XMLClass, CLASS_ATOM(cx, XML),
-                                                 XML_CTOR_LENGTH);
+    JSFunction *ctor = global->createConstructor(cx, XML, CLASS_ATOM(cx, XML), XML_CTOR_LENGTH);
     if (!ctor)
         return NULL;
 
@@ -7903,13 +7901,13 @@ xmlfilter_trace(JSTracer *trc, JSObject *obj)
 }
 
 static void
-xmlfilter_finalize(JSContext *cx, JSObject *obj)
+xmlfilter_finalize(FreeOp *fop, JSObject *obj)
 {
     JSXMLFilter *filter = (JSXMLFilter *) obj->getPrivate();
     if (!filter)
         return;
 
-    cx->delete_(filter);
+    fop->delete_(filter);
 }
 
 Class js_XMLFilterClass = {

@@ -256,6 +256,12 @@ function pageShowEventHandlers(event) {
   if (event.originalTarget == content.document) {
     charsetLoadListener(event);
     XULBrowserWindow.asyncUpdateUI();
+
+    // The PluginClickToPlay events are not fired when navigating using the
+    // BF cache. |event.persisted| is true when the page is loaded from the
+    // BF cache, so this code reshows the notification if necessary.
+    if (event.persisted)
+      gPluginHandler.reshowClickToPlayNotification();
   }
 }
 
@@ -1428,6 +1434,7 @@ function prepareForStartup() {
   gBrowser.addEventListener("PluginBlocklisted",  gPluginHandler, true);
   gBrowser.addEventListener("PluginOutdated",     gPluginHandler, true);
   gBrowser.addEventListener("PluginDisabled",     gPluginHandler, true);
+  gBrowser.addEventListener("PluginClickToPlay",  gPluginHandler, true);
   gBrowser.addEventListener("NewPluginInstalled", gPluginHandler.newPluginInstalled, true);
 #ifdef XP_MACOSX
   gBrowser.addEventListener("npapi-carbon-event-model-failure", gPluginHandler, true);
@@ -2306,7 +2313,7 @@ function BrowserOpenFileWindow()
           gLastOpenDirectory.path = fp.file.parent.QueryInterface(Ci.nsILocalFile);
       } catch(e) {
       }
-      openTopWin(fp.fileURL.spec);
+      openUILinkIn(fp.fileURL.spec, "current");
     }
   } catch (ex) {
   }
@@ -4084,7 +4091,7 @@ var FullScreen = {
       gBrowser.tabContainer.removeEventListener("TabOpen", this.exitDomFullScreen);
       gBrowser.tabContainer.removeEventListener("TabClose", this.exitDomFullScreen);
       gBrowser.tabContainer.removeEventListener("TabSelect", this.exitDomFullScreen);
-      if (this.useLionFullScreen) {
+      if (!this.useLionFullScreen) {
         window.removeEventListener("deactivate", this);
       }
     }
@@ -4413,7 +4420,6 @@ var FullScreen = {
     // and in tabs-on-bottom mode, move them back to the navigation toolbar.
     // When there is a chance the tab bar may be collapsed, put window
     // controls on nav bar.
-    var fullscreenflex = document.getElementById("fullscreenflex");
     var fullscreenctls = document.getElementById("window-controls");
     var navbar = document.getElementById("nav-bar");
     var ctlsOnTabbar = window.toolbar.visible &&
@@ -4421,14 +4427,12 @@ var FullScreen = {
                           (TabsOnTop.enabled &&
                            !gPrefService.getBoolPref("browser.tabs.autoHide")));
     if (fullscreenctls.parentNode == navbar && ctlsOnTabbar) {
+      fullscreenctls.removeAttribute("flex");
       document.getElementById("TabsToolbar").appendChild(fullscreenctls);
-      // we don't need this space in tabs-on-top mode, so prevent it from 
-      // being shown
-      fullscreenflex.removeAttribute("fullscreencontrol");
     }
     else if (fullscreenctls.parentNode.id == "TabsToolbar" && !ctlsOnTabbar) {
+      fullscreenctls.setAttribute("flex", "1");
       navbar.appendChild(fullscreenctls);
-      fullscreenflex.setAttribute("fullscreencontrol", "true");
     }
 
     var controls = document.getElementsByAttribute("fullscreencontrol", "true");
@@ -5191,8 +5195,13 @@ var TabsProgressListener = {
   onLocationChange: function (aBrowser, aWebProgress, aRequest, aLocationURI,
                               aFlags) {
     // Filter out any sub-frame loads
-    if (aBrowser.contentWindow == aWebProgress.DOMWindow)
+    if (aBrowser.contentWindow == aWebProgress.DOMWindow) {
+      // initialize the click-to-play state
+      aBrowser._clickToPlayDoorhangerShown = false;
+      aBrowser._clickToPlayPluginsActivated = false;
+
       FullZoom.onLocationChange(aLocationURI, false, aBrowser);
+    }
   },
 
   onRefreshAttempted: function (aBrowser, aWebProgress, aURI, aDelay, aSameURI) {
@@ -5418,6 +5427,7 @@ var TabsOnTop = {
     document.documentElement.setAttribute("tabsontop", enabled);
     document.getElementById("navigator-toolbox").setAttribute("tabsontop", enabled);
     document.getElementById("TabsToolbar").setAttribute("tabsontop", enabled);
+    document.getElementById("nav-bar").setAttribute("tabsontop", enabled);
     gBrowser.tabContainer.setAttribute("tabsontop", enabled);
     TabsInTitlebar.allowedBy("tabs-on-top", enabled);
   },
@@ -7145,6 +7155,10 @@ var gPluginHandler = {
         self.pluginUnavailable(plugin, event.type);
         break;
 
+      case "PluginClickToPlay":
+        self._handleClickToPlayEvent(plugin);
+        break;
+
       case "PluginDisabled":
         let manageLink = doc.getAnonymousElementByAttribute(plugin, "class", "managePluginsLink");
         self.addLinkClickCallback(manageLink, "managePlugins");
@@ -7152,11 +7166,27 @@ var gPluginHandler = {
     }
 
     // Hide the in-content UI if it's too big. The crashed plugin handler already did this.
-    if (event.type != "PluginCrashed") {
+    if (event.type != "PluginCrashed" && event.type != "PluginClickToPlay") {
       let overlay = doc.getAnonymousElementByAttribute(plugin, "class", "mainBox");
       if (self.isTooSmall(plugin, overlay))
           overlay.style.visibility = "hidden";
     }
+  },
+
+  activatePlugins: function PH_activatePlugins(aContentWindow) {
+    let browser = gBrowser.getBrowserForDocument(aContentWindow.document);
+    browser._clickToPlayPluginsActivated = true;
+    let cwu = aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                            .getInterface(Ci.nsIDOMWindowUtils);
+    let plugins = cwu.plugins;
+    for (let plugin of plugins) {
+      let objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
+      if (!objLoadingContent.activated)
+        objLoadingContent.playPlugin();
+    }
+    let notification = PopupNotifications.getNotification("click-to-play-plugins", browser);
+    if (notification)
+      notification.remove();
   },
 
   newPluginInstalled : function(event) {
@@ -7210,6 +7240,53 @@ var gPluginHandler = {
   // Callback for user clicking the help icon
   openHelpPage: function () {
     openHelpLink("plugin-crashed", false);
+  },
+
+  // Event listener for click-to-play plugins.
+  _handleClickToPlayEvent: function PH_handleClickToPlayEvent(aPlugin) {
+    let doc = aPlugin.ownerDocument;
+    let browser = gBrowser.getBrowserForDocument(doc.defaultView.top.document);
+    if (browser._clickToPlayPluginsActivated) {
+      let objLoadingContent = aPlugin.QueryInterface(Ci.nsIObjectLoadingContent);
+      objLoadingContent.playPlugin();
+      return;
+    }
+
+    let overlay = doc.getAnonymousElementByAttribute(aPlugin, "class", "mainBox");
+    overlay.addEventListener("click", function(aEvent) {
+      if (aEvent.button == 0 && aEvent.isTrusted)
+        gPluginHandler.activatePlugins(aEvent.target.ownerDocument.defaultView.top);
+    }, true);
+
+    if (!browser._clickToPlayDoorhangerShown)
+      gPluginHandler._showClickToPlayNotification(browser);
+  },
+
+  reshowClickToPlayNotification: function PH_reshowClickToPlayNotification() {
+    if (!Services.prefs.getBoolPref("plugins.click_to_play"))
+      return;
+
+    let browser = gBrowser.selectedBrowser;
+    let contentWindow = browser.contentWindow;
+    let cwu = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                           .getInterface(Ci.nsIDOMWindowUtils);
+    if (cwu.plugins.length)
+      gPluginHandler._showClickToPlayNotification(browser);
+  },
+
+  _showClickToPlayNotification: function PH_showClickToPlayNotification(aBrowser) {
+    aBrowser._clickToPlayDoorhangerShown = true;
+    let contentWindow = aBrowser.contentWindow;
+    let messageString = gNavigatorBundle.getString("activatePluginsMessage.message");
+    let action = {
+      label: gNavigatorBundle.getString("activatePluginsMessage.label"),
+      accessKey: gNavigatorBundle.getString("activatePluginsMessage.accesskey"),
+      callback: function() { gPluginHandler.activatePlugins(contentWindow); }
+    };
+    let options = { dismissed: true };
+    PopupNotifications.show(aBrowser, "click-to-play-plugins",
+                            messageString, "addons-notification-icon",
+                            action, null, options);
   },
 
   // event listener for missing/blocklisted/outdated/carbonFailure plugins.
@@ -7827,13 +7904,20 @@ function undoCloseWindow(aIndex) {
  * if it's ok to close the tab.
  */
 function isTabEmpty(aTab) {
+  if (aTab.hasAttribute("busy"))
+    return false;
+
   let browser = aTab.linkedBrowser;
-  let uri = browser.currentURI.spec;
-  let body = browser.contentDocument.body;
-  return browser.sessionHistory.count < 2 &&
-         isBlankPageURL(uri) &&
-         (!body || !body.hasChildNodes()) &&
-         !aTab.hasAttribute("busy");
+  if (!isBlankPageURL(browser.currentURI.spec))
+    return false;
+
+  if (browser.contentWindow.opener)
+    return false;
+
+  if (browser.sessionHistory && browser.sessionHistory.count >= 2)
+    return false;
+
+  return true;
 }
 
 #ifdef MOZ_SERVICES_SYNC
@@ -8666,6 +8750,31 @@ let gPrivateBrowsingUI = {
 
   get privateBrowsingEnabled() {
     return this._privateBrowsingService.privateBrowsingEnabled;
+  },
+
+  /**
+   * These accessors are used to support per-window Private Browsing mode.
+   * For now the getter returns nsIPrivateBrowsingService.privateBrowsingEnabled,
+   * and the setter should only be used in tests.
+   */
+  get privateWindow() {
+    return window.getInterface(Ci.nsIWebNavigation)
+                 .QueryInterface(Ci.nsIDocShellTreeItem)
+                 .treeOwner
+                 .QueryInterface(Ci.nsIInterfaceRequestor)
+                 .getInterface(Ci.nsIXULWindow)
+                 .docShell.QueryInterface(Ci.nsILoadContext)
+                 .usePrivateBrowsing;
+  },
+
+  set privateWindow(val) {
+    return window.getInterface(Ci.nsIWebNavigation)
+                 .QueryInterface(Ci.nsIDocShellTreeItem)
+                 .treeOwner
+                 .QueryInterface(Ci.nsIInterfaceRequestor)
+                 .getInterface(Ci.nsIXULWindow)
+                 .docShell.QueryInterface(Ci.nsILoadContext)
+                 .usePrivateBrowsing = val;
   }
 };
 

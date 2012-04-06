@@ -86,55 +86,6 @@
 #include "vm/String-inl.h"
 
 inline bool
-JSObject::hasPrivate() const
-{
-    return getClass()->hasPrivate();
-}
-
-inline void *&
-JSObject::privateRef(uint32_t nfixed) const
-{
-    /*
-     * The private pointer of an object can hold any word sized value.
-     * Private pointers are stored immediately after the last fixed slot of
-     * the object.
-     */
-    JS_ASSERT(nfixed == numFixedSlots());
-    JS_ASSERT(hasPrivate());
-    js::HeapSlot *end = &fixedSlots()[nfixed];
-    return *reinterpret_cast<void**>(end);
-}
-
-inline void *
-JSObject::getPrivate() const { return privateRef(numFixedSlots()); }
-
-inline void *
-JSObject::getPrivate(size_t nfixed) const { return privateRef(nfixed); }
-
-inline void
-JSObject::setPrivate(void *data)
-{
-    void **pprivate = &privateRef(numFixedSlots());
-
-    privateWriteBarrierPre(pprivate);
-    *pprivate = data;
-    privateWriteBarrierPost(pprivate);
-}
-
-inline void
-JSObject::setPrivateUnbarriered(void *data)
-{
-    void **pprivate = &privateRef(numFixedSlots());
-    *pprivate = data;
-}
-
-inline void
-JSObject::initPrivate(void *data)
-{
-    privateRef(numFixedSlots()) = data;
-}
-
-inline bool
 JSObject::enumerate(JSContext *cx, JSIterateOp iterop, js::Value *statep, jsid *idp)
 {
     JSNewEnumerateOp op = getOps()->enumerate;
@@ -219,6 +170,12 @@ JSObject::setSpecialAttributes(JSContext *cx, js::SpecialId sid, unsigned *attrs
     return setGenericAttributes(cx, SPECIALID_TO_JSID(sid), attrsp);
 }
 
+inline bool
+JSObject::changePropertyAttributes(JSContext *cx, js::Shape *shape, unsigned attrs)
+{
+    return !!changeProperty(cx, shape, attrs, 0, shape->getter(), shape->setter());
+}
+
 inline JSBool
 JSObject::getGeneric(JSContext *cx, JSObject *receiver, jsid id, js::Value *vp)
 {
@@ -284,11 +241,11 @@ JSObject::deleteSpecial(JSContext *cx, js::SpecialId sid, js::Value *rval, bool 
 }
 
 inline void
-JSObject::finalize(JSContext *cx, bool background)
+JSObject::finalize(js::FreeOp *fop)
 {
     js::Probes::finalizeObject(this);
 
-    if (!background) {
+    if (!fop->onBackgroundThread()) {
         /*
          * Finalize obj first, in case it needs map and slots. Objects with
          * finalize hooks are not finalized in the background, as the class is
@@ -296,10 +253,10 @@ JSObject::finalize(JSContext *cx, bool background)
          */
         js::Class *clasp = getClass();
         if (clasp->finalize)
-            clasp->finalize(cx, this);
+            clasp->finalize(fop, this);
     }
 
-    finish(cx);
+    finish(fop);
 }
 
 inline JSObject *
@@ -312,50 +269,6 @@ inline JSObject *
 JSObject::enclosingScope()
 {
     return isScope() ? &asScope().enclosingScope() : getParent();
-}
-
-/*
- * Property read barrier for deferred cloning of compiler-created function
- * objects optimized as typically non-escaping, ad-hoc methods in obj.
- */
-inline js::Shape *
-JSObject::methodReadBarrier(JSContext *cx, const js::Shape &shape, js::Value *vp)
-{
-    JS_ASSERT(nativeContains(cx, shape));
-    JS_ASSERT(shape.isMethod());
-    JS_ASSERT(shape.hasSlot());
-    JS_ASSERT(shape.hasDefaultSetter());
-    JS_ASSERT(!isGlobal());  /* i.e. we are not changing the global shape */
-
-    JSFunction *fun = vp->toObject().toFunction();
-    JS_ASSERT(!fun->isClonedMethod());
-    JS_ASSERT(fun->isNullClosure());
-
-    fun = js::CloneFunctionObject(cx, fun);
-    if (!fun)
-        return NULL;
-    fun->setMethodObj(*this);
-
-    /*
-     * Replace the method property with an ordinary data property. This is
-     * equivalent to this->setProperty(cx, shape.id, vp) except that any
-     * watchpoint on the property is not triggered.
-     */
-    uint32_t slot = shape.slot();
-    js::Shape *newshape = methodShapeChange(cx, shape);
-    if (!newshape)
-        return NULL;
-    JS_ASSERT(!newshape->isMethod());
-    JS_ASSERT(newshape->slot() == slot);
-    vp->setObject(*fun);
-    nativeSetSlot(slot, *vp);
-    return newshape;
-}
-
-inline bool
-JSObject::canHaveMethodBarrier() const
-{
-    return isObject() || isFunction() || isPrimitive() || isDate();
 }
 
 inline bool
@@ -890,6 +803,7 @@ inline bool JSObject::isStaticBlock() const { return isBlock() && !getProto(); }
 inline bool JSObject::isStopIteration() const { return hasClass(&js::StopIterationClass); }
 inline bool JSObject::isStrictArguments() const { return hasClass(&js::StrictArgumentsObjectClass); }
 inline bool JSObject::isString() const { return hasClass(&js::StringClass); }
+inline bool JSObject::isTypedArray() const { return IsFastTypedArrayClass(getClass()); }
 inline bool JSObject::isWeakMap() const { return hasClass(&js::WeakMapClass); }
 inline bool JSObject::isWith() const { return hasClass(&js::WithClass); }
 inline bool JSObject::isXML() const { return hasClass(&js::XMLClass); }
@@ -979,12 +893,12 @@ JSObject::createDenseArray(JSContext *cx, js::gc::AllocKind kind,
 }
 
 inline void
-JSObject::finish(JSContext *cx)
+JSObject::finish(js::FreeOp *fop)
 {
     if (hasDynamicSlots())
-        cx->free_(slots);
+        fop->free_(slots);
     if (hasDynamicElements())
-        cx->free_(getElementsHeader());
+        fop->free_(getElementsHeader());
 }
 
 inline bool
@@ -1011,22 +925,6 @@ JSObject::principals(JSContext *cx)
     if (JSObjectPrincipalsFinder find = cx->runtime->securityCallbacks->findObjectPrincipals)
         return find(this);
     return cx->compartment ? cx->compartment->principals : NULL;
-}
-
-inline JSFunction *
-JSObject::nativeGetMethod(const js::Shape *shape) const
-{
-    /*
-     * For method shapes, this object must have an uncloned function object in
-     * the shape's slot.
-     */
-    JS_ASSERT(shape->isMethod());
-#ifdef DEBUG
-    JSObject *obj = &nativeGetSlot(shape->slot()).toObject();
-    JS_ASSERT(obj->isFunction() && !obj->toFunction()->isClonedMethod());
-#endif
-
-    return static_cast<JSFunction *>(&nativeGetSlot(shape->slot()).toObject());
 }
 
 inline void
@@ -1132,6 +1030,7 @@ JSObject::defineGeneric(JSContext *cx, jsid id, const js::Value &value,
                         JSStrictPropertyOp setter /* = JS_StrictPropertyStub */,
                         unsigned attrs /* = JSPROP_ENUMERATE */)
 {
+    JS_ASSERT(!(attrs & JSPROP_NATIVE_ACCESSORS));
     js::DefineGenericOp op = getOps()->defineGeneric;
     return (op ? op : js_DefineProperty)(cx, this, id, &value, getter, setter, attrs);
 }
@@ -1854,6 +1753,12 @@ js_PurgeScopeChain(JSContext *cx, JSObject *obj, jsid id)
     if (obj->isDelegate())
         return js_PurgeScopeChainHelper(cx, obj, id);
     return true;
+}
+
+inline void
+js::DestroyIdArray(FreeOp *fop, JSIdArray *ida)
+{
+    fop->free_(ida);
 }
 
 #endif /* jsobjinlines_h___ */

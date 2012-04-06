@@ -37,8 +37,8 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.gfx.DisplayPortMetrics;
 import org.mozilla.gecko.gfx.IntSize;
-import org.mozilla.gecko.gfx.RectUtils;
 import org.mozilla.gecko.gfx.ViewportMetrics;
 import android.os.*;
 import android.app.*;
@@ -96,6 +96,8 @@ public class GeckoEvent {
     private static final int SCREENSHOT = 25;
     private static final int UNUSED2_EVENT = 26;
     private static final int SCREENORIENTATION_CHANGED = 27;
+    private static final int COMPOSITOR_PAUSE = 28;
+    private static final int COMPOSITOR_RESUME = 29;     
 
     public static final int IME_COMPOSITION_END = 0;
     public static final int IME_COMPOSITION_BEGIN = 1;
@@ -148,27 +150,27 @@ public class GeckoEvent {
         mType = evType;
     }
 
-    public static GeckoEvent createPauseEvent(int activityDepth) {
+    public static GeckoEvent createPauseEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_PAUSING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createResumeEvent(int activityDepth) {
+    public static GeckoEvent createResumeEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_RESUMING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createStoppingEvent(int activityDepth) {
+    public static GeckoEvent createStoppingEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_STOPPING);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
-    public static GeckoEvent createStartEvent(int activityDepth) {
+    public static GeckoEvent createStartEvent(boolean isApplicationInBackground) {
         GeckoEvent event = new GeckoEvent(ACTIVITY_START);
-        event.mFlags = activityDepth > 0 ? 1 : 0;
+        event.mFlags = isApplicationInBackground ? 0 : 1;
         return event;
     }
 
@@ -184,6 +186,14 @@ public class GeckoEvent {
         GeckoEvent event = new GeckoEvent(KEY_EVENT);
         event.initKeyEvent(k);
         return event;
+    }
+
+    public static GeckoEvent createCompositorPauseEvent() {
+        return new GeckoEvent(COMPOSITOR_PAUSE);
+    }
+
+    public static GeckoEvent createCompositorResumeEvent() {
+        return new GeckoEvent(COMPOSITOR_RESUME);
     }
 
     private void initKeyEvent(KeyEvent k) {
@@ -418,7 +428,7 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createViewportEvent(ViewportMetrics viewport, RectF displayPort) {
+    public static GeckoEvent createViewportEvent(ViewportMetrics viewport, DisplayPortMetrics displayPort) {
         GeckoEvent event = new GeckoEvent(VIEWPORT);
         event.mCharacters = "Viewport:Change";
         PointF origin = viewport.getOrigin();
@@ -426,7 +436,7 @@ public class GeckoEvent {
         sb.append("{ \"x\" : ").append(origin.x)
           .append(", \"y\" : ").append(origin.y)
           .append(", \"zoom\" : ").append(viewport.getZoomFactor())
-          .append(", \"displayPort\" :").append(RectUtils.toJSON(displayPort))
+          .append(", \"displayPort\" :").append(displayPort.toJSON())
           .append('}');
         event.mCharactersExtra = sb.toString();
         return event;
