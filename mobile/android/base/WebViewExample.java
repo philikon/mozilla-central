@@ -8,18 +8,16 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
-import android.webkit.WebView;
-import android.webkit.WebViewClient;
 
 public class WebViewExample extends Activity {
-	private WebView mWebView;
+	private GeckoWebView mWebView;
 
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.webview_example);
+        mWebView = new GeckoWebView(this);
+        setContentView(mWebView);
 
-        mWebView = (WebView) findViewById(R.id.webview);
-        mWebView.getSettings().setJavaScriptEnabled(true);
+        //mWebView.getSettings().setJavaScriptEnabled(true);
         mWebView.loadUrl("http://www.google.com");
     }
 

@@ -289,7 +289,6 @@ RES_LAYOUT = \
   res/layout/abouthome_remote_tab_row.xml \
   res/layout/abouthome_topsite_item.xml \
   res/layout/validation_message.xml \
-  res/layout/webview_example.xml \
   $(NULL)
 
 RES_LAYOUT_V11 = \
