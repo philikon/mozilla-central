@@ -163,7 +163,7 @@ public class GeckoNetworkManager
   }
 
   private void startListening() {
-    GeckoApp.mAppContext.registerReceiver(sInstance, mNetworkFilter);
+    Gecko.instance.getContext().registerReceiver(sInstance, mNetworkFilter);
   }
 
   public void stop() {
@@ -175,7 +175,7 @@ public class GeckoNetworkManager
   }
 
   private void stopListening() {
-    GeckoApp.mAppContext.unregisterReceiver(sInstance);
+    Gecko.instance.getContext().unregisterReceiver(sInstance);
   }
 
   private void updateNetworkType() {
@@ -217,7 +217,7 @@ public class GeckoNetworkManager
 
   private static NetworkType getNetworkType() {
     ConnectivityManager cm =
-      (ConnectivityManager)GeckoApp.mAppContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+      (ConnectivityManager)Gecko.instance.getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
 
     if (cm.getActiveNetworkInfo() == null) {
       return NetworkType.NETWORK_NONE;
@@ -238,7 +238,7 @@ public class GeckoNetworkManager
     }
 
     TelephonyManager tm =
-      (TelephonyManager)GeckoApp.mAppContext.getSystemService(Context.TELEPHONY_SERVICE);
+      (TelephonyManager)Gecko.instance.getContext().getSystemService(Context.TELEPHONY_SERVICE);
 
     switch (tm.getNetworkType()) {
       case TelephonyManager.NETWORK_TYPE_IDEN:

@@ -126,7 +126,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         final JSONArray suggestions = message.getJSONArray("suggestions");
         final JSONArray rect = message.getJSONArray("rect");
         final double zoom = message.getDouble("zoom");
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 showAutoCompleteSuggestions(suggestions, rect, zoom);
             }
@@ -137,7 +137,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         final String validationMessage = message.getString("validationMessage");
         final JSONArray rect = message.getJSONArray("rect");
         final double zoom = message.getDouble("zoom");
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 showValidationMessage(validationMessage, rect, zoom);
             }
@@ -145,7 +145,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
     }
     
     private void handleHideMessage(JSONObject message) {
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 hide();
             }
@@ -186,8 +186,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
             addView(mValidationMessage);
             mValidationMessageText = (TextView) mValidationMessage.findViewById(R.id.validation_message_text);
 
-            DisplayMetrics metrics = new DisplayMetrics();
-            GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+            DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
             sValidationTextMarginTop = (int) (VALIDATION_MESSAGE_MARGIN_TOP_IN_DPI * metrics.density);
 
             sValidationTextLayoutNormal = new RelativeLayout.LayoutParams(mValidationMessageText.getLayoutParams());
@@ -212,7 +211,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
     private boolean positionAndShowPopup(JSONArray rect, double zoom, boolean isAutoComplete) {
         // Don't show the form assist popup when using fullscreen VKB
         InputMethodManager imm =
-                (InputMethodManager) GeckoApp.mAppContext.getSystemService(Context.INPUT_METHOD_SERVICE);
+                (InputMethodManager) Gecko.instance.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm.isFullscreenMode())
             return false;
 
@@ -230,8 +229,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         // Initialize static variables based on DisplayMetrics. We delay this to
         // make sure DisplayMetrics isn't null to avoid an NPE.
         if (sAutoCompleteMinWidth == 0) {
-            DisplayMetrics metrics = new DisplayMetrics();
-            GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+            DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
             sAutoCompleteMinWidth = (int) (AUTOCOMPLETE_MIN_WIDTH_IN_DPI * metrics.density);
             sAutoCompleteRowHeight = (int) (AUTOCOMPLETE_ROW_HEIGHT_IN_DPI * metrics.density);
             sValidationMessageHeight = (int) (VALIDATION_MESSAGE_HEIGHT_IN_DPI * metrics.density);
@@ -254,7 +252,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
         int popupWidth = RelativeLayout.LayoutParams.FILL_PARENT;
         int popupLeft = left < 0 ? 0 : left;
 
-        FloatSize viewport = GeckoApp.mAppContext.getLayerController().getViewportSize();
+        FloatSize viewport = Gecko.instance.getLayerController().getViewportSize();
 
         // For autocomplete suggestions, if the input is smaller than the screen-width,
         // shrink the popup's width. Otherwise, keep it as FILL_PARENT.

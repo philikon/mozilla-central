@@ -115,8 +115,7 @@ public class LauncherShortcuts extends Activity {
         intent.putExtra(Intent.EXTRA_SHORTCUT_NAME, title);
         intent.putExtra(Intent.EXTRA_SHORTCUT_INTENT, shortcutintent);
 
-        DisplayMetrics dm = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getMetrics(dm);
+        DisplayMetrics dm = Gecko.instance.getDisplayMetrics();
         int size;
         switch (dm.densityDpi) {
             case DisplayMetrics.DENSITY_MEDIUM:

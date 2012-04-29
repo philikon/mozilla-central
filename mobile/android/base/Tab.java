@@ -179,8 +179,7 @@ public final class Tab {
     }
 
     void initMetrics() {
-        DisplayMetrics metrics = new DisplayMetrics();
-        GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
         sMinDim = Math.min(metrics.widthPixels / kThumbnailWidth, metrics.heightPixels / kThumbnailHeight);
         sDensity = metrics.density;
     }
@@ -256,7 +255,7 @@ public final class Tab {
                 } else {
                     mThumbnail = null;
                 }
-                GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+                Gecko.instance.getMainHandler().post(new Runnable() {
                     public void run() {
                         Tabs.getInstance().notifyListeners(tab, Tabs.TabEvents.THUMBNAIL);
                     }

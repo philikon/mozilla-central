@@ -37,7 +37,7 @@
 
 package org.mozilla.gecko.gfx;
 
-import org.mozilla.gecko.GeckoApp;
+import org.mozilla.gecko.Gecko;
 
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -144,7 +144,7 @@ public class SurfaceTextureLayer extends Layer implements SurfaceTexture.OnFrame
     // For SurfaceTexture.OnFrameAvailableListener
     public void onFrameAvailable(SurfaceTexture texture) {
         mHaveFrame = true;
-        GeckoApp.mAppContext.requestRender();
+        Gecko.instance.requestRender();
     }
 
     public void update(Rect position, float resolution, boolean inverted, boolean blend) {

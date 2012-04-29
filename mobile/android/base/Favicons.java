@@ -366,7 +366,7 @@ public class Favicons {
 
             if (mListener != null) {
                 // We want to always run the listener on UI thread
-                GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+                Gecko.instance.getMainHandler().post(new Runnable() {
                     public void run() {
                         mListener.onFaviconLoaded(mPageUrl, image);
                     }

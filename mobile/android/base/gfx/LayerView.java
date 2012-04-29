@@ -38,7 +38,7 @@
 
 package org.mozilla.gecko.gfx;
 
-import org.mozilla.gecko.GeckoAppShell;
+import org.mozilla.gecko.Gecko;
 import org.mozilla.gecko.GeckoInputConnection;
 import org.mozilla.gecko.gfx.FloatSize;
 import org.mozilla.gecko.gfx.InputConnectionHandler;
@@ -54,7 +54,6 @@ import android.widget.RelativeLayout;
 import android.util.Log;
 import java.nio.IntBuffer;
 
-import org.mozilla.gecko.GeckoApp;
 import android.content.Context;
 import android.graphics.PixelFormat;
 import android.opengl.GLSurfaceView;
@@ -269,7 +268,7 @@ public class LayerView extends SurfaceView implements SurfaceHolder.Callback {
     /** This function is invoked by Gecko (compositor thread) via JNI; be careful when modifying signature. */
     public static GLController registerCxxCompositor() {
         try {
-            LayerView layerView = GeckoApp.mAppContext.getLayerController().getView();
+            LayerView layerView = Gecko.instance.getLayerController().getView();
             return layerView.getGLController();
         } catch (Exception e) {
             Log.e(LOGTAG, "### Exception! " + e);

@@ -63,6 +63,7 @@ SYNC_PP_RES_XML=res/xml/sync_syncadapter.xml res/xml/sync_options.xml
 FENNEC_JAVA_FILES = \
   AboutHomeContent.java \
   AboutHomeSection.java \
+  ActivityResultHandler.java \
   AlertNotification.java \
   AwesomeBar.java \
   AwesomeBarTabs.java \
@@ -78,6 +79,7 @@ FENNEC_JAVA_FILES = \
   Favicons.java \
   FloatUtils.java \
   FormAssistPopup.java \
+  Gecko.java \
   GeckoActionBar.java \
   GeckoApplication.java \
   GeckoApp.java \
@@ -102,6 +104,7 @@ FENNEC_JAVA_FILES = \
   LinkPreference.java \
   LinkTextView.java \
 	NSSBridge.java \
+  PluginClient.java \
   ProfileMigrator.java \
   PromptService.java \
   sqlite/ByteBufferInputStream.java \

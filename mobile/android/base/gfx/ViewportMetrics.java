@@ -44,7 +44,7 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.util.DisplayMetrics;
 import org.mozilla.gecko.FloatUtils;
-import org.mozilla.gecko.GeckoApp;
+import org.mozilla.gecko.Gecko;
 import org.mozilla.gecko.gfx.FloatSize;
 import org.mozilla.gecko.gfx.IntSize;
 import org.mozilla.gecko.gfx.LayerController;
@@ -66,8 +66,7 @@ public class ViewportMetrics {
     private float mZoomFactor;
 
     public ViewportMetrics() {
-        DisplayMetrics metrics = new DisplayMetrics();
-        GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
 
         mPageSize = new FloatSize(metrics.widthPixels, metrics.heightPixels);
         mCssPageSize = new FloatSize(metrics.widthPixels, metrics.heightPixels);

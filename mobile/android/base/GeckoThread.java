@@ -37,6 +37,7 @@
 
 package org.mozilla.gecko;
 
+import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.content.res.Configuration;
@@ -65,12 +66,13 @@ public class GeckoThread extends Thread {
     }
 
     public void run() {
-        final GeckoApp app = GeckoApp.mAppContext;
-        File cacheFile = GeckoAppShell.getCacheDir(app);
+        final Context context = Gecko.instance.getContext();
+        File cacheFile = GeckoAppShell.getCacheDir(context);
         File libxulFile = new File(cacheFile, "libxul.so");
 
+        String resourcePath = context.getApplicationContext().getPackageResourcePath();
         if ((!libxulFile.exists() ||
-             new File(app.getApplication().getPackageResourcePath()).lastModified() >= libxulFile.lastModified())) {
+             new File(resourcePath).lastModified() >= libxulFile.lastModified())) {
             File[] libs = cacheFile.listFiles(new FilenameFilter() {
                 public boolean accept(File dir, String name) {
                     return name.endsWith(".so");
@@ -87,14 +89,13 @@ public class GeckoThread extends Thread {
         // so just save it to locale here and reset it as default after the join
         Locale locale = Locale.getDefault();
 
-        String resourcePath = app.getApplication().getPackageResourcePath();
-        GeckoAppShell.setupGeckoEnvironment(app);
-        GeckoAppShell.loadSQLiteLibs(app, resourcePath);
-        GeckoAppShell.loadNSSLibs(app, resourcePath);
+        GeckoAppShell.setupGeckoEnvironment(context);
+        GeckoAppShell.loadSQLiteLibs(context, resourcePath);
+        GeckoAppShell.loadNSSLibs(context, resourcePath);
         GeckoAppShell.loadGeckoLibs(resourcePath);
 
         Locale.setDefault(locale);
-        Resources res = app.getBaseContext().getResources();
+        Resources res = context.getResources();
         Configuration config = res.getConfiguration();
         config.locale = locale;
         res.updateConfiguration(config, res.getDisplayMetrics());
@@ -109,7 +110,7 @@ public class GeckoThread extends Thread {
 
         // and then fire us up
         Log.i(LOGTAG, "RunGecko - URI = " + mUri);
-        GeckoAppShell.runGecko(app.getApplication().getPackageResourcePath(),
+        GeckoAppShell.runGecko(context.getApplicationContext().getPackageResourcePath(),
                                mIntent.getStringExtra("args"),
                                mUri,
                                type,

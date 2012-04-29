@@ -45,7 +45,7 @@ public class GeckoScreenOrientationListener
   private boolean mShouldNotify      = false;
 
   private GeckoScreenOrientationListener() {
-    mListener = new OrientationEventListenerImpl(GeckoApp.mAppContext);
+    mListener = new OrientationEventListenerImpl(Gecko.instance.getContext());
   }
 
   public static GeckoScreenOrientationListener getInstance() {
@@ -101,7 +101,7 @@ public class GeckoScreenOrientationListener
   // NOTE: this is public so OrientationEventListenerImpl can access it.
   // Unfortunately, Java doesn't know about friendship.
   public void updateScreenOrientation() {
-    int rotation = GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getRotation();
+    int rotation = Gecko.instance.getWindowManager().getDefaultDisplay().getRotation();
     short previousOrientation = mOrientation;
 
     if (rotation == Surface.ROTATION_0) {
@@ -152,12 +152,12 @@ public class GeckoScreenOrientationListener
         Log.e(LOGTAG, "Unexpected value received! (" + aOrientation + ")");
     }
 
-    GeckoApp.mAppContext.setRequestedOrientation(orientation);
+    Gecko.instance.setRequestedOrientation(orientation);
     updateScreenOrientation();
   }
 
   public void unlockScreenOrientation() {
-    GeckoApp.mAppContext.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
+    Gecko.instance.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR);
     updateScreenOrientation();
   }
 }

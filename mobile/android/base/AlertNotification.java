@@ -91,7 +91,7 @@ public class AlertNotification
 
         // Custom view
         int layout = R.layout.notification_icon_text;
-        RemoteViews view = new RemoteViews(GeckoApp.mAppContext.getPackageName(), layout);
+        RemoteViews view = new RemoteViews(Gecko.instance.getContext().getPackageName(), layout);
         try {
             URL url = new URL(aIconUri.toString());
             Bitmap bm = BitmapFactory.decodeStream(url.openStream());
@@ -112,7 +112,7 @@ public class AlertNotification
             // Custom view
             int layout =  aAlertText.length() > 0 ? R.layout.notification_progress_text : R.layout.notification_progress;
 
-            RemoteViews view = new RemoteViews(GeckoApp.mAppContext.getPackageName(), layout);
+            RemoteViews view = new RemoteViews(Gecko.instance.getContext().getPackageName(), layout);
             view.setImageViewResource(R.id.notification_image, mIcon);
             view.setTextViewText(R.id.notification_title, mTitle);
             contentView = view;

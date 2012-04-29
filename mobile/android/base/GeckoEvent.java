@@ -254,7 +254,7 @@ public class GeckoEvent {
     public void addMotionPoint(int index, int eventIndex, MotionEvent event) {
         try {
             PointF geckoPoint = new PointF(event.getX(eventIndex), event.getY(eventIndex));
-            geckoPoint = GeckoApp.mAppContext.getLayerController().convertViewPointToLayerPoint(geckoPoint);
+            geckoPoint = Gecko.instance.getLayerController().convertViewPointToLayerPoint(geckoPoint);
     
             mPoints[index] = new Point(Math.round(geckoPoint.x), Math.round(geckoPoint.y));
             mPointIndicies[index] = event.getPointerId(eventIndex);
@@ -284,8 +284,7 @@ public class GeckoEvent {
                 }
             } else {
                 float size = event.getSize(eventIndex);
-                DisplayMetrics displaymetrics = new DisplayMetrics();
-                GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
+                DisplayMetrics displaymetrics = Gecko.instance.getDisplayMetrics();
                 size = size*Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
                 mPointRadii[index] = new Point((int)size,(int)size);
                 mOrientations[index] = 0;

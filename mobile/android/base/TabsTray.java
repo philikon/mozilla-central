@@ -93,8 +93,7 @@ public class TabsTray extends GeckoActivity implements Tabs.OnTabsChangedListene
             }
         });
 
-        DisplayMetrics metrics = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
 
         sListItemHeight = (int) (TABS_LIST_ITEM_HEIGHT * metrics.density);
         sAddTabHeight = (int) (TABS_ADD_TAB_HEIGHT * metrics.density);

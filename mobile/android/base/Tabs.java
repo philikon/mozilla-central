@@ -92,7 +92,7 @@ public class Tabs implements GeckoEventListener {
         order.add(tab);
 
         if (!mRestoringSession) {
-            GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+            Gecko.instance.getMainHandler().post(new Runnable() {
                 public void run() {
                     GeckoApp.mBrowserToolbar.updateTabCountAndAnimate(getCount());
                 }
@@ -127,7 +127,7 @@ public class Tabs implements GeckoEventListener {
         else
             GeckoApp.mAppContext.hideAboutHome();
 
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() { 
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 GeckoApp.mFormAssistPopup.hide();
                 // Do we need to do this check?
@@ -199,7 +199,7 @@ public class Tabs implements GeckoEventListener {
         int tabId = tab.getId();
         removeTab(tabId);
 
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() { 
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 notifyListeners(tab, TabEvents.CLOSED);
                 GeckoApp.mBrowserToolbar.updateTabCountAndAnimate(Tabs.getInstance().getCount());
@@ -293,7 +293,7 @@ public class Tabs implements GeckoEventListener {
                 mRestoringSession = true;
             } else if (event.equals("Session:RestoreEnd")) {
                 mRestoringSession = false;
-                GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+                Gecko.instance.getMainHandler().post(new Runnable() {
                     public void run() {
                         GeckoApp.mBrowserToolbar.updateTabCount(getCount());
                     }

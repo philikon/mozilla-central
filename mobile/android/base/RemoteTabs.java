@@ -68,8 +68,7 @@ public class RemoteTabs extends GeckoActivity
             }
         });
 
-        DisplayMetrics metrics = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
 
         sChildItemHeight = (int) (CHILD_ITEM_HEIGHT * metrics.density);
         sGroupItemHeight = (int) (GROUP_ITEM_HEIGHT * metrics.density);

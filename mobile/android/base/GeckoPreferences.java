@@ -177,7 +177,7 @@ public class GeckoPreferences
     }
 
     private EditText getTextBox(int aHintText) {
-        EditText input = new EditText(GeckoApp.mAppContext);
+        EditText input = new EditText(Gecko.instance.getContext());
         int inputtype = InputType.TYPE_CLASS_TEXT;
         inputtype |= InputType.TYPE_TEXT_VARIATION_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
         input.setInputType(inputtype);

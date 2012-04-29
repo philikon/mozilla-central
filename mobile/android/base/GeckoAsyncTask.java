@@ -59,7 +59,7 @@ public abstract class GeckoAsyncTask<Params, Progress, Result> {
 
         public void run() {
             final Result result = doInBackground(mParams);
-            GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+            Gecko.instance.getMainHandler().post(new Runnable() {
                 public void run() {
                     onPostExecute(result);
                 }

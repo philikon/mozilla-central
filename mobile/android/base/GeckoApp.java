@@ -52,6 +52,7 @@ import org.mozilla.gecko.gfx.SurfaceTextureLayer;
 import org.mozilla.gecko.gfx.ViewportMetrics;
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 import org.mozilla.gecko.Tab.HistoryEntry;
+import org.mozilla.gecko.Gecko.LaunchState;
 
 import java.io.*;
 import java.util.*;
@@ -94,8 +95,9 @@ import dalvik.system.*;
 
 abstract public class GeckoApp
                 extends GeckoActivity 
-                implements GeckoEventListener, SensorEventListener, LocationListener,
-                           GeckoApplication.ApplicationLifecycleCallbacks {
+                implements GeckoEventListener,
+                           GeckoApplication.ApplicationLifecycleCallbacks,
+                           PluginClient, Gecko.ChromeClient {
     private static final String LOGTAG = "GeckoApp";
 
     public static enum StartupMode {
@@ -107,7 +109,6 @@ abstract public class GeckoApp
     public static final String ACTION_ALERT_CLICK   = "org.mozilla.gecko.ACTION_ALERT_CLICK";
     public static final String ACTION_ALERT_CLEAR   = "org.mozilla.gecko.ACTION_ALERT_CLEAR";
     public static final String ACTION_WEBAPP        = "org.mozilla.gecko.WEBAPP";
-    public static final String ACTION_DEBUG         = "org.mozilla.gecko.DEBUG";
     public static final String ACTION_BOOKMARK      = "org.mozilla.gecko.BOOKMARK";
     public static final String ACTION_LOAD          = "org.mozilla.gecko.LOAD";
     public static final String ACTION_UPDATE        = "org.mozilla.gecko.UPDATE";
@@ -122,10 +123,9 @@ abstract public class GeckoApp
     public static GeckoApp mAppContext;
     public static boolean mDOMFullScreen = false;
     public static Menu sMenu;
-    private static GeckoThread sGeckoThread = null;
+    private Gecko mGecko;
+    private LayerView mLayerView;
     public Handler mMainHandler;
-    private GeckoProfile mProfile;
-    public static boolean sIsGeckoReady = false;
     public static int mOrientation;
 
     private GeckoConnectivityReceiver mConnectivityReceiver;
@@ -136,8 +136,6 @@ abstract public class GeckoApp
     public static FormAssistPopup mFormAssistPopup;
     public Favicons mFavicons;
 
-    private static LayerController mLayerController;
-    private static GeckoLayerClient mLayerClient;
     private AboutHomeContent mAboutHomeContent;
     private static AbsoluteLayout mPluginContainer;
 
@@ -157,38 +155,11 @@ abstract public class GeckoApp
 
     static Vector<ExtraMenuItem> sExtraMenuItems = new Vector<ExtraMenuItem>();
 
-    public enum LaunchState {Launching, WaitForDebugger,
-                             Launched, GeckoRunning, GeckoExiting};
-    private static LaunchState sLaunchState = LaunchState.Launching;
-
     private ActivityResultHandlerMap mActivityResultHandlerMap = new ActivityResultHandlerMap();
     private FilePickerResultHandlerSync mFilePickerResultHandlerSync = new FilePickerResultHandlerSync();
     private AwesomebarResultHandler mAwesomebarResultHandler = new AwesomebarResultHandler();
     private CameraImageResultHandler mCameraImageResultHandler = new CameraImageResultHandler();
     private CameraVideoResultHandler mCameraVideoResultHandler = new CameraVideoResultHandler();
-
-    public static boolean checkLaunchState(LaunchState checkState) {
-        synchronized(sLaunchState) {
-            return sLaunchState == checkState;
-        }
-    }
-
-    static void setLaunchState(LaunchState setState) {
-        synchronized(sLaunchState) {
-            sLaunchState = setState;
-        }
-    }
-
-    // if mLaunchState is equal to checkState this sets mLaunchState to setState
-    // and return true. Otherwise we return false.
-    static boolean checkAndSetLaunchState(LaunchState checkState, LaunchState setState) {
-        synchronized(sLaunchState) {
-            if (sLaunchState != checkState)
-                return false;
-            sLaunchState = setState;
-            return true;
-        }
-    }
 
     public static final String PLUGIN_ACTION = "android.webkit.PLUGIN";
 
@@ -204,7 +175,7 @@ abstract public class GeckoApp
     private static final String TYPE_NATIVE = "native";
     public ArrayList<PackageInfo> mPackageInfoCache = new ArrayList<PackageInfo>();
 
-    String[] getPluginDirectories() {
+    public String[] getPluginDirectories() {
         // we don't support Honeycomb
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB &&
             Build.VERSION.SDK_INT < 14 /*Build.VERSION_CODES.ICE_CREAM_SANDWICH*/ )
@@ -340,7 +311,7 @@ abstract public class GeckoApp
         return result;
     }
 
-    String getPluginPackage(String pluginLib) {
+    public String getPluginPackage(String pluginLib) {
 
         if (pluginLib == null || pluginLib.length() == 0) {
             return null;
@@ -409,7 +380,7 @@ abstract public class GeckoApp
             }
         }
 
-        if (!sIsGeckoReady)
+        if (!Gecko.instance.isReady())
             aMenu.findItem(R.id.settings).setEnabled(false);
 
         Tab tab = Tabs.getInstance().getSelectedTab();
@@ -460,14 +431,7 @@ abstract public class GeckoApp
         Intent intent = null;
         switch (item.getItemId()) {
             case R.id.quit:
-                synchronized(sLaunchState) {
-                    if (sLaunchState == LaunchState.GeckoRunning)
-                        GeckoAppShell.notifyGeckoOfEvent(
-                            GeckoEvent.createBroadcastEvent("Browser:Quit", null));
-                    else
-                        System.exit(0);
-                    sLaunchState = LaunchState.GeckoExiting;
-                }
+                Gecko.instance.quit();
                 return true;
             case R.id.bookmark:
                 tab = Tabs.getInstance().getSelectedTab();
@@ -538,7 +502,7 @@ abstract public class GeckoApp
 
     void getAndProcessThumbnailForTab(final Tab tab) {
         boolean isSelectedTab = Tabs.getInstance().isSelectedTab(tab);
-        final Bitmap bitmap = isSelectedTab ? mLayerClient.getBitmap() : null;
+        final Bitmap bitmap = isSelectedTab ? Gecko.instance.getLayerClient().getBitmap() : null;
         
         if (bitmap != null) {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -787,6 +751,17 @@ abstract public class GeckoApp
         overridePendingTransition(R.anim.grow_fade_in, 0);
     }
 
+    // Gecko.ChromeClient implementation
+    @Override
+    public void onReady() {
+        mMainHandler.post(new Runnable() {
+            public void run() {
+                if (sMenu != null)
+                    sMenu.findItem(R.id.settings).setEnabled(true);
+            }
+        });
+    }
+
     public void handleMessage(String event, JSONObject message) {
         Log.i(LOGTAG, "Got message: " + event);
         try {
@@ -833,8 +808,9 @@ abstract public class GeckoApp
 
                 // Sync up the LayerController and the tab if the tab's
                 // currently displayed.
-                if (getLayerController() != null && Tabs.getInstance().isSelectedTab(tab)) {
-                    getLayerController().setCheckerboardColor(tab.getCheckerboardColor());
+                LayerController layerController = Gecko.instance.getLayerController();
+                if (layerController != null && Tabs.getInstance().isSelectedTab(tab)) {
+                    layerController.setCheckerboardColor(tab.getCheckerboardColor());
                 }
 
                 Log.i(LOGTAG, "URI - " + uri + ", title - " + title);
@@ -894,17 +870,6 @@ abstract public class GeckoApp
                 handleDoorHanger(message);
             } else if (event.equals("Doorhanger:Remove")) {
                 handleDoorHangerRemove(message);
-            } else if (event.equals("Gecko:Ready")) {
-                sIsGeckoReady = true;
-                mMainHandler.post(new Runnable() {
-                    public void run() {
-                        if (sMenu != null)
-                            sMenu.findItem(R.id.settings).setEnabled(true);
-                    }
-                });
-                setLaunchState(GeckoApp.LaunchState.GeckoRunning);
-                GeckoAppShell.sendPendingEventsToGecko();
-                connectGeckoLayerClient();
             } else if (event.equals("ToggleChrome:Hide")) {
                 mMainHandler.post(new Runnable() {
                     public void run() {
@@ -991,7 +956,7 @@ abstract public class GeckoApp
                 if (Tabs.getInstance().isSelectedTab(tab)) {
                     mMainHandler.post(new Runnable() {
                         public void run() {
-                            mLayerController.getView().getTouchEventHandler().setWaitForTouchListeners(true);
+                            Gecko.instance.getLayerController().getView().getTouchEventHandler().setWaitForTouchListeners(true);
                         }
                     });
                 }
@@ -1194,7 +1159,7 @@ abstract public class GeckoApp
         tab.setState(Tab.STATE_LOADING);
         tab.updateSecurityMode("unknown");
         if (Tabs.getInstance().isSelectedTab(tab))
-            getLayerController().getView().getRenderer().resetCheckerboard();
+            mLayerView.getRenderer().resetCheckerboard();
         mMainHandler.post(new Runnable() {
             public void run() {
                 if (Tabs.getInstance().isSelectedTab(tab)) {
@@ -1320,10 +1285,10 @@ abstract public class GeckoApp
         }
     }
 
-    void addPluginView(final View view,
-                       final int x, final int y,
-                       final int w, final int h,
-                       final String metadata) {
+    public void addPluginView(final View view,
+                              final int x, final int y,
+                              final int w, final int h,
+                              final String metadata) {
         mMainHandler.post(new Runnable() { 
             public void run() {
                 PluginLayoutParams lp;
@@ -1334,7 +1299,7 @@ abstract public class GeckoApp
                 if (tab == null)
                     return;
 
-                ImmutableViewportMetrics targetViewport = mLayerController.getViewportMetrics();
+                ImmutableViewportMetrics targetViewport = Gecko.instance.getLayerController().getViewportMetrics();
                 ImmutableViewportMetrics pluginViewport;
                 
                 try {
@@ -1376,7 +1341,7 @@ abstract public class GeckoApp
         });
     }
 
-    void removePluginView(final View view) {
+    public void removePluginView(final View view) {
         mMainHandler.post(new Runnable() { 
             public void run() {
                 try {
@@ -1438,7 +1403,7 @@ abstract public class GeckoApp
         x = x + (int)origin.x;
         y = y + (int)origin.y;
 
-        LayerView layerView = mLayerController.getView();
+        LayerView layerView = Gecko.instance.getLayerController().getView();
         SurfaceTextureLayer layer = (SurfaceTextureLayer)tab.getPluginLayer(surface);
         if (layer == null)
             return;
@@ -1452,13 +1417,13 @@ abstract public class GeckoApp
     }
     
     private void hidePluginLayer(Layer layer) {
-        LayerView layerView = mLayerController.getView();
+        LayerView layerView = mLayerView;
         layerView.removeLayer(layer);
         layerView.requestRender();
     }
 
     private void showPluginLayer(Layer layer) {
-        LayerView layerView = mLayerController.getView();
+        LayerView layerView = mLayerView;
         layerView.addLayer(layer);
         layerView.requestRender();
     }
@@ -1477,7 +1442,7 @@ abstract public class GeckoApp
     }
 
     public void requestRender() {
-        mLayerController.getView().requestRender();
+        Gecko.instance.requestRender();
     }
 
     public void hidePlugins(boolean hideLayers) {
@@ -1529,7 +1494,7 @@ abstract public class GeckoApp
     }
 
     public void repositionPluginViews(Tab tab, boolean setVisible) {
-        ImmutableViewportMetrics targetViewport = mLayerController.getViewportMetrics();
+        ImmutableViewportMetrics targetViewport = Gecko.instance.getLayerController().getViewportMetrics();
 
         if (targetViewport == null)
             return;
@@ -1578,8 +1543,12 @@ abstract public class GeckoApp
     public void onCreate(Bundle savedInstanceState)
     {
         GeckoAppShell.registerGlobalExceptionHandler();
+        GeckoAppShell.sPluginClient = this;
 
         mAppContext = this;
+        mMainHandler = new Handler();
+        mGecko = new Gecko(this, mMainHandler);
+        mGecko.setChromeClient(this);
 
         // StrictMode is set by defaults resource flag |enableStrictMode|.
         if (getResources().getBoolean(R.bool.enableStrictMode)) {
@@ -1587,7 +1556,6 @@ abstract public class GeckoApp
         }
 
         GeckoAppShell.loadMozGlue();
-        mMainHandler = new Handler();
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onCreate");
 
         LayoutInflater.from(this).setFactory(GeckoViewsFactory.getInstance());
@@ -1630,7 +1598,7 @@ abstract public class GeckoApp
             Pattern p = Pattern.compile("(?:-profile\\s*)(\\w*)(\\s*)");
             Matcher m = p.matcher(args);
             if (m.find()) {
-                mProfile = GeckoProfile.get(this, m.group(1));
+                Gecko.instance.setProfile(GeckoProfile.get(this, m.group(1)));
                 mBrowserToolbar.setTitle(null);
             }
         }
@@ -1680,21 +1648,7 @@ abstract public class GeckoApp
             passedUri = "about:empty";
         }
 
-        sGeckoThread = new GeckoThread(intent, passedUri, mRestoreSession);
-        if (!ACTION_DEBUG.equals(action) &&
-            checkAndSetLaunchState(LaunchState.Launching, LaunchState.Launched)) {
-            sGeckoThread.start();
-        } else if (ACTION_DEBUG.equals(action) &&
-            checkAndSetLaunchState(LaunchState.Launching, LaunchState.WaitForDebugger)) {
-            mMainHandler.postDelayed(new Runnable() {
-                public void run() {
-                    Log.i(LOGTAG, "Launching from debug intent after 5s wait");
-                    setLaunchState(LaunchState.Launching);
-                    sGeckoThread.start();
-                }
-            }, 1000 * 5 /* 5 seconds */);
-            Log.i(LOGTAG, "Intent : ACTION_DEBUG - waiting 5s before launching");
-        }
+        Gecko.instance.initialize(intent, passedUri, mRestoreSession);
 
         mFavicons = new Favicons(this);
 
@@ -1705,28 +1659,12 @@ abstract public class GeckoApp
             cameraView.getHolder().setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
         }
 
-        if (mLayerController == null) {
-            /*
-             * Create a layer client, but don't hook it up to the layer controller yet.
-             */
-            mLayerClient = new GeckoLayerClient(this);
-
-            /*
-             * Hook a placeholder layer client up to the layer controller so that the user can pan
-             * and zoom a cached screenshot of the previous page. This call will return null if
-             * there is no cached screenshot; in that case, we have no choice but to display a
-             * checkerboard.
-             *
-             * TODO: Fall back to a built-in screenshot of the Fennec Start page for a nice first-
-             * run experience, perhaps?
-             */
-            mLayerController = new LayerController(this);
-            View v = mLayerController.getView();
-
+        if (mLayerView == null) {
+            mLayerView = Gecko.instance.getLayerController().getView();
             // Instead of flickering the checkerboard, show a white screen until Gecko paints
-            v.setBackgroundColor(Color.WHITE);
+            mLayerView.setBackgroundColor(Color.WHITE);
 
-            mGeckoLayout.addView(v, 0);
+            mGeckoLayout.addView(mLayerView, 0);
         }
 
         mPluginContainer = (AbsoluteLayout) findViewById(R.id.plugin_container);
@@ -1751,7 +1689,6 @@ abstract public class GeckoApp
         GeckoAppShell.registerGeckoEventListener("Doorhanger:Remove", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Menu:Add", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Menu:Remove", GeckoApp.mAppContext);
-        GeckoAppShell.registerGeckoEventListener("Gecko:Ready", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("Toast:Show", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("DOMFullScreen:Start", GeckoApp.mAppContext);
         GeckoAppShell.registerGeckoEventListener("DOMFullScreen:Stop", GeckoApp.mAppContext);
@@ -1801,7 +1738,7 @@ abstract public class GeckoApp
                     GeckoAppShell.setSelectedLocale(localeCode);
                 */
 
-                if (!checkLaunchState(LaunchState.Launched)) {
+                if (!Gecko.instance.checkLaunchState(LaunchState.Launched)) {
                     return;
                 }
             }
@@ -1809,11 +1746,7 @@ abstract public class GeckoApp
     }
 
     public GeckoProfile getProfile() {
-        // fall back to default profile if we didn't load a specific one
-        if (mProfile == null) {
-            mProfile = GeckoProfile.get(this);
-        }
-        return mProfile;
+        return Gecko.instance.getProfile();
     }
 
     /**
@@ -1919,7 +1852,7 @@ abstract public class GeckoApp
     protected void onNewIntent(Intent intent) {
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onNewIntent");
 
-        if (checkLaunchState(LaunchState.GeckoExiting)) {
+        if (Gecko.instance.checkLaunchState(LaunchState.GeckoExiting)) {
             // We're exiting and shouldn't try to do anything else just incase
             // we're hung for some reason we'll force the process to exit
             System.exit(0);
@@ -1937,7 +1870,7 @@ abstract public class GeckoApp
         if ((intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0)
             return;
 
-        if (checkLaunchState(LaunchState.Launched)) {
+        if (Gecko.instance.checkLaunchState(LaunchState.Launched)) {
             Uri data = intent.getData();
             Bundle bundle = intent.getExtras();
             // if the intent has data (i.e. a URI to be opened) and the scheme
@@ -1953,19 +1886,7 @@ abstract public class GeckoApp
             }
         }
         final String action = intent.getAction();
-        if (ACTION_DEBUG.equals(action) &&
-            checkAndSetLaunchState(LaunchState.Launching, LaunchState.WaitForDebugger)) {
-            mMainHandler.postDelayed(new Runnable() {
-                public void run() {
-                    Log.i(LOGTAG, "Launching from debug intent after 5s wait");
-                    setLaunchState(LaunchState.Launching);
-                    sGeckoThread.start();
-                }
-            }, 1000 * 5 /* 5 seconds */);
-            Log.i(LOGTAG, "Intent : ACTION_DEBUG - waiting 5s before launching");
-            return;
-        }
-        if (checkLaunchState(LaunchState.WaitForDebugger) || intent == getIntent())
+        if (mGecko.didReceiveNewIntent(action) || intent == getIntent())
             return;
 
         if (Intent.ACTION_MAIN.equals(action)) {
@@ -2097,7 +2018,6 @@ abstract public class GeckoApp
         GeckoAppShell.unregisterGeckoEventListener("Doorhanger:Add", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Menu:Add", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Menu:Remove", GeckoApp.mAppContext);
-        GeckoAppShell.unregisterGeckoEventListener("Gecko:Ready", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("Toast:Show", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("ToggleChrome:Hide", GeckoApp.mAppContext);
         GeckoAppShell.unregisterGeckoEventListener("ToggleChrome:Show", GeckoApp.mAppContext);
@@ -2155,7 +2075,7 @@ abstract public class GeckoApp
     public void onLowMemory()
     {
         Log.e(LOGTAG, "low memory");
-        if (checkLaunchState(LaunchState.GeckoRunning))
+        if (Gecko.instance.checkLaunchState(LaunchState.GeckoRunning))
             GeckoAppShell.onLowMemory();
         super.onLowMemory();
         GeckoAppShell.geckoEventSync();
@@ -2175,7 +2095,7 @@ abstract public class GeckoApp
     @Override
     public void onApplicationResume() {
         Log.i(LOGTAG, "application resumed");
-        if (checkLaunchState(LaunchState.GeckoRunning))
+        if (Gecko.instance.checkLaunchState(LaunchState.GeckoRunning))
             GeckoAppShell.sendEventToGecko(GeckoEvent.createResumeEvent(true));
 
         if (mConnectivityReceiver != null)
@@ -2200,7 +2120,7 @@ abstract public class GeckoApp
         }
     }
 
-    public void doRestart() {
+    public void restartApplication() {
         doRestart("org.mozilla.gecko.restart");
     }
 
@@ -2651,10 +2571,6 @@ abstract public class GeckoApp
 
     static int kCaptureIndex = 0;
 
-    public interface ActivityResultHandler {
-        public void onActivityResult(int resultCode, Intent data);
-    }
-
     class ActivityResultHandlerMap {
         private Map<Integer, ActivityResultHandler> mMap = new HashMap<Integer, ActivityResultHandler>();
         private int mCounter = 0;
@@ -2847,52 +2763,6 @@ abstract public class GeckoApp
         }
         Log.i(LOGTAG, "Sending message to Gecko: " + SystemClock.uptimeMillis() + " - Tab:Add");
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Tab:Add", args.toString()));
-    }
-
-    /* This method is referenced by Robocop via reflection. */
-    public GeckoLayerClient getLayerClient() { return mLayerClient; }
-    public LayerController getLayerController() { return mLayerController; }
-
-    // accelerometer
-    public void onAccuracyChanged(Sensor sensor, int accuracy) {}
-
-    public void onSensorChanged(SensorEvent event)
-    {
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createSensorEvent(event));
-    }
-
-    // geolocation
-    public void onLocationChanged(Location location)
-    {
-        Log.w(LOGTAG, "onLocationChanged "+location);
-        GeckoAppShell.sendEventToGecko(GeckoEvent.createLocationEvent(location));
-    }
-
-    public void onProviderDisabled(String provider)
-    {
-    }
-
-    public void onProviderEnabled(String provider)
-    {
-    }
-
-    public void onStatusChanged(String provider, int status, Bundle extras)
-    {
-    }
-
-
-    private void connectGeckoLayerClient() {
-        LayerController layerController = getLayerController();
-        layerController.setLayerClient(mLayerClient);
-
-        layerController.getView().getTouchEventHandler().setOnTouchListener(new View.OnTouchListener() {
-            public boolean onTouch(View view, MotionEvent event) {
-                if (event == null)
-                    return true;
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createMotionEvent(event));
-                return true;
-            }
-        });
     }
 }
 

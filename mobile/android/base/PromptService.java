@@ -96,8 +96,8 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
     private static int mIconSize = 0; // calculated from ICON_SIZE.
 
     PromptService() {
-        mInflater = LayoutInflater.from(GeckoApp.mAppContext);
-        Resources res = GeckoApp.mAppContext.getResources();
+        mInflater = LayoutInflater.from(Gecko.instance.getContext());
+        Resources res = Gecko.instance.getContext().getResources();
         mGroupPaddingSize = (int)TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
                                                            GROUP_PADDING_SIZE,
                                                            res.getDisplayMetrics());
@@ -146,7 +146,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
 
         public View getView() {
             if (type.equals("checkbox")) {
-                CheckBox checkbox = new CheckBox(GeckoApp.mAppContext);
+                CheckBox checkbox = new CheckBox(Gecko.instance.getContext());
                 checkbox.setLayoutParams(new LayoutParams(LayoutParams.FILL_PARENT, LayoutParams.WRAP_CONTENT));
                 checkbox.setText(label);
                 try {
@@ -155,7 +155,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 } catch(Exception ex) { }
                 view = (View)checkbox;
             } else if (type.equals("textbox") || this.type.equals("password")) {
-                EditText input = new EditText(GeckoApp.mAppContext);
+                EditText input = new EditText(Gecko.instance.getContext());
                 int inputtype = InputType.TYPE_CLASS_TEXT;
                 if (type.equals("password")) {
                     inputtype |= InputType.TYPE_TEXT_VARIATION_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
@@ -172,11 +172,11 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                 }
                 view = (View)input;
             } else if (type.equals("menulist")) {
-                Spinner spinner = new Spinner(GeckoApp.mAppContext);
+                Spinner spinner = new Spinner(Gecko.instance.getContext());
                 try {
                     String[] listitems = getStringArray(mJSONInput, "values");
                     if (listitems.length > 0) {
-                        ArrayAdapter<String> adapter = new ArrayAdapter<String>(GeckoApp.mAppContext, android.R.layout.simple_dropdown_item_1line, listitems);
+                        ArrayAdapter<String> adapter = new ArrayAdapter<String>(Gecko.instance.getContext(), android.R.layout.simple_dropdown_item_1line, listitems);
                         spinner.setAdapter(adapter);
                     }
                 } catch(Exception ex) { }
@@ -205,7 +205,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
     }
 
     public void Show(String aTitle, String aText, PromptButton[] aButtons, PromptListItem[] aMenuList, boolean aMultipleSelection) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(GeckoApp.mAppContext);
+        AlertDialog.Builder builder = new AlertDialog.Builder(Gecko.instance.getContext());
         if (!aTitle.equals("")) {
             builder.setTitle(aTitle);
         }
@@ -224,7 +224,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
                     resourceId = android.R.layout.select_dialog_singlechoice;
                 }
             }
-            PromptListAdapter adapter = new PromptListAdapter(GeckoApp.mAppContext, resourceId, aMenuList);
+            PromptListAdapter adapter = new PromptListAdapter(Gecko.instance.getContext(), resourceId, aMenuList);
             if (mSelected != null && mSelected.length > 0) {
                 if (aMultipleSelection) {
                     adapter.listView = (ListView) mInflater.inflate(R.layout.select_dialog_list, null);
@@ -251,7 +251,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
         } else if (length == 1) {
             builder.setView(mInputs[0].getView());
         } else if (length > 1) {
-            LinearLayout linearLayout = new LinearLayout(GeckoApp.mAppContext);
+            LinearLayout linearLayout = new LinearLayout(Gecko.instance.getContext());
             linearLayout.setOrientation(LinearLayout.VERTICAL);
             for (int i = 0; i < length; i++) {
                 View content = mInputs[i].getView();
@@ -502,7 +502,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
             if (item.icon == null)
                 return;
 
-            Resources res = GeckoApp.mAppContext.getResources();
+            Resources res = Gecko.instance.getContext().getResources();
 
             // Set padding inside the item.
             t.setPadding(item.inGroup ? mLeftRightTextWithIconPadding + mGroupPaddingSize :

@@ -39,6 +39,7 @@
 package org.mozilla.gecko.gfx;
 
 import org.mozilla.gecko.FloatUtils;
+import org.mozilla.gecko.Gecko;
 import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
@@ -139,8 +140,7 @@ public class GeckoLayerClient implements GeckoEventResponder,
 
     /* Informs Gecko that the screen size has changed. */
     private void sendResizeEventIfNecessary(boolean force) {
-        DisplayMetrics metrics = new DisplayMetrics();
-        GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        DisplayMetrics metrics = Gecko.instance.getDisplayMetrics();
         View view = mLayerController.getView();
 
         IntSize newScreenSize = new IntSize(metrics.widthPixels, metrics.heightPixels);

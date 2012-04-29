@@ -81,7 +81,7 @@ class GlobalHistory {
                     // the cache was wiped away, repopulate it
                     Log.w(LOGTAG, "Rebuilding visited link set...");
                     visitedSet = new HashSet<String>();
-                    Cursor c = BrowserDB.getAllVisitedHistory(GeckoApp.mAppContext.getContentResolver());
+                    Cursor c = BrowserDB.getAllVisitedHistory(Gecko.instance.getContext().getContentResolver());
                     if (c.moveToFirst()) {
                         do {
                             visitedSet.add(c.getString(0));
@@ -116,12 +116,12 @@ class GlobalHistory {
     }
 
     public void add(String uri) {
-        BrowserDB.updateVisitedHistory(GeckoApp.mAppContext.getContentResolver(), uri);
+        BrowserDB.updateVisitedHistory(Gecko.instance.getContext().getContentResolver(), uri);
         addToGeckoOnly(uri);
     }
 
     public void update(String uri, String title) {
-        ContentResolver resolver = GeckoApp.mAppContext.getContentResolver();
+        ContentResolver resolver = Gecko.instance.getContext().getContentResolver();
         BrowserDB.updateHistoryTitle(resolver, uri, title);
     }
 

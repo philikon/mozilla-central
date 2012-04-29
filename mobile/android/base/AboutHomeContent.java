@@ -154,7 +154,7 @@ public class AboutHomeContent extends ScrollView
                 final GeckoApp.StartupMode startupMode = GeckoApp.mAppContext.getStartupMode();
                 final boolean syncIsSetup = isSyncSetup();
 
-                GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+                Gecko.instance.getMainHandler().post(new Runnable() {
                     public void run() {
                         // The listener might run before the UI is initially updated.
                         // In this case, we should simply wait for the initial setup
@@ -342,10 +342,10 @@ public class AboutHomeContent extends ScrollView
         // UI thread as it touches disk to access a sqlite DB.
         final boolean syncIsSetup = isSyncSetup();
 
-        ContentResolver resolver = GeckoApp.mAppContext.getContentResolver();
+        ContentResolver resolver = Gecko.instance.getContext().getContentResolver();
         mCursor = BrowserDB.getTopSites(resolver, NUMBER_OF_TOP_SITES_PORTRAIT);
 
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 if (mTopSitesAdapter == null) {
                     mTopSitesAdapter = new TopSitesCursorAdapter(activity,
@@ -479,7 +479,7 @@ public class AboutHomeContent extends ScrollView
         final String addonsFilename = "recommended-addons.json";
         String jsonString;
         try {
-            jsonString = GeckoApp.mAppContext.getProfile().readFile(addonsFilename);
+            jsonString = Gecko.instance.getProfile().readFile(addonsFilename);
         } catch (IOException ioe) {
             Log.i(LOGTAG, "filestream is null");
             jsonString = readFromZipFile(activity, addonsFilename);
@@ -495,7 +495,7 @@ public class AboutHomeContent extends ScrollView
         }
 
         final JSONArray array = addonsArray;
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 try {
                     if (array == null || array.length() == 0) {
@@ -544,7 +544,7 @@ public class AboutHomeContent extends ScrollView
     }
 
     private void readLastTabs(final Activity activity) {
-        String jsonString = GeckoApp.mAppContext.getProfile().readSessionFile(GeckoApp.sIsGeckoReady);
+        String jsonString = Gecko.instance.getProfile().readSessionFile(Gecko.instance.isReady());
         if (jsonString == null) {
             // no previous session data
             return;
@@ -586,11 +586,11 @@ public class AboutHomeContent extends ScrollView
             if (url.startsWith("about:"))
                 continue;
 
-            ContentResolver resolver = GeckoApp.mAppContext.getContentResolver();
+            ContentResolver resolver = Gecko.instance.getContext().getContentResolver();
             final BitmapDrawable favicon = BrowserDB.getFaviconForUrl(resolver, url);
             lastTabUrlsList.add(url);
 
-            GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+            Gecko.instance.getMainHandler().post(new Runnable() {
                 public void run() {
                     View container = mInflater.inflate(R.layout.abouthome_last_tabs_row, mLastTabs.getItemsContainer(), false);
                     ((TextView) container.findViewById(R.id.last_tab_title)).setText(title);
@@ -610,7 +610,7 @@ public class AboutHomeContent extends ScrollView
         }
 
         final int numLastTabs = lastTabUrlsList.size();
-        GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
                 if (numLastTabs > 1) {
                     mLastTabs.showMoreText();
@@ -631,7 +631,7 @@ public class AboutHomeContent extends ScrollView
 
     private void loadRemoteTabs(final Activity activity) {
         if (!isSyncSetup()) {
-            GeckoApp.mAppContext.mMainHandler.post(new Runnable() {
+            Gecko.instance.getMainHandler().post(new Runnable() {
                 public void run() {
                     mRemoteTabs.hide();
                 }
@@ -687,9 +687,7 @@ public class AboutHomeContent extends ScrollView
 
         public TopSitesGridView(Context context, AttributeSet attrs) {
             super(context, attrs);
-            DisplayMetrics dm = new DisplayMetrics();
-            GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(dm);
-            mDisplayDensity = dm.density;
+            mDisplayDensity = Gecko.instance.getDisplayMetrics().density;
         }
 
         @Override

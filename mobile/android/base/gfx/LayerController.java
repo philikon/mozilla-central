@@ -38,6 +38,8 @@
 
 package org.mozilla.gecko.gfx;
 
+import org.mozilla.gecko.Gecko;
+import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.ui.PanZoomController;
 import org.mozilla.gecko.ui.SimpleScaleGestureDetector;
@@ -193,7 +195,7 @@ public class LayerController {
         mViewportMetrics = new ImmutableViewportMetrics(viewportMetrics);
 
         notifyLayerClientOfGeometryChange();
-        GeckoApp.mAppContext.repositionPluginViews(false);
+        GeckoAppShell.sPluginClient.repositionPluginViews(false);
         mView.requestRender();
     }
 
@@ -227,9 +229,9 @@ public class LayerController {
         mViewportMetrics = new ImmutableViewportMetrics(viewport);
         // this function may or may not be called on the UI thread,
         // but repositionPluginViews must only be called on the UI thread.
-        GeckoApp.mAppContext.runOnUiThread(new Runnable() {
+        Gecko.instance.getMainHandler().post(new Runnable() {
             public void run() {
-                GeckoApp.mAppContext.repositionPluginViews(false);
+                GeckoAppShell.sPluginClient.repositionPluginViews(false);
             }
         });
         mView.requestRender();
@@ -259,7 +261,7 @@ public class LayerController {
         // We assume the zoom level will only be modified by the
         // PanZoomController, so no need to notify it of this change.
         notifyLayerClientOfGeometryChange();
-        GeckoApp.mAppContext.repositionPluginViews(false);
+        GeckoAppShell.sPluginClient.repositionPluginViews(false);
         mView.requestRender();
     }
 
