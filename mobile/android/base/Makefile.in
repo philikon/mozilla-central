@@ -96,7 +96,7 @@ FENNEC_JAVA_FILES = \
   GeckoJarReader.java \
 	GeckoMessageReceiver.java \
   GeckoPreferences.java \
-  GeckoProfile.java \
+ GeckoProfile.java \
   GeckoStateListDrawable.java \
   GeckoThread.java \
   GlobalHistory.java \
@@ -160,6 +160,7 @@ FENNEC_JAVA_FILES = \
   ui/SubdocumentScrollHelper.java \
   GeckoNetworkManager.java \
   GeckoScreenOrientationListener.java \
+  GeckoWebView.java \
   $(NULL)
 
 ifdef MOZ_WEBSMS_BACKEND
