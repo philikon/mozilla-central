@@ -148,4 +148,6 @@
 
   <string name="bookmarkdefaults_title_abouthome">@bookmarks_aboutHome@</string>
   <string name="bookmarkdefaults_url_abouthome">about:home</string>
+
+  <string name="webview_example">WebView Example</string>
 </resources>
