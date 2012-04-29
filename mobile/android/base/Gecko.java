@@ -42,10 +42,16 @@ public class Gecko implements GeckoEventListener {
     private ChromeClient mChromeClient;
 
     public Gecko(Activity activity, Handler mainHandler) {
+        // There's only one singleton instance of Gecko. It can be referenced as
+        // Gecko.instance.
         assert instance == null;
         instance = this;
+
         mActivity = activity;
         mMainHandler = mainHandler;
+
+        GeckoAppShell.loadMozGlue();
+
         mLayerController = new LayerController(activity);
         /*
          * Hook a placeholder layer client up to the layer controller so that the user can pan

@@ -1555,7 +1555,6 @@ abstract public class GeckoApp
             enableStrictMode();
         }
 
-        GeckoAppShell.loadMozGlue();
         Log.w(LOGTAG, "zerdatime " + SystemClock.uptimeMillis() + " - onCreate");
 
         LayoutInflater.from(this).setFactory(GeckoViewsFactory.getInstance());
