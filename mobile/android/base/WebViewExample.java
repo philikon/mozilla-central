@@ -18,7 +18,7 @@ public class WebViewExample extends Activity {
         setContentView(mWebView);
 
         //mWebView.getSettings().setJavaScriptEnabled(true);
-        mWebView.loadUrl("http://www.google.com");
+        //mWebView.loadUrl("http://www.google.com");
     }
 
 }

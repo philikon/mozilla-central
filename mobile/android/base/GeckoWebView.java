@@ -4,11 +4,18 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.gfx.LayerView;
+import org.json.JSONObject;
+import org.json.JSONException;
+
+import android.app.Activity;
 import android.content.Context;
 import android.net.http.SslCertificate;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Picture;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.Message;
 import android.view.View;
 import android.webkit.DownloadListener;
@@ -18,14 +25,67 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebViewClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView.HitTestResult;
+import android.widget.LinearLayout;
 
 import java.util.Map;
 
-public class GeckoWebView extends View {
+public class GeckoWebView extends LinearLayout
+                          implements GeckoEventListener,
+                                     Gecko.ChromeClient {
 
-    public GeckoWebView(Context context) {
-        super(context);
+    Activity mActivity;
+    Handler mMainHandler;
+    LayerView mLayerView;
+
+    public GeckoWebView(Activity activity) {
+        super(activity);
+
+        mActivity = activity;
+
+        GeckoAppShell.registerGlobalExceptionHandler();
+
+        mMainHandler = new Handler();
+        Gecko gecko = new Gecko(mActivity, mMainHandler);
+        Gecko.instance.setChromeClient(this);
+        Gecko.instance.initialize(activity.getIntent(), null, false);
+
+        mLayerView = Gecko.instance.getLayerController().getView();
+        addView(mLayerView);
     }
+
+    private void createTab() {
+        JSONObject args = new JSONObject();
+        try {
+            args.put("url", "about:blank");
+        } catch (JSONException e) {
+            //TODO log
+            return;
+        }
+        GeckoAppShell.sendEventToGecko(
+            GeckoEvent.createBroadcastEvent("Tab:Add", args.toString()));
+    }
+
+    /**
+     * GeckoEventListener
+     */
+
+    public void handleMessage(String event, JSONObject message) {
+        if (event.equals("Tab:Added")) {
+            loadUrl("http://www.google.com");
+        }
+    }
+
+    /**
+     * ChromeClient
+     */
+
+    public void onReady() {
+        GeckoAppShell.registerGeckoEventListener("Tab:Added", this);
+        createTab();
+        //TODO
+    }
+
+    public void restartApplication() {}
 
     /**
      * The Android WebView interface
@@ -54,8 +114,22 @@ public class GeckoWebView extends View {
         return null; //TODO
     }
 
-    public void loadUrl(String url, Map<String, String> additionalHttpHeaders) {} //TODO
-    public void loadUrl(String url) {} //TODO
+    public void loadUrl(String url, Map<String, String> additionalHttpHeaders) {
+        JSONObject args = new JSONObject();
+        try {
+            args.put("url", url);
+        } catch (JSONException e) {
+            //TODO log
+            return;
+        }
+        GeckoAppShell.sendEventToGecko(
+            GeckoEvent.createBroadcastEvent("Tab:Load", args.toString()));
+    }
+
+    public void loadUrl(String url) {
+        loadUrl(url, null);
+    }
+
     public void postUrl(String url, byte[] postData) {} //TODO
     public void loadData(String data, String mimeType, String encoding) {} //TODO
     public void loadDataWithBaseURL(String baseUrl, String data, String mimeType, String encoding, String historyUrl) {} //TODO
