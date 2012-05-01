@@ -363,7 +363,7 @@ public class GeckoAppShell
         }
     }
 
-    private static void setupDownloadEnvironment(GeckoApp context) {
+    private static void setupDownloadEnvironment(Context context) {
         try {
             File downloadDir = null;
             File updatesDir  = null;
@@ -385,8 +385,8 @@ public class GeckoAppShell
         GeckoProfile profile = GeckoProfile.get(context);
         profile.moveProfilesToAppInstallLocation();
 
-        setupPluginEnvironment((GeckoApp) context);
-        setupDownloadEnvironment((GeckoApp) context);
+        setupPluginEnvironment(context);
+        setupDownloadEnvironment(context);
 
         // profile home path
         GeckoAppShell.putenv("HOME=" + profile.getFilesDir().getPath());
