@@ -371,12 +371,12 @@ public class PanZoomController
             cancelTouch();
             startPanning(event.getX(0), event.getY(0), event.getEventTime());
             GeckoAppShell.sPluginClient.hidePlugins(false /* don't hide layers, only views */);
-            GeckoApp.mFormAssistPopup.hide();
+            hideFormAssistPopup();
             track(event);
             return true;
 
         case PANNING_HOLD_LOCKED:
-            GeckoApp.mFormAssistPopup.hide();
+            hideFormAssistPopup();
             mState = PanZoomState.PANNING_LOCKED;
             // fall through
         case PANNING_LOCKED:
@@ -384,7 +384,7 @@ public class PanZoomController
             return true;
 
         case PANNING_HOLD:
-            GeckoApp.mFormAssistPopup.hide();
+            hideFormAssistPopup();
             mState = PanZoomState.PANNING;
             // fall through
         case PANNING:
@@ -847,7 +847,7 @@ public class PanZoomController
         mState = PanZoomState.PINCHING;
         mLastZoomFocus = new PointF(detector.getFocusX(), detector.getFocusY());
         GeckoAppShell.sPluginClient.hidePlugins(false /* don't hide layers, only views */);
-        GeckoApp.mFormAssistPopup.hide();
+        hideFormAssistPopup();
         cancelTouch();
 
         return true;
@@ -964,7 +964,7 @@ public class PanZoomController
 
     @Override
     public boolean onSingleTapConfirmed(MotionEvent motionEvent) {
-        GeckoApp.mFormAssistPopup.hide();
+        hideFormAssistPopup();
         sendPointToGecko("Gesture:SingleTap", motionEvent);
         return true;
     }
@@ -980,6 +980,12 @@ public class PanZoomController
         GeckoAppShell.sendEventToGecko(e);
     }
 
+    private void hideFormAssistPopup() {
+        if (GeckoApp.mFormAssistPopup != null) {
+            GeckoApp.mFormAssistPopup.hide();
+        }
+    }
+
     /**
      * Zoom to a specified rect IN CSS PIXELS.
      *
@@ -987,7 +993,7 @@ public class PanZoomController
      * pixels.
      */
     private boolean animatedZoomTo(RectF zoomToRect) {
-        GeckoApp.mFormAssistPopup.hide();
+        hideFormAssistPopup();
 
         mState = PanZoomState.ANIMATED_ZOOM;
         final float startZoom = mController.getZoomFactor();

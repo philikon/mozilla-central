@@ -44,6 +44,7 @@ import org.mozilla.gecko.GeckoApp;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoEventResponder;
+import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -340,7 +341,10 @@ public class GeckoLayerClient implements GeckoEventResponder,
             currentMetrics.setZoomFactor(zoom);
             currentMetrics.setPageSize(new FloatSize(pageWidth, pageHeight), new FloatSize(cssPageWidth, cssPageHeight));
             mLayerController.setViewportMetrics(currentMetrics);
-            mLayerController.setCheckerboardColor(Tabs.getInstance().getSelectedTab().getCheckerboardColor());
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null) {
+                mLayerController.setCheckerboardColor(tab.getCheckerboardColor());
+            }
             // At this point, we have just switched to displaying a different document than we
             // we previously displaying. This means we need to abort any panning/zooming animations
             // that are in progress and send an updated display port request to browser.js as soon
