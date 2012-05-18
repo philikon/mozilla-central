@@ -160,6 +160,50 @@ var MetadataProvider = {
   },
 };
 
+
+// https://github.com/andreasgal/gaia/pull/1445
+// https://bugzilla.mozilla.org/show_bug.cgi?id=702880
+// https://bugzilla.mozilla.org/show_bug.cgi?id=753595
+function FakeXULDeck(container) {
+  return {
+    addEventListener: container.addEventListener.bind(container),
+    removeEventListener: container.removeEventListener.bind(container),
+
+    appendChild: function appendChild(node) {
+      container.appendChild.apply(container, arguments);
+      if (this.selectedPanel == null) {
+        this.selectedPanel = node;
+      }
+    },
+
+    removeChild: function removeChild(node) {
+      container.removeChild.apply(container, arguments);
+      if (!container.childNodes.length) {
+        this._selectedPanel = null;
+      } else {
+        //TODO would probably be better to use element next in list rather than
+        // the last one.
+        this.selectedPanel = container.childNodes[container.childNodes.length - 1];
+      }
+    },
+
+    _selectedPanel: null,
+    get selectedPanel() {
+      return this._selectedPanel;
+    },
+    set selectedPanel(value) {
+      //TODO verify value is a direct child element
+      if (this._selectedPanel != null) {
+        this._selectedPanel.classList.remove("selected");
+      }
+      value.classList.add("selected");
+      this._selectedPanel = value;
+    },
+
+  };
+}
+
+
 var BrowserApp = {
   _tabs: [],
   _selectedTab: null,
@@ -167,10 +211,10 @@ var BrowserApp = {
   deck: null,
 
   startup: function startup() {
-    window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = new nsBrowserAccess();
+    //window.QueryInterface(Ci.nsIDOMChromeWindow).browserDOMWindow = new nsBrowserAccess();
     dump("zerdatime " + Date.now() + " - browser chrome startup finished.");
 
-    this.deck = document.getElementById("browsers");
+    this.deck = FakeXULDeck(document.getElementById("browsers"));
     BrowserEventHandler.init();
     ViewportHandler.init();
 
@@ -553,7 +597,8 @@ var BrowserApp = {
     }
 
     try {
-      aBrowser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
+      //aBrowser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
+      aBrowser.setAttribute("src", aURI);
     } catch(e) {
       let tab = this.getTabForBrowser(aBrowser);
       if (tab) {
@@ -678,7 +723,7 @@ var BrowserApp = {
       Services.obs.notifyObservers(null, "browser-lastwindow-close-granted", null);
     }
 
-    window.QueryInterface(Ci.nsIDOMChromeWindow).minimize();
+    //window.QueryInterface(Ci.nsIDOMChromeWindow).minimize();
     window.close();
   },
 
@@ -1294,6 +1339,7 @@ var NativeWindow = {
           let request = aElement.getRequest(Ci.nsIImageLoadingContent.CURRENT_REQUEST);
           return (request && (request.imageStatus & request.STATUS_SIZE_AVAILABLE));
         }
+        return false;
       }
     },
 
@@ -1561,18 +1607,20 @@ Tab.prototype = {
 
     aParams = aParams || {};
 
-    this.browser = document.createElement("browser");
-    this.browser.setAttribute("type", "content-targetable");
+    this.browser = document.createElement("iframe");
+    //this.browser.setAttribute("type", "content-targetable");
+    this.browser.mozbrowlser = true;
     this.setBrowserSize(kDefaultCSSViewportWidth, kDefaultCSSViewportHeight);
     BrowserApp.deck.appendChild(this.browser);
 
     // Must be called after appendChild so the docshell has been created.
     this.setActive(false);
 
-    this.browser.stop();
+    // TODO depends on bug 709759
+    //this.browser.stop();
 
-    let frameLoader = this.browser.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader;
-    frameLoader.renderMode = Ci.nsIFrameLoader.RENDER_MODE_ASYNC_SCROLL;
+    //let frameLoader = this.browser.QueryInterface(Ci.nsIFrameLoaderOwner).frameLoader;
+    //frameLoader.renderMode = Ci.nsIFrameLoader.RENDER_MODE_ASYNC_SCROLL;
 
     // only set tab uri if uri is valid
     let uri = null;
@@ -1599,11 +1647,13 @@ Tab.prototype = {
     this.overscrollController = new OverscrollController(this);
     this.browser.contentWindow.controllers.insertControllerAt(0, this.overscrollController);
 
+/*
     let flags = Ci.nsIWebProgress.NOTIFY_STATE_ALL |
                 Ci.nsIWebProgress.NOTIFY_LOCATION |
                 Ci.nsIWebProgress.NOTIFY_SECURITY;
     this.browser.addProgressListener(this, flags);
     this.browser.sessionHistory.addSHistoryListener(this);
+*/
 
     this.browser.addEventListener("DOMContentLoaded", this, true);
     this.browser.addEventListener("DOMLinkAdded", this, true);
@@ -1628,7 +1678,8 @@ Tab.prototype = {
       this.showProgress = "showProgress" in aParams ? aParams.showProgress : true;
 
       try {
-        this.browser.loadURIWithFlags(aURL, flags, referrerURI, charset, postData);
+        //this.browser.loadURIWithFlags(aURL, flags, referrerURI, charset, postData);
+        this.browser.setAttribute("src", aURL);
       } catch(e) {
         let message = {
           gecko: {
@@ -1674,21 +1725,13 @@ Tab.prototype = {
 
   // This should be called to update the browser when the tab gets selected/unselected
   setActive: function setActive(aActive) {
-    if (!this.browser || !this.browser.docShell)
-      return;
-
-    if (aActive) {
-      this.browser.setAttribute("type", "content-primary");
-      this.browser.focus();
-      this.browser.docShellIsActive = true;
-    } else {
-      this.browser.setAttribute("type", "content-targetable");
-      this.browser.docShellIsActive = false;
-    }
+    this._active = aActive;
+    // TODO bug 702880
+    //this.browser.setActive(aActive);
   },
 
   getActive: function getActive() {
-      return this.browser.docShellIsActive;
+    return !!this._active;
   },
 
   setDisplayPort: function(aDisplayPort) {

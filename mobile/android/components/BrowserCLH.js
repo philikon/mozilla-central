@@ -96,7 +96,7 @@ BrowserCLH.prototype = {
           width: width,
           height: height
         };
-        browserWin = openWindow(null, "chrome://browser/content/browser.xul", "_blank", "chrome,dialog=no,all", args);
+        browserWin = openWindow(null, "chrome://browser/content/browser.html", "_blank", "chrome,dialog=no,all", args);
       }
 
       aCmdLine.preventDefault = true;

@@ -16,7 +16,7 @@ chrome.jar:
   content/aboutApps.js                 (content/aboutApps.js)
   content/blockedSite.xhtml            (content/blockedSite.xhtml)
   content/languages.properties         (content/languages.properties)
-* content/browser.xul                  (content/browser.xul)
+  content/browser.html                 (content/browser.html)
 * content/browser.js                   (content/browser.js)
 * content/bindings.xml                 (content/bindings.xml)
   content/bindings/checkbox.xml        (content/bindings/checkbox.xml)
