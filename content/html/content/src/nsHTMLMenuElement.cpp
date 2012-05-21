@@ -37,7 +37,9 @@
 #include "nsHTMLMenuElement.h"
 
 #include "nsIDOMHTMLMenuItemElement.h"
+#ifdef MOZ_XUL
 #include "nsXULContextMenuBuilder.h"
+#endif
 #include "nsGUIEvent.h"
 #include "nsEventDispatcher.h"
 #include "nsHTMLMenuItemElement.h"
@@ -136,9 +138,11 @@ nsHTMLMenuElement::CreateBuilder(nsIMenuBuilder** _retval)
 
   *_retval = nsnull;
 
+#ifdef MOZ_XUL
   if (mType == MENU_TYPE_CONTEXT) {
     NS_ADDREF(*_retval = new nsXULContextMenuBuilder());
   }
+#endif
 
   return NS_OK;
 }

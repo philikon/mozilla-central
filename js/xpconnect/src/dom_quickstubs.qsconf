@@ -410,7 +410,8 @@ members = [
     'nsIDOMNSXPathExpression.evaluateWithContext',
 
     # dom/interfaces/xul
-    'nsIDOMXULElement.*',
+    #TODO ifdef MOZ_XUL
+    #'nsIDOMXULElement.*',
 
     # layout/xul/base/public
     'nsIBoxObject.x',

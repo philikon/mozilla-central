@@ -50,7 +50,9 @@
 #include "nsXPCOMPrivate.h"
 #include "nsIStringBundle.h"
 #include "nsIToolkitChromeRegistry.h"
+#ifdef MOZ_XUL
 #include "nsIXULOverlayProvider.h"
+#endif
 #include "IHistory.h"
 #include "nsIXPConnect.h"
 

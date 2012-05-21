@@ -413,7 +413,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DISPLAY_TABLE_CAPTION          17
 #define NS_STYLE_DISPLAY_BOX                    18
 #define NS_STYLE_DISPLAY_INLINE_BOX             19
-#ifdef MOZ_XUL
 #define NS_STYLE_DISPLAY_GRID                   20
 #define NS_STYLE_DISPLAY_INLINE_GRID            21
 #define NS_STYLE_DISPLAY_GRID_GROUP             22
@@ -423,7 +422,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DISPLAY_DECK                   26
 #define NS_STYLE_DISPLAY_POPUP                  27
 #define NS_STYLE_DISPLAY_GROUPBOX               28
-#endif
 
 // See nsStyleDisplay
 #define NS_STYLE_FLOAT_NONE                     0
